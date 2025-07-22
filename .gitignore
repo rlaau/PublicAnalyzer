@@ -1,0 +1,12 @@
+.env
+testdata/
+*.log
+/data
+*.json
+*.csv
+*.txt
+*.db
+*.mem
+*.vlog
+chainanalyzer
+/debug_test_data
