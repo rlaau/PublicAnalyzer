@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/app"
@@ -21,44 +19,8 @@ func main() {
 	runFixedIntegrationTest()
 }
 
-// TxPipeline TxGenerator와 EOAAnalyzer를 연결하는 파이프라인 (수정버전)
-type TxPipeline struct {
-	// 통신 채널
-	txChannel   chan *shareddomain.MarkedTransaction
-	stopChannel chan struct{}
-
-	// 컴포넌트
-	generator *txFeeder.MockTxFeeder
-	analyzer  app.EOAAnalyzer
-
-	// 통계 (atomic operations for thread safety)
-	stats PipelineStats
-
-	// 동기화 및 상태 관리
-	wg          sync.WaitGroup
-	stopOnce    sync.Once // 채널 중복 닫기 방지
-	channelOnce sync.Once // 트랜잭션 채널 중복 닫기 방지
-
-	// 디버깅
-	debugStats DebugStats
-}
-
-// PipelineStats 파이프라인 통계
-type PipelineStats struct {
-	Generated   int64 // 생성된 트랜잭션 수
-	Transmitted int64 // 전송된 트랜잭션 수
-	Processed   int64 // 처리된 트랜잭션 수
-	Dropped     int64 // 드롭된 트랜잭션 수 (채널 풀)
-	StartTime   time.Time
-}
-
-// DebugStats 디버깅용 통계
-type DebugStats struct {
-	CexToAddresses     int64 // CEX를 to로 하는 트랜잭션
-	DepositToAddresses int64 // Deposit을 to로 하는 트랜잭션
-	RandomTransactions int64 // 랜덤 트랜잭션
-	MatchFailures      int64 // 매칭 실패
-}
+// 더 이상 사용하지 않음 - MockTxFeeder로 통합됨
+// TxPipeline, PipelineStats, DebugStats → shared/txfeeder/app/mockTxFeeder.go
 
 // IsolatedTestConfig 격리 테스트 설정 (수정버전)
 type IsolatedTestConfig struct {
@@ -96,25 +58,30 @@ func runFixedIntegrationTestInternal() error {
 
 	// 2. 환경 준비는 이제 MockTxFeeder가 담당
 
-	// 3. 파이프라인 생성 (수정버전)
-	pipeline, err := createFixedTxPipeline(config)
+	// 3. 파이프라인 생성 (간소화된 버전)
+	generator, analyzer, analyzerChannel, err := createSimplifiedPipeline(config)
 	if err != nil {
 		return fmt.Errorf("failed to create pipeline: %w", err)
 	}
-	
+
 	// defer로 확실한 정리 보장
 	defer func() {
-		if pipeline != nil {
-			pipeline.SafeClose()
+		if generator != nil {
 			// MockTxFeeder 정리 (트랜잭션 생성 중지)
-			pipeline.generator.Close()
+			generator.Close()
 			// 환경 정리는 여기서 명시적으로 담당
-			pipeline.generator.CleanupEnvironment()
+			generator.CleanupEnvironment()
+		}
+		if analyzer != nil {
+			analyzer.Close()
+		}
+		if analyzerChannel != nil {
+			close(analyzerChannel)
 		}
 	}()
 
 	// 4. 통합 테스트 실행
-	if err := runFixedPipelineTest(pipeline, config); err != nil {
+	if err := runSimplifiedPipelineTest(generator, analyzer, analyzerChannel, config); err != nil {
 		return fmt.Errorf("pipeline test failed: %w", err)
 	}
 
@@ -150,15 +117,14 @@ func setupFixedTestConfig() *IsolatedTestConfig {
 	return config
 }
 
-// createFixedTxPipeline 수정된 파이프라인 생성
-func createFixedTxPipeline(config *IsolatedTestConfig) (*TxPipeline, error) {
-	fmt.Println("\n3️⃣ Creating fixed transaction pipeline...")
+// createSimplifiedPipeline 새로운 채널 등록 방식으로 간소화된 파이프라인 생성
+func createSimplifiedPipeline(config *IsolatedTestConfig) (*txFeeder.MockTxFeeder, app.EOAAnalyzer, chan *shareddomain.MarkedTransaction, error) {
+	fmt.Println("\n3️⃣ Creating simplified transaction pipeline...")
 
-	// 공유 채널 생성
-	txChannel := make(chan *shareddomain.MarkedTransaction, config.ChannelBufferSize)
-	stopChannel := make(chan struct{})
+	// Analyzer용 채널 생성
+	analyzerChannel := make(chan *shareddomain.MarkedTransaction, config.ChannelBufferSize)
 
-	// TxFeeder 먼저 생성 (빈 cexSet으로 시작)
+	// TxFeeder 생성 (빈 cexSet으로 시작)
 	startTime, _ := time.Parse("2006-01-02", "2025-01-01") // 단일 시간 소스: tx.BlockTime의 기준점
 	genConfig := &feederDomain.TxGeneratorConfig{
 		TotalTransactions:            config.TotalTransactions,
@@ -173,7 +139,7 @@ func createFixedTxPipeline(config *IsolatedTestConfig) (*TxPipeline, error) {
 	// 빈 CEXSet으로 MockTxFeeder 생성
 	emptyCexSet := shareddomain.NewCEXSet()
 	generator := txFeeder.NewTxFeeder(genConfig, emptyCexSet)
-	
+
 	// 환경 설정을 위한 EnvironmentConfig 생성
 	envConfig := &txFeeder.EnvironmentConfig{
 		BaseDir:           config.BaseDir,
@@ -189,20 +155,21 @@ func createFixedTxPipeline(config *IsolatedTestConfig) (*TxPipeline, error) {
 		AnalysisWorkers:   config.AnalysisWorkers,
 	}
 
-	// 환경 설정 (이전의 prepareIsolatedEnvironment 기능)
+	// 환경 설정
+	//* 여기서 파일 내용을 자신의 infra바탕으로 채워넣음
 	if err := generator.SetupEnvironment(envConfig); err != nil {
-		return nil, fmt.Errorf("failed to setup environment: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to setup environment: %w", err)
 	}
 
-	// CEX Set 로딩 (이전의 cexRepo 로직)
+	// CEX Set 로딩
 	_, err := generator.LoadCEXSetFromFile(config.CEXFilePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load CEX set: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to load CEX set: %w", err)
 	}
 
 	fmt.Printf("Load MockAndHiddenDeposit from %s", config.MockDepositFile)
 	if err := generator.LoadMockDepositAddresses(config.MockDepositFile); err != nil {
-		return nil, fmt.Errorf("failed to load mock deposits: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to load mock deposits: %w", err)
 	}
 	fmt.Printf("   ⚙️  TxGenerator: CEX ratio 1/%d (%.1f%%), Deposit ratio 1/%d (%.1f%%)\n",
 		genConfig.DepositToCexRatio, 100.0/float64(genConfig.DepositToCexRatio),
@@ -210,7 +177,7 @@ func createFixedTxPipeline(config *IsolatedTestConfig) (*TxPipeline, error) {
 
 	// EOAAnalyzer 생성
 	analyzerConfig := &app.EOAAnalyzerConfig{
-		Name:                "Fixed-Pipeline-Analyzer",
+		Name:                "Simplified-Pipeline-Analyzer",
 		Mode:                app.TestingMode,
 		ChannelBufferSize:   config.ChannelBufferSize,
 		WorkerCount:         config.AnalysisWorkers,
@@ -226,63 +193,42 @@ func createFixedTxPipeline(config *IsolatedTestConfig) (*TxPipeline, error) {
 
 	analyzer, err := app.CreateAnalyzer(analyzerConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create analyzer: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create analyzer: %w", err)
 	}
 	fmt.Printf("   ⚙️  EOAAnalyzer created with %d workers\n", config.AnalysisWorkers)
 
-	pipeline := &TxPipeline{
-		txChannel:   txChannel,
-		stopChannel: stopChannel,
-		generator:   generator,
-		analyzer:    analyzer,
-		stats: PipelineStats{
-			StartTime: time.Now(),
-		},
-		debugStats: DebugStats{}, // 디버깅 통계 초기화
-	}
+	// TxFeeder에 analyzer 채널 등록
+	generator.RegisterOutputChannel(analyzerChannel)
 
-	fmt.Printf("   ✅ Fixed pipeline created\n")
-	return pipeline, nil
+	fmt.Printf("   ✅ Simplified pipeline created\n")
+	return generator, analyzer, analyzerChannel, nil
 }
 
-// runFixedPipelineTest 수정된 파이프라인 테스트 실행
-func runFixedPipelineTest(pipeline *TxPipeline, config *IsolatedTestConfig) error {
-	fmt.Println("\n4️⃣ Running fixed pipeline test...")
+// runSimplifiedPipelineTest 간소화된 파이프라인 테스트 실행
+func runSimplifiedPipelineTest(generator *txFeeder.MockTxFeeder, analyzer app.EOAAnalyzer, analyzerChannel chan *shareddomain.MarkedTransaction, config *IsolatedTestConfig) error {
+	fmt.Println("\n4️⃣ Running simplified pipeline test...")
 
 	ctx, cancel := context.WithTimeout(context.Background(), config.TestDuration)
 	defer cancel()
 
-	// 1. EOA Analyzer 시작
+	// 1. EOA Analyzer 시작 (채널로부터 트랜잭션 받기)
 	analyzerDone := make(chan error, 1)
-	pipeline.wg.Add(1)
 	go func() {
-		defer pipeline.wg.Done()
-		analyzerDone <- pipeline.analyzer.Start(ctx)
+		analyzerDone <- runAnalyzerWithChannel(analyzer, analyzerChannel, ctx)
 	}()
-	fmt.Printf("   🔄 EOA Analyzer started\n")
+	fmt.Printf("   🔄 EOA Analyzer started with channel\n")
 
-	// 2. TxGenerator 시작
-	if err := pipeline.generator.Start(ctx); err != nil {
+	// 2. TxGenerator 시작 (등록된 채널로 자동 전송)
+	if err := generator.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start generator: %w", err)
 	}
 	fmt.Printf("   🔄 TxGenerator started\n")
 
-	// 3. 수정된 Generator → Channel 브리지
-	pipeline.wg.Add(1)
-	go pipeline.runFixedGeneratorBridge(ctx)
-	fmt.Printf("   🌉 Fixed generator bridge started\n")
+	// 3. 모니터링 (간소화됨)
+	go runSimplifiedMonitoring(generator, analyzer, ctx)
+	fmt.Printf("   📊 Monitoring started\n")
 
-	// 4. 수정된 Channel → Analyzer 브리지
-	pipeline.wg.Add(1)
-	go pipeline.runFixedAnalyzerBridge(ctx)
-	fmt.Printf("   🌉 Fixed analyzer bridge started\n")
-
-	// 5. 강화된 모니터링
-	pipeline.wg.Add(1)
-	go pipeline.runEnhancedMonitoring(ctx)
-	fmt.Printf("   📊 Enhanced monitoring started\n")
-
-	// 6. 테스트 완료 대기
+	// 4. 테스트 완료 대기
 	select {
 	case <-ctx.Done():
 		fmt.Printf("   ⏰ Test completed by timeout\n")
@@ -294,109 +240,62 @@ func runFixedPipelineTest(pipeline *TxPipeline, config *IsolatedTestConfig) erro
 		}
 	}
 
-	// 7. 안전한 정리
-	pipeline.SafeStop()
-	pipeline.wg.Wait()
+	// 5. 정리
+	generator.Stop()
 
-	pipeline.printEnhancedResults()
+	printSimplifiedResults(generator, analyzer)
 	return nil
 }
 
-// runFixedGeneratorBridge 수정된 Generator 브리지 (채널 동기화 수정)
-func (p *TxPipeline) runFixedGeneratorBridge(ctx context.Context) {
-	defer p.wg.Done()
+// runAnalyzerWithChannel analyzer가 채널로부터 트랜잭션을 받아 처리
+func runAnalyzerWithChannel(analyzer app.EOAAnalyzer, analyzerChannel chan *shareddomain.MarkedTransaction, ctx context.Context) error {
+	fmt.Printf("   🔗 Starting analyzer with external channel (capacity: %d)\n", cap(analyzerChannel))
 
-	generatorChannel := p.generator.GetTxChannel()
+	// analyzer를 별도 고루틴에서 시작
+	analyzerDone := make(chan error, 1)
+	go func() {
+		analyzerDone <- analyzer.Start(ctx)
+	}()
 
-	for {
-		select {
-		case <-ctx.Done():
-			p.safeCloseTxChannel() // 안전한 채널 닫기
-			return
-		case <-p.stopChannel:
-			p.safeCloseTxChannel() // 안전한 채널 닫기
-			return
-		case tx, ok := <-generatorChannel:
-			if !ok {
-				// Generator가 완료됨
-				p.safeCloseTxChannel() // 안전한 채널 닫기
-				return
-			}
-
-			atomic.AddInt64(&p.stats.Generated, 1)
-
-			// 디버깅: 트랜잭션 타입 분석
-			//*더이상 기능할 수 없는 코드
-			//*고부하 환경에서 돌렸다간 성능저하 극심&제대로된 레포팅도 아님
-			//analyzeTransactionType(&tx)
-
-			// 공유 채널로 전달 (non-blocking)
-			txPtr := &tx
-			select {
-			case p.txChannel <- txPtr:
-				atomic.AddInt64(&p.stats.Transmitted, 1)
-			default:
-				// 채널이 풀이면 드롭
-				atomic.AddInt64(&p.stats.Dropped, 1)
-			}
-		}
-	}
-}
-
-// analyzeTransactionType 트랜잭션 타입 분석 (디버깅용)
-// func (p *TxPipeline) analyzeTransactionType(tx *shareddomain.MarkedTransaction) {
-// 	// 간단한 패턴 매칭으로 타입 추정
-// 	toAddrStr := tx.To.String()
-
-// 	// CEX 주소 체크 (하드코딩 체크)
-// 	if strings.HasPrefix(toAddrStr, "0x0681d8db095565fe8a346fa0277bffde9c0edbbf") ||
-// 		strings.HasPrefix(toAddrStr, "0x4e9ce36e442e55ecd9025b9a6e0d88485d628a67") ||
-// 		strings.HasPrefix(toAddrStr, "0x4ed6cf63bd9c009d247ee51224fc1c7041f517f1") {
-// 		atomic.AddInt64(&p.debugStats.CexToAddresses, 1)
-// 		return
-// 	}
-
-// 	// Mock Deposit 주소 체크
-// 	if strings.HasPrefix(toAddrStr, "0xaaaaaaaaaa") ||
-// 		strings.HasPrefix(toAddrStr, "0xbbbbbbbb") ||
-// 		strings.HasPrefix(toAddrStr, "0xcccccccc") {
-// 		atomic.AddInt64(&p.debugStats.DepositToAddresses, 1)
-// 		return
-// 	}
-
-// 	atomic.AddInt64(&p.debugStats.RandomTransactions, 1)
-// }
-
-// runFixedAnalyzerBridge 수정된 Analyzer 브리지
-func (p *TxPipeline) runFixedAnalyzerBridge(ctx context.Context) {
-	defer p.wg.Done()
+	// 채널 브릿지: 외부 채널 → analyzer 내부 채널
+	fmt.Printf("   🔗 Starting channel bridge: external → internal\n")
+	bridgeCount := int64(0)
 
 	for {
 		select {
 		case <-ctx.Done():
-			return
-		case <-p.stopChannel:
-			return
-		case tx, ok := <-p.txChannel:
-			if !ok {
-				// 채널이 닫힘 (Generator 완료)
-				return
+			fmt.Printf("   🔗 Channel bridge stopping (context), bridged %d transactions\n", bridgeCount)
+			return ctx.Err()
+		case tx := <-analyzerChannel:
+			if tx == nil {
+				fmt.Printf("   🔗 Channel bridge stopping (channel closed), bridged %d transactions\n", bridgeCount)
+				return nil
 			}
 
-			// 분석기로 전달 (에러 처리 강화)
-			if err := p.analyzer.ProcessTransaction(tx); err != nil {
-				atomic.AddInt64(&p.debugStats.MatchFailures, 1)
-			} else {
-				atomic.AddInt64(&p.stats.Processed, 1)
+			// 트랜잭션을 analyzer로 전달
+			if err := analyzer.ProcessTransaction(tx); err != nil {
+				// 에러는 로깅하지만 계속 진행
+				if bridgeCount < 5 {
+					fmt.Printf("   ⚠️ Bridge error #%d: %v\n", bridgeCount+1, err)
+				}
 			}
+			bridgeCount++
+
+			// 처음 몇 개는 브릿지 성공 로깅
+			if bridgeCount <= 5 {
+				fmt.Printf("   🔗 Bridged tx #%d: %s → %s\n",
+					bridgeCount, tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
+			}
+
+		case err := <-analyzerDone:
+			fmt.Printf("   🔗 Analyzer stopped, bridged %d transactions\n", bridgeCount)
+			return err
 		}
 	}
 }
 
-// runEnhancedMonitoring 강화된 실시간 모니터링
-func (p *TxPipeline) runEnhancedMonitoring(ctx context.Context) {
-	defer p.wg.Done()
-
+// runSimplifiedMonitoring 간소화된 모니터링
+func runSimplifiedMonitoring(generator *txFeeder.MockTxFeeder, analyzer app.EOAAnalyzer, ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -404,155 +303,37 @@ func (p *TxPipeline) runEnhancedMonitoring(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-p.stopChannel:
-			return
 		case <-ticker.C:
-			p.printEnhancedRealtimeStats()
+			stats := generator.GetPipelineStats()
+			analyzerStats := analyzer.GetStatistics()
+			fmt.Printf("📊 [%.1fs] Gen: %d | Analyzer: %v\n",
+				time.Since(stats.StartTime).Seconds(),
+				stats.Generated,
+				analyzerStats["success_count"])
 		}
 	}
 }
 
-// printEnhancedRealtimeStats 강화된 실시간 통계 출력
-func (p *TxPipeline) printEnhancedRealtimeStats() {
-	// 기본 통계
-	generated := atomic.LoadInt64(&p.stats.Generated)
-	processed := atomic.LoadInt64(&p.stats.Processed)
+// printSimplifiedResults 간소화된 결과 출력
+func printSimplifiedResults(generator *txFeeder.MockTxFeeder, analyzer app.EOAAnalyzer) {
+	stats := generator.GetPipelineStats()
+	analyzerStats := analyzer.GetStatistics()
 
-	// 디버깅 통계
-	// cexTxs := atomic.LoadInt64(&p.debugStats.CexToAddresses)
-	// depositTxs := atomic.LoadInt64(&p.debugStats.DepositToAddresses)
-	// randomTxs := atomic.LoadInt64(&p.debugStats.RandomTransactions)
-	//failures := atomic.LoadInt64(&p.debugStats.MatchFailures)
-
-	uptime := time.Since(p.stats.StartTime).Seconds()
-	channelUsage := len(p.txChannel)
-	channelCapacity := cap(p.txChannel)
-
-	genRate := float64(generated) / uptime
-	processRate := float64(processed) / uptime
-	channelPct := float64(channelUsage) / float64(channelCapacity) * 100
-
-	// 분석기 통계
-	analyzerStats := p.analyzer.GetStatistics()
-	analyzerHealthy := p.analyzer.IsHealthy()
-
-	fmt.Printf("📊 [%.1fs] Gen: %d (%.0f/s) | Proc: %d (%.0f/s) | Ch: %d/%d (%.1f%%) | Healthy: %t\n",
-		uptime, generated, genRate, processed, processRate,
-		channelUsage, channelCapacity, channelPct, analyzerHealthy)
-
-	// fmt.Printf("    🎯 Types: CEX→%d (%.1f%%) | Deposit→%d (%.1f%%) | Random→%d (%.1f%%) | Fail→%d\n",
-	// 	cexTxs, float64(cexTxs)/float64(generated)*100,
-	// 	depositTxs, float64(depositTxs)/float64(generated)*100,
-	// 	randomTxs, float64(randomTxs)/float64(generated)*100,
-	// 	failures)
-
-	// 상세 분석기 통계 (주기적)
-	if int(uptime)%6 == 0 {
-		fmt.Printf("    📈 Analyzer: Success: %v | Deposits: %v | Graph: %v | Window: %v | Dropped: %v\n",
-			analyzerStats["success_count"], analyzerStats["deposit_detections"],
-			analyzerStats["graph_updates"], analyzerStats["window_updates"],
-			analyzerStats["dropped_txs"])
-	}
+	fmt.Println("\n" + strings.Repeat("=", 60))
+	fmt.Println("📊 SIMPLIFIED PIPELINE TEST RESULTS")
+	fmt.Println(strings.Repeat("=", 60))
+	fmt.Printf("Generated: %d | Transmitted: %d | Runtime: %.1fs\n",
+		stats.Generated, stats.Transmitted, time.Since(stats.StartTime).Seconds())
+	fmt.Printf("Analyzer Success: %v | Healthy: %t\n",
+		analyzerStats["success_count"], analyzer.IsHealthy())
+	fmt.Println(strings.Repeat("=", 60))
 }
 
-// printEnhancedResults 강화된 최종 결과 출력
-func (p *TxPipeline) printEnhancedResults() {
-	fmt.Println("\n" + strings.Repeat("=", 90))
-	fmt.Println("📊 FIXED QUEUE-BASED INTEGRATION TEST RESULTS")
-	fmt.Println(strings.Repeat("=", 90))
+// 더 이상 사용하지 않음 - MockTxFeeder에서 직접 처리
 
-	// Pipeline 통계
-	generated := atomic.LoadInt64(&p.stats.Generated)
-	transmitted := atomic.LoadInt64(&p.stats.Transmitted)
-	processed := atomic.LoadInt64(&p.stats.Processed)
-	dropped := atomic.LoadInt64(&p.stats.Dropped)
-	uptime := time.Since(p.stats.StartTime).Seconds()
+// 이전 TxPipeline 메서드들 제거됨 - MockTxFeeder에서 직접 처리
 
-	// 디버깅 통계
-	cexTxs := atomic.LoadInt64(&p.debugStats.CexToAddresses)
-	depositTxs := atomic.LoadInt64(&p.debugStats.DepositToAddresses)
-	randomTxs := atomic.LoadInt64(&p.debugStats.RandomTransactions)
-	failures := atomic.LoadInt64(&p.debugStats.MatchFailures)
-
-	fmt.Printf("🔢 Pipeline Stats:\n")
-	fmt.Printf("   Generated:    %d transactions\n", generated)
-	fmt.Printf("   Transmitted:  %d transactions\n", transmitted)
-	fmt.Printf("   Processed:    %d transactions\n", processed)
-	fmt.Printf("   Dropped:      %d transactions\n", dropped)
-	fmt.Printf("   Runtime:      %.1f seconds\n", uptime)
-
-	if generated > 0 {
-		transmissionRate := float64(transmitted) / float64(generated) * 100
-		processingRate := float64(processed) / float64(transmitted) * 100
-		overallRate := float64(processed) / float64(generated) * 100
-
-		fmt.Printf("   Transmission: %.1f%% (%d/%d)\n", transmissionRate, transmitted, generated)
-		fmt.Printf("   Processing:   %.1f%% (%d/%d)\n", processingRate, processed, transmitted)
-		fmt.Printf("   Overall:      %.1f%% (%d/%d)\n", overallRate, processed, generated)
-
-		genTPS := float64(generated) / uptime
-		procTPS := float64(processed) / uptime
-		fmt.Printf("   Gen Rate:     %.1f tx/sec\n", genTPS)
-		fmt.Printf("   Proc Rate:    %.1f tx/sec\n", procTPS)
-	}
-
-	// 디버깅 통계
-	fmt.Printf("\n🎯 Transaction Type Analysis:\n")
-	fmt.Printf("   CEX Transactions:     %d (%.1f%%)\n", cexTxs, float64(cexTxs)/float64(generated)*100)
-	fmt.Printf("   Deposit Transactions: %d (%.1f%%)\n", depositTxs, float64(depositTxs)/float64(generated)*100)
-	fmt.Printf("   Random Transactions:  %d (%.1f%%)\n", randomTxs, float64(randomTxs)/float64(generated)*100)
-	fmt.Printf("   Processing Failures:  %d\n", failures)
-
-	// 분석기 상세 통계
-	fmt.Printf("\n⚡ Analyzer Details:\n")
-	analyzerStats := p.analyzer.GetStatistics()
-	for key, value := range analyzerStats {
-		fmt.Printf("   %-20s: %v\n", key, value)
-	}
-
-	fmt.Printf("\n💚 System Health: %t\n", p.analyzer.IsHealthy())
-
-	// 문제 진단
-	fmt.Printf("\n🔧 Diagnostic Summary:\n")
-	if analyzerStats["deposit_detections"].(int64) == 0 {
-		fmt.Printf("   ❌ No deposit detections - check CEX address matching logic\n")
-		if cexTxs == 0 {
-			fmt.Printf("   ❌ No CEX transactions generated - check TxGenerator CEX ratio\n")
-		}
-	}
-	if analyzerStats["graph_updates"].(int64) == 0 {
-		fmt.Printf("   ❌ No graph updates - check deposit address detection\n")
-	}
-
-	expectedCexTxs := generated / 5 // 20% 기대치
-	if cexTxs < expectedCexTxs/2 {
-		fmt.Printf("   ⚠️  CEX transaction ratio lower than expected (%d vs %d expected)\n", cexTxs, expectedCexTxs)
-	}
-
-	fmt.Println(strings.Repeat("=", 90))
-}
-
-// safeCloseTxChannel 안전한 트랜잭션 채널 닫기
-func (p *TxPipeline) safeCloseTxChannel() {
-	p.channelOnce.Do(func() {
-		close(p.txChannel)
-	})
-}
-
-// SafeStop 안전한 파이프라인 중지
-func (p *TxPipeline) SafeStop() {
-	p.stopOnce.Do(func() {
-		close(p.stopChannel)
-	})
-	p.generator.Stop()
-	p.analyzer.Stop()
-}
-
-// SafeClose 안전한 파이프라인 리소스 정리
-func (p *TxPipeline) SafeClose() error {
-	p.SafeStop()
-	return p.analyzer.Close()
-}
+// 모든 TxPipeline 메서드들 제거됨 - MockTxFeeder에서 직접 처리하거나 새로운 간소화된 함수들로 대체
 
 // 기존 유틸 함수들 재사용
 // * 상대적 관점에서의 프로젝트 루트 찾는 로직이므로, 파일 위치 바뀌면 변경 필요한 함수임

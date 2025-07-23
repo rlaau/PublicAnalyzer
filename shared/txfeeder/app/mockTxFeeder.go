@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	sharedDomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
@@ -33,7 +34,24 @@ type EnvironmentConfig struct {
 	AnalysisWorkers   int
 }
 
-// MockTxFeeder generates transactions for testing EE module with environment management
+// PipelineStats 파이프라인 통계
+type PipelineStats struct {
+	Generated   int64 // 생성된 트랜잭션 수
+	Transmitted int64 // 전송된 트랜잭션 수
+	Processed   int64 // 처리된 트랜잭션 수
+	Dropped     int64 // 드롭된 트랜잭션 수 (채널 풀)
+	StartTime   time.Time
+}
+
+// DebugStats 디버깅용 통계
+type DebugStats struct {
+	CexToAddresses     int64 // CEX를 to로 하는 트랜잭션
+	DepositToAddresses int64 // Deposit을 to로 하는 트랜잭션
+	RandomTransactions int64 // 랜덤 트랜잭션
+	MatchFailures      int64 // 매칭 실패
+}
+
+// MockTxFeeder generates transactions for testing EE module with pipeline management
 type MockTxFeeder struct {
 	config           *domain.TxGeneratorConfig
 	state            *domain.TxGeneratorState
@@ -54,9 +72,18 @@ type MockTxFeeder struct {
 	// Environment management
 	baseDir     string
 	isolatedDir string
+
+	// Pipeline management - 출력 채널 등록 방식
+	requestedOutputChannels []chan<- *sharedDomain.MarkedTransaction // 등록된 출력 채널들
+	
+	// Pipeline 통계 및 상태 관리
+	stats       PipelineStats
+	debugStats  DebugStats
+	wg          sync.WaitGroup
+	channelOnce sync.Once // 트랜잭션 채널 중복 닫기 방지
 }
 
-// NewTxFeeder creates a new transaction generator
+// NewTxFeeder creates a new transaction generator with pipeline capabilities
 func NewTxFeeder(config *domain.TxGeneratorConfig, cexSet *sharedDomain.CEXSet) *MockTxFeeder {
 	return &MockTxFeeder{
 		config:           config,
@@ -66,6 +93,11 @@ func NewTxFeeder(config *domain.TxGeneratorConfig, cexSet *sharedDomain.CEXSet) 
 		markedTxChannel:  make(chan sharedDomain.MarkedTransaction, 100_000), // Buffer for 10k transactions
 		stopChannel:      make(chan struct{}),
 		doneChannel:      make(chan struct{}),
+		requestedOutputChannels: make([]chan<- *sharedDomain.MarkedTransaction, 0),
+		stats: PipelineStats{
+			StartTime: time.Now(),
+		},
+		debugStats: DebugStats{},
 	}
 }
 
@@ -100,6 +132,24 @@ func (g *MockTxFeeder) GetGeneratedCount() int64 {
 	return g.state.GeneratedCount
 }
 
+// RegisterOutputChannel registers a channel to receive generated transactions
+func (g *MockTxFeeder) RegisterOutputChannel(outputCh chan<- *sharedDomain.MarkedTransaction) {
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+	g.requestedOutputChannels = append(g.requestedOutputChannels, outputCh)
+}
+
+// GetPipelineStats returns current pipeline statistics
+func (g *MockTxFeeder) GetPipelineStats() PipelineStats {
+	return PipelineStats{
+		Generated:   atomic.LoadInt64(&g.stats.Generated),
+		Transmitted: atomic.LoadInt64(&g.stats.Transmitted),
+		Processed:   atomic.LoadInt64(&g.stats.Processed),
+		Dropped:     atomic.LoadInt64(&g.stats.Dropped),
+		StartTime:   g.stats.StartTime,
+	}
+}
+
 // generateTransactions is the main generation loop running in goroutine
 func (g *MockTxFeeder) generateTransactions(ctx context.Context) {
 	defer close(g.doneChannel)
@@ -130,17 +180,23 @@ func (g *MockTxFeeder) generateTransactions(ctx context.Context) {
 				return
 			}
 
-			// Generate and send transaction
+			// Generate transaction
 			tx := g.generateSingleTransaction()
+			atomic.AddInt64(&g.stats.Generated, 1)
 
+			// Send to legacy channel (for backward compatibility)
 			select {
 			case g.markedTxChannel <- tx:
-				// Transaction sent successfully
 			case <-ctx.Done():
 				return
 			case <-g.stopChannel:
 				return
+			default:
+				atomic.AddInt64(&g.stats.Dropped, 1)
 			}
+
+			// Send to all registered output channels
+			g.sendToOutputChannels(&tx, ctx)
 		}
 	}
 }
@@ -330,6 +386,27 @@ func (g *MockTxFeeder) parseAddressString(hexStr string) (sharedDomain.Address, 
 	}
 
 	return addr, nil
+}
+
+// sendToOutputChannels sends transaction to all registered output channels
+func (g *MockTxFeeder) sendToOutputChannels(tx *sharedDomain.MarkedTransaction, ctx context.Context) {
+	g.mutex.RLock()
+	channels := g.requestedOutputChannels
+	g.mutex.RUnlock()
+
+	for _, ch := range channels {
+		select {
+		case ch <- tx:
+			atomic.AddInt64(&g.stats.Transmitted, 1)
+		case <-ctx.Done():
+			return
+		case <-g.stopChannel:
+			return
+		default:
+			// Channel is full, drop the transaction
+			atomic.AddInt64(&g.stats.Dropped, 1)
+		}
+	}
 }
 
 // SetupEnvironment 격리된 테스트 환경을 설정 (feed_and_analyze.go에서 이동)
