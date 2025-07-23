@@ -17,7 +17,7 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/domain"
 )
 
-// EnvironmentConfig 환경 설정을 위한 구조체
+// EnvironmentConfig 환경 설정을 위한 구조체 (기존 호환성용)
 type EnvironmentConfig struct {
 	BaseDir         string
 	IsolatedDir     string
@@ -32,6 +32,24 @@ type EnvironmentConfig struct {
 	TotalTransactions int
 	GenerationRate    int
 	AnalysisWorkers   int
+}
+
+// AdditionalDataConfig 추가 데이터 설정을 위한 구조체 (향후 확장용)
+type AdditionalDataConfig struct {
+	// 향후 추가 데이터 관련 설정들이 들어갈 예정
+	// 일단 비워두고 나중에 필요할 때 확장
+}
+
+// TxFeederConfig 통합된 TxFeeder 설정
+type TxFeederConfig struct {
+	// 트랜잭션 생성 설정
+	GenConfig *domain.TxGeneratorConfig
+
+	// 환경 설정
+	EnvConfig *EnvironmentConfig
+
+	// 추가 데이터 설정 (현재는 사용하지 않음)
+	AdditionalDataConfig *AdditionalDataConfig
 }
 
 // PipelineStats 파이프라인 통계
@@ -75,7 +93,7 @@ type MockTxFeeder struct {
 
 	// Pipeline management - 출력 채널 등록 방식
 	requestedOutputChannels []chan<- *sharedDomain.MarkedTransaction // 등록된 출력 채널들
-	
+
 	// Pipeline 통계 및 상태 관리
 	stats       PipelineStats
 	debugStats  DebugStats
@@ -83,16 +101,58 @@ type MockTxFeeder struct {
 	channelOnce sync.Once // 트랜잭션 채널 중복 닫기 방지
 }
 
-// NewTxFeeder creates a new transaction generator with pipeline capabilities
-func NewTxFeeder(config *domain.TxGeneratorConfig, cexSet *sharedDomain.CEXSet) *MockTxFeeder {
+// NewTxFeeder 간단한 TxFeeder 생성을 위한 헬퍼 함수
+func NewTxFeeder(genConfig *domain.TxGeneratorConfig, envConfig *EnvironmentConfig) (*MockTxFeeder, error) {
+	config := &TxFeederConfig{
+		GenConfig:            genConfig,
+		EnvConfig:            envConfig,
+		AdditionalDataConfig: nil, // 현재 사용하지 않음
+	}
+
+	return NewTxFeederWithComplexConfig(config)
+}
+
+// NewTxFeederWithComplexConfig 통합된 설정으로 TxFeeder를 생성하고 모든 초기화를 완료
+func NewTxFeederWithComplexConfig(config *TxFeederConfig) (*MockTxFeeder, error) {
+	// 1. 기본 TxFeeder 생성 (빈 CEXSet으로 시작)
+	emptyCexSet := sharedDomain.NewCEXSet()
+	feeder := GetRawTxFeeder(config.GenConfig, emptyCexSet)
+
+	// 2. 환경 설정이 있으면 실행
+	if config.EnvConfig != nil {
+		if err := feeder.SetupEnvironment(config.EnvConfig); err != nil {
+			return nil, fmt.Errorf("failed to setup environment: %w", err)
+		}
+
+		// CEX Set 로딩
+		if _, err := feeder.LoadCEXSetFromFile(config.EnvConfig.CEXFilePath); err != nil {
+			return nil, fmt.Errorf("failed to load CEX set: %w", err)
+		}
+
+		// Mock Deposit 주소 로딩
+		if err := feeder.LoadMockDepositAddresses(config.EnvConfig.MockDepositFile); err != nil {
+			return nil, fmt.Errorf("failed to load mock deposits: %w", err)
+		}
+	}
+
+	// 3. AdditionalDataConfig는 현재 무시 (향후 확장용)
+	// if config.AdditionalDataConfig != nil {
+	//     // 향후 추가 데이터 설정 처리
+	// }
+
+	return feeder, nil
+}
+
+// GetRawTxFeeder creates a new transaction generator with pipeline capabilities (기존 호환성용)
+func GetRawTxFeeder(config *domain.TxGeneratorConfig, cexSet *sharedDomain.CEXSet) *MockTxFeeder {
 	return &MockTxFeeder{
-		config:           config,
-		state:            domain.NewTxGeneratorState(config.StartTime, config.TimeIncrementDuration, config.TransactionsPerTimeIncrement),
-		mockDepositAddrs: domain.NewMockDepositAddressSet(),
-		cexSet:           cexSet,
-		markedTxChannel:  make(chan sharedDomain.MarkedTransaction, 100_000), // Buffer for 10k transactions
-		stopChannel:      make(chan struct{}),
-		doneChannel:      make(chan struct{}),
+		config:                  config,
+		state:                   domain.NewTxGeneratorState(config.StartTime, config.TimeIncrementDuration, config.TransactionsPerTimeIncrement),
+		mockDepositAddrs:        domain.NewMockDepositAddressSet(),
+		cexSet:                  cexSet,
+		markedTxChannel:         make(chan sharedDomain.MarkedTransaction, 100_000), // Buffer for 10k transactions
+		stopChannel:             make(chan struct{}),
+		doneChannel:             make(chan struct{}),
 		requestedOutputChannels: make([]chan<- *sharedDomain.MarkedTransaction, 0),
 		stats: PipelineStats{
 			StartTime: time.Now(),

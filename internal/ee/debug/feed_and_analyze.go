@@ -54,11 +54,9 @@ func runFixedIntegrationTest() {
 
 func runFixedIntegrationTestInternal() error {
 	// 1. 테스트 설정 (개선됨)
-	config := setupFixedTestConfig()
+	config := setupIsolatedEviromentConfig()
 
-	// 2. 환경 준비는 이제 MockTxFeeder가 담당
-
-	// 3. 파이프라인 생성 (간소화된 버전)
+	// 2. 파이프라인 생성
 	generator, analyzer, analyzerChannel, err := createSimplifiedPipeline(config)
 	if err != nil {
 		return fmt.Errorf("failed to create pipeline: %w", err)
@@ -88,8 +86,8 @@ func runFixedIntegrationTestInternal() error {
 	return nil
 }
 
-// setupFixedTestConfig 수정된 테스트 설정 생성
-func setupFixedTestConfig() *IsolatedTestConfig {
+// setupIsolatedEviromentConfig 수정된 테스트 설정 생성
+func setupIsolatedEviromentConfig() *IsolatedTestConfig {
 	fmt.Println("\n1️⃣ Setting up fixed test configuration...")
 
 	baseDir := findProjectRoot()
@@ -136,10 +134,6 @@ func createSimplifiedPipeline(config *IsolatedTestConfig) (*txFeeder.MockTxFeede
 		RandomToDepositRatio:         30,                    //1/15 비율로 Deposit 주소 사용
 	}
 
-	// 빈 CEXSet으로 MockTxFeeder 생성
-	emptyCexSet := shareddomain.NewCEXSet()
-	generator := txFeeder.NewTxFeeder(genConfig, emptyCexSet)
-
 	// 환경 설정을 위한 EnvironmentConfig 생성
 	envConfig := &txFeeder.EnvironmentConfig{
 		BaseDir:           config.BaseDir,
@@ -155,21 +149,10 @@ func createSimplifiedPipeline(config *IsolatedTestConfig) (*txFeeder.MockTxFeede
 		AnalysisWorkers:   config.AnalysisWorkers,
 	}
 
-	// 환경 설정
-	//* 여기서 파일 내용을 자신의 infra바탕으로 채워넣음
-	if err := generator.SetupEnvironment(envConfig); err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to setup environment: %w", err)
-	}
-
-	// CEX Set 로딩
-	_, err := generator.LoadCEXSetFromFile(config.CEXFilePath)
+	// 통합된 설정으로 TxFeeder 생성 (모든 초기화 완료)
+	transactionFeeder, err := txFeeder.NewTxFeeder(genConfig, envConfig)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to load CEX set: %w", err)
-	}
-
-	fmt.Printf("Load MockAndHiddenDeposit from %s", config.MockDepositFile)
-	if err := generator.LoadMockDepositAddresses(config.MockDepositFile); err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to load mock deposits: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create TxFeeder: %w", err)
 	}
 	fmt.Printf("   ⚙️  TxGenerator: CEX ratio 1/%d (%.1f%%), Deposit ratio 1/%d (%.1f%%)\n",
 		genConfig.DepositToCexRatio, 100.0/float64(genConfig.DepositToCexRatio),
@@ -198,14 +181,14 @@ func createSimplifiedPipeline(config *IsolatedTestConfig) (*txFeeder.MockTxFeede
 	fmt.Printf("   ⚙️  EOAAnalyzer created with %d workers\n", config.AnalysisWorkers)
 
 	// TxFeeder에 analyzer 채널 등록
-	generator.RegisterOutputChannel(analyzerChannel)
+	transactionFeeder.RegisterOutputChannel(analyzerChannel)
 
 	fmt.Printf("   ✅ Simplified pipeline created\n")
-	return generator, analyzer, analyzerChannel, nil
+	return transactionFeeder, analyzer, analyzerChannel, nil
 }
 
 // runSimplifiedPipelineTest 간소화된 파이프라인 테스트 실행
-func runSimplifiedPipelineTest(generator *txFeeder.MockTxFeeder, analyzer app.EOAAnalyzer, analyzerChannel chan *shareddomain.MarkedTransaction, config *IsolatedTestConfig) error {
+func runSimplifiedPipelineTest(txFeeder *txFeeder.MockTxFeeder, analyzer app.EOAAnalyzer, analyzerChannel chan *shareddomain.MarkedTransaction, config *IsolatedTestConfig) error {
 	fmt.Println("\n4️⃣ Running simplified pipeline test...")
 
 	ctx, cancel := context.WithTimeout(context.Background(), config.TestDuration)
@@ -219,13 +202,13 @@ func runSimplifiedPipelineTest(generator *txFeeder.MockTxFeeder, analyzer app.EO
 	fmt.Printf("   🔄 EOA Analyzer started with channel\n")
 
 	// 2. TxGenerator 시작 (등록된 채널로 자동 전송)
-	if err := generator.Start(ctx); err != nil {
+	if err := txFeeder.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start generator: %w", err)
 	}
 	fmt.Printf("   🔄 TxGenerator started\n")
 
 	// 3. 모니터링 (간소화됨)
-	go runSimplifiedMonitoring(generator, analyzer, ctx)
+	go runSimplifiedMonitoring(txFeeder, analyzer, ctx)
 	fmt.Printf("   📊 Monitoring started\n")
 
 	// 4. 테스트 완료 대기
@@ -241,9 +224,9 @@ func runSimplifiedPipelineTest(generator *txFeeder.MockTxFeeder, analyzer app.EO
 	}
 
 	// 5. 정리
-	generator.Stop()
+	txFeeder.Stop()
 
-	printSimplifiedResults(generator, analyzer)
+	printSimplifiedResults(txFeeder, analyzer)
 	return nil
 }
 
@@ -329,12 +312,6 @@ func printSimplifiedResults(generator *txFeeder.MockTxFeeder, analyzer app.EOAAn
 	fmt.Println(strings.Repeat("=", 60))
 }
 
-// 더 이상 사용하지 않음 - MockTxFeeder에서 직접 처리
-
-// 이전 TxPipeline 메서드들 제거됨 - MockTxFeeder에서 직접 처리
-
-// 모든 TxPipeline 메서드들 제거됨 - MockTxFeeder에서 직접 처리하거나 새로운 간소화된 함수들로 대체
-
 // 기존 유틸 함수들 재사용
 // * 상대적 관점에서의 프로젝트 루트 찾는 로직이므로, 파일 위치 바뀌면 변경 필요한 함수임
 func findProjectRoot() string {
@@ -357,6 +334,3 @@ func findProjectRoot() string {
 	workingDir, _ := os.Getwd()
 	return filepath.Join(workingDir, "../../../")
 }
-
-// 이제 더 이상 사용하지 않는 함수들 (MockTxFeeder로 이동됨)
-// prepareIsolatedEnvironment, copyFile, createMockDeposits, cleanupIsolatedEnvironment
