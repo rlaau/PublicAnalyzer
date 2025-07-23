@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -14,7 +12,6 @@ import (
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/app"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	txFeeder "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/app"
 	feederDomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/domain"
@@ -85,28 +82,43 @@ func runFixedIntegrationTest() {
 	fmt.Println("🚀 Fixed Queue-Based Integration Test: TxGenerator → Channel → EOAAnalyzer")
 	fmt.Println("🔧 Improvements: CEX matching debug, channel sync fix, enhanced monitoring")
 
+	// 에러 핸들링 개선 - defer가 실행되도록 보장
+	if err := runFixedIntegrationTestInternal(); err != nil {
+		log.Fatalf("❌ Integration test failed: %v", err)
+	}
+
+	fmt.Println("\n✅ Fixed integration test completed successfully!")
+}
+
+func runFixedIntegrationTestInternal() error {
 	// 1. 테스트 설정 (개선됨)
 	config := setupFixedTestConfig()
-	defer cleanupIsolatedEnvironment(config)
 
-	// 2. 격리된 환경 구성
-	if err := prepareIsolatedEnvironment(config); err != nil {
-		log.Fatalf("❌ Failed to prepare environment: %v", err)
-	}
+	// 2. 환경 준비는 이제 MockTxFeeder가 담당
 
 	// 3. 파이프라인 생성 (수정버전)
 	pipeline, err := createFixedTxPipeline(config)
 	if err != nil {
-		log.Fatalf("❌ Failed to create pipeline: %v", err)
+		return fmt.Errorf("failed to create pipeline: %w", err)
 	}
-	defer pipeline.SafeClose()
+	
+	// defer로 확실한 정리 보장
+	defer func() {
+		if pipeline != nil {
+			pipeline.SafeClose()
+			// MockTxFeeder 정리 (트랜잭션 생성 중지)
+			pipeline.generator.Close()
+			// 환경 정리는 여기서 명시적으로 담당
+			pipeline.generator.CleanupEnvironment()
+		}
+	}()
 
 	// 4. 통합 테스트 실행
 	if err := runFixedPipelineTest(pipeline, config); err != nil {
-		log.Fatalf("❌ Pipeline test failed: %v", err)
+		return fmt.Errorf("pipeline test failed: %w", err)
 	}
 
-	fmt.Println("\n✅ Fixed integration test completed successfully!")
+	return nil
 }
 
 // setupFixedTestConfig 수정된 테스트 설정 생성
@@ -146,48 +158,7 @@ func createFixedTxPipeline(config *IsolatedTestConfig) (*TxPipeline, error) {
 	txChannel := make(chan *shareddomain.MarkedTransaction, config.ChannelBufferSize)
 	stopChannel := make(chan struct{})
 
-	// CEX Set 로딩 및 검증
-	fmt.Printf("   🔍 CEX file path: %s\n", config.CEXFilePath)
-
-	// 파일 존재 확인
-	if _, err := os.Stat(config.CEXFilePath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("CEX file does not exist: %s", config.CEXFilePath)
-	}
-
-	cexRepo := infra.NewFileCEXRepository(config.CEXFilePath)
-	cexSet, err := cexRepo.LoadCEXSet()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load CEX set: %w", err)
-	}
-	fmt.Printf("   📦 CEX addresses loaded: %d\n", cexSet.Size())
-
-	// CEX 로딩이 실패한 경우 추가 디버깅
-	if cexSet.Size() == 0 {
-		fmt.Printf("   ❌ CEX loading failed - checking file contents...\n")
-		if fileData, err := os.ReadFile(config.CEXFilePath); err == nil {
-			lines := strings.Split(string(fileData), "\n")
-			nonEmptyLines := 0
-			for _, line := range lines {
-				line = strings.TrimSpace(line)
-				if line != "" && !strings.HasPrefix(line, "#") {
-					nonEmptyLines++
-				}
-			}
-			fmt.Printf("   📄 File contains %d lines, %d non-empty non-comment lines\n", len(lines), nonEmptyLines)
-		}
-		return nil, fmt.Errorf("no CEX addresses loaded from file")
-	}
-
-	// CEX 주소 샘플 출력 (디버깅)
-	cexAddresses := cexSet.GetAll()
-	if len(cexAddresses) >= 3 {
-		fmt.Printf("   🔍 CEX samples: %s, %s, %s\n",
-			cexAddresses[0][:10]+"...",
-			cexAddresses[1][:10]+"...",
-			cexAddresses[2][:10]+"...")
-	}
-
-	// TxGenerator 생성 (CEX 비율 증가)
+	// TxFeeder 먼저 생성 (빈 cexSet으로 시작)
 	startTime, _ := time.Parse("2006-01-02", "2025-01-01") // 단일 시간 소스: tx.BlockTime의 기준점
 	genConfig := &feederDomain.TxGeneratorConfig{
 		TotalTransactions:            config.TotalTransactions,
@@ -199,7 +170,36 @@ func createFixedTxPipeline(config *IsolatedTestConfig) (*TxPipeline, error) {
 		RandomToDepositRatio:         30,                    //1/15 비율로 Deposit 주소 사용
 	}
 
-	generator := txFeeder.NewTxFeeder(genConfig, cexSet)
+	// 빈 CEXSet으로 MockTxFeeder 생성
+	emptyCexSet := shareddomain.NewCEXSet()
+	generator := txFeeder.NewTxFeeder(genConfig, emptyCexSet)
+	
+	// 환경 설정을 위한 EnvironmentConfig 생성
+	envConfig := &txFeeder.EnvironmentConfig{
+		BaseDir:           config.BaseDir,
+		IsolatedDir:       config.IsolatedDir,
+		CEXFilePath:       config.CEXFilePath,
+		MockDepositFile:   config.MockDepositFile,
+		GraphDBPath:       config.GraphDBPath,
+		PendingDBPath:     config.PendingDBPath,
+		ChannelBufferSize: config.ChannelBufferSize,
+		TestDuration:      config.TestDuration,
+		TotalTransactions: config.TotalTransactions,
+		GenerationRate:    config.GenerationRate,
+		AnalysisWorkers:   config.AnalysisWorkers,
+	}
+
+	// 환경 설정 (이전의 prepareIsolatedEnvironment 기능)
+	if err := generator.SetupEnvironment(envConfig); err != nil {
+		return nil, fmt.Errorf("failed to setup environment: %w", err)
+	}
+
+	// CEX Set 로딩 (이전의 cexRepo 로직)
+	_, err := generator.LoadCEXSetFromFile(config.CEXFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load CEX set: %w", err)
+	}
+
 	fmt.Printf("Load MockAndHiddenDeposit from %s", config.MockDepositFile)
 	if err := generator.LoadMockDepositAddresses(config.MockDepositFile); err != nil {
 		return nil, fmt.Errorf("failed to load mock deposits: %w", err)
@@ -577,117 +577,5 @@ func findProjectRoot() string {
 	return filepath.Join(workingDir, "../../../")
 }
 
-func prepareIsolatedEnvironment(config *IsolatedTestConfig) error {
-	fmt.Println("\n2️⃣ Preparing isolated environment...")
-
-	os.RemoveAll(config.IsolatedDir)
-	if err := os.MkdirAll(config.IsolatedDir, 0755); err != nil {
-		return fmt.Errorf("failed to create isolated directory: %w", err)
-	}
-
-	// CEX 데이터 복제
-	sourceCEX := filepath.Join(config.BaseDir, "shared", "txfeeder", "infra", "real_cex.txt")
-	fmt.Printf("   🔍 Source CEX: %s\n", sourceCEX)
-	fmt.Printf("   🔍 Target CEX: %s\n", config.CEXFilePath)
-
-	// 소스 파일 존재 확인
-	if _, err := os.Stat(sourceCEX); os.IsNotExist(err) {
-		return fmt.Errorf("source CEX file does not exist: %s", sourceCEX)
-	}
-
-	if err := copyFile(sourceCEX, config.CEXFilePath); err != nil {
-		return fmt.Errorf("failed to copy CEX file: %w", err)
-	}
-
-	// 복사 후 검증
-	if copiedData, err := os.ReadFile(config.CEXFilePath); err == nil {
-		lines := strings.Split(string(copiedData), "\n")
-		nonEmptyLines := 0
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line != "" && !strings.HasPrefix(line, "#") {
-				nonEmptyLines++
-			}
-		}
-		fmt.Printf("   📄 CEX data copied - %d lines, %d addresses\n", len(lines), nonEmptyLines)
-	} else {
-		fmt.Printf("   ⚠️  CEX data copied but could not verify: %v\n", err)
-	}
-
-	// 모의 입금 주소 생성
-	if err := createMockDeposits(config.MockDepositFile); err != nil {
-		return fmt.Errorf("failed to create mock deposits: %w", err)
-	}
-	fmt.Printf("   📄 Mock deposits created\n")
-
-	fmt.Printf("   ✅ Environment prepared\n")
-	return nil
-}
-
-func copyFile(src, dst string) error {
-	sourceFile, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer sourceFile.Close()
-
-	destFile, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer destFile.Close()
-
-	_, err = io.Copy(destFile, sourceFile)
-	return err
-}
-
-// * 제너레이터는 mockedAndHiddenDepositAddress.txt 파일을 "debug"용 tmp폴더에 create로 복사 후, 그 파일을 로드함
-func createMockDeposits(filePath string) error {
-	fmt.Printf("   🔍 Creating mock deposit addresses at %s\n", filePath)
-	file, err := os.Create(filePath)
-
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	root := findProjectRoot()
-
-	depositFilePath := filepath.Join(root, "shared", "txfeeder", "infra", "mocked_hidden_deposits.txt")
-	fmt.Printf("loading mockedAndHiddenDepositAddress.txt from %s\n", depositFilePath)
-
-	deposits, err := os.Open(depositFilePath)
-	if err != nil {
-		return err
-	}
-	defer deposits.Close()
-
-	file.WriteString("# Mock Deposit Addresses for Fixed Queue Test\n\n")
-	// 4. 한 줄씩 읽어서 복사
-	scanner := bufio.NewScanner(deposits)
-	totalLength := 0
-	lineCount := 0
-	for scanner.Scan() {
-		line := scanner.Text()
-		file.WriteString(line + "\n")
-		totalLength += len(line)
-		lineCount++
-	}
-
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("error reading deposit file: %w", err)
-	}
-	fmt.Printf("   ✅ Copied %d lines (total %d bytes of address strings)\n", lineCount, totalLength)
-	return nil
-}
-
-func cleanupIsolatedEnvironment(config *IsolatedTestConfig) {
-	fmt.Println("\n🧹 Cleaning up isolated environment...")
-
-	if err := os.RemoveAll(config.IsolatedDir); err != nil {
-		log.Printf("⚠️ Warning: cleanup failed: %v", err)
-	} else {
-		fmt.Printf("   ✅ Cleaned: %s\n", config.IsolatedDir)
-	}
-
-	fmt.Println("🔒 No permanent changes to system")
-}
+// 이제 더 이상 사용하지 않는 함수들 (MockTxFeeder로 이동됨)
+// prepareIsolatedEnvironment, copyFile, createMockDeposits, cleanupIsolatedEnvironment

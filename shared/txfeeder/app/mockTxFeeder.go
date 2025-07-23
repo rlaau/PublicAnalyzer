@@ -454,6 +454,10 @@ func (g *MockTxFeeder) LoadCEXSetFromFile(cexFilePath string) (*sharedDomain.CEX
 
 // CleanupEnvironment 격리된 환경 정리 (feed_and_analyze.go에서 이동)
 func (g *MockTxFeeder) CleanupEnvironment() {
+	if g.isolatedDir == "" {
+		return // 격리 디렉토리가 설정되지 않았으면 정리할 것이 없음
+	}
+
 	fmt.Println("\n🧹 Cleaning up isolated environment...")
 
 	if err := os.RemoveAll(g.isolatedDir); err != nil {
@@ -463,6 +467,13 @@ func (g *MockTxFeeder) CleanupEnvironment() {
 	}
 
 	fmt.Println("🔒 No permanent changes to system")
+}
+
+// Close 리소스 정리 (트랜잭션 생성만 중지, 환경 정리는 호출자가 담당)
+func (g *MockTxFeeder) Close() error {
+	// Stop을 호출해서 트랜잭션 생성 중지
+	g.Stop()
+	return nil
 }
 
 // 내부 헬퍼 메서드들 (feed_and_analyze.go에서 이동)
