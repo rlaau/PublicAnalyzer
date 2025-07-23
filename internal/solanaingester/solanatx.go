@@ -1,4 +1,4 @@
-package solanatx
+package solanaingester
 
 import (
 	"context"
@@ -17,7 +17,10 @@ type SolanaContractInfo struct {
 	Deployer string `json:"deployer"` // 실제 배포자
 }
 
-func main() {
+// 쿼리 실행 후 솔라나 컨트렉트 받아오는 코드
+// *스트리밍 코드가 아닌, 걍 초기화 코드 정도로 쓸 수 있는듯
+// * 해당 쿼리를 스트리밍 사용은 불가
+func IngestAllSolanaProgramOnce() {
 	ctx := context.Background()
 
 	client, err := bigquery.NewClient(ctx, "your-project-id")
