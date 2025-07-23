@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
 
 // FileCEXRepository implements CEXRepository using file storage

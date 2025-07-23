@@ -120,7 +120,7 @@ type DepositRepository interface {
 
 // GroundKnowledge contains all known facts about addresses
 type GroundKnowledge struct {
-	cexSet             *CEXSet
+	cexSet             *domain.CEXSet
 	detectedDepositSet *DetectedDepositSet
 	depositRepository  DepositRepository
 	mutex              sync.RWMutex
@@ -128,7 +128,7 @@ type GroundKnowledge struct {
 }
 
 // NewGroundKnowledge creates a new ground knowledge instance
-func NewGroundKnowledge(cexSet *CEXSet, depositRepo DepositRepository) *GroundKnowledge {
+func NewGroundKnowledge(cexSet *domain.CEXSet, depositRepo DepositRepository) *GroundKnowledge {
 	return &GroundKnowledge{
 		cexSet:             cexSet,
 		detectedDepositSet: NewDetectedDepositSet(),

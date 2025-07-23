@@ -61,12 +61,12 @@ func TestDualManagerIntegration(t *testing.T) {
 	if err != nil {
 		handleError("Failed to create CPU profile file", err)
 	}
-	
+
 	if err := pprof.StartCPUProfile(cpuFile); err != nil {
 		cpuFile.Close()
 		handleError("Failed to start CPU profiling", err)
 	}
-	
+
 	defer func() {
 		pprof.StopCPUProfile()
 		cpuFile.Close()
@@ -75,9 +75,9 @@ func TestDualManagerIntegration(t *testing.T) {
 
 	// Setup test components
 	fmt.Println("🔧 Setting up test components...")
-	
+
 	// 1. Create mock CEX set and ground knowledge
-	cexSet := domain.NewCEXSet()
+	cexSet := shareddomain.NewCEXSet()
 	mockCEXAddresses := []string{
 		"0x1234567890abcdef1234567890abcdef12345678",
 		"0xabcdef1234567890abcdef1234567890abcdef12",
@@ -120,7 +120,7 @@ func TestDualManagerIntegration(t *testing.T) {
 
 	// Run transaction simulation
 	fmt.Println("🚀 Starting transaction simulation...")
-	
+
 	txCount, errorCount := runSimpleTransactionSimulation(t, dualManager, groundKnowledge, mockCEXAddresses)
 
 	// Memory profiling
@@ -180,16 +180,16 @@ func runSimpleTransactionSimulation(t *testing.T, dm *domain.DualManager, gk *do
 	for i := 0; i < 100; i++ {
 		fromAddr := testAddresses[rand.Intn(len(testAddresses))]
 		toAddr := depositCandidates[rand.Intn(len(depositCandidates))]
-		
+
 		tx := createSimpleTransaction(fromAddr, toAddr, baseTime.Add(time.Duration(i)*time.Minute))
-		
+
 		if err := dm.CheckTransaction(tx); err != nil {
 			errorCount++
 			log.Printf("⚠️  Transaction %d failed: %v", i, err)
 			continue
 		}
 		txCount++
-		
+
 		if i%25 == 0 && i > 0 {
 			fmt.Printf("  ✅ Processed %d transactions\n", i)
 		}
@@ -200,16 +200,16 @@ func runSimpleTransactionSimulation(t *testing.T, dm *domain.DualManager, gk *do
 	for i := 0; i < 10; i++ {
 		depositAddr := depositCandidates[rand.Intn(len(depositCandidates))]
 		cexAddr := cexAddrs[rand.Intn(len(cexAddrs))]
-		
+
 		tx := createSimpleTransaction(depositAddr, cexAddr, baseTime.Add(time.Duration(200+i)*time.Minute))
-		
+
 		if err := dm.CheckTransaction(tx); err != nil {
 			errorCount++
 			log.Printf("⚠️  Deposit transaction %d failed: %v", i, err)
 			continue
 		}
 		txCount++
-		
+
 		if gk.IsDepositAddress(depositAddr) {
 			fmt.Printf("  ✅ Detected deposit address: %s\n", depositAddr.String()[:10]+"...")
 		}
@@ -222,7 +222,7 @@ func runSimpleTransactionSimulation(t *testing.T, dm *domain.DualManager, gk *do
 func createSimpleTransaction(from, to shareddomain.Address, txTime time.Time) *shareddomain.MarkedTransaction {
 	var txID shareddomain.TxId
 	rand.Read(txID[:])
-	
+
 	return &shareddomain.MarkedTransaction{
 		BlockTime:   txTime,
 		TxID:        txID,

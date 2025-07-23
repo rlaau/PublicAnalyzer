@@ -9,9 +9,10 @@ import (
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/app"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	txFeeder "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/app"
+	feederDomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/domain"
 )
 
 func main() {
@@ -70,10 +71,10 @@ func main() {
 	cexSet, err := cexRepo.LoadCEXSet()
 	if err != nil {
 		log.Printf("⚠️ Failed to load CEX set: %v", err)
-		cexSet = domain.NewCEXSet() // 빈 CEX 세트로 계속
+		cexSet = shareddomain.NewCEXSet() // 빈 CEX 세트로 계속
 	}
 
-	genConfig := &domain.TxGeneratorConfig{
+	genConfig := &feederDomain.TxGeneratorConfig{
 		TotalTransactions:     5000, // 5000개 트랜잭션
 		TransactionsPerSecond: 500,  // 초당 500개
 		StartTime:             time.Now(),
@@ -82,7 +83,7 @@ func main() {
 		RandomToDepositRatio:  20,
 	}
 
-	txGenerator := app.NewTxGenerator(genConfig, cexSet)
+	txGenerator := txFeeder.NewTxGenerator(genConfig, cexSet)
 
 	// 모의 입금 주소 로드 (선택사항)
 	if err := txGenerator.LoadMockDepositAddresses("internal/ee/mockedAndHiddenDepositAddress.txt"); err != nil {

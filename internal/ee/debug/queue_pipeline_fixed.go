@@ -14,9 +14,10 @@ import (
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/app"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	txFeeder "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/app"
+	feederDomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/domain"
 )
 
 func main() {
@@ -30,7 +31,7 @@ type TxPipeline struct {
 	stopChannel chan struct{}
 
 	// 컴포넌트
-	generator *app.TxGenerator
+	generator *txFeeder.TxGenerator
 	analyzer  app.EOAAnalyzer
 
 	// 통계 (atomic operations for thread safety)
@@ -123,12 +124,12 @@ func setupFixedTestConfig() *IsolatedTestConfig {
 		GraphDBPath:     filepath.Join(isolatedDir, "graph"),
 		PendingDBPath:   filepath.Join(isolatedDir, "pending"),
 
-		// 버킷 성능 테스트 설정 - rear/front 인덱스 성능 검증  
-		ChannelBufferSize: 1_000_000,         // 충분한 버퍼
-		TestDuration:      60 * time.Second,  // 1분 테스트 (성능 검증용)
-		TotalTransactions: 2_000_000,         // 200만개로 충분한 순환 확인
-		GenerationRate:    50_000,            // 초당 5만개로 고속 진행
-		AnalysisWorkers:   8,                 // 워커 8 유지
+		// 버킷 성능 테스트 설정 - rear/front 인덱스 성능 검증
+		ChannelBufferSize: 1_000_000,        // 충분한 버퍼
+		TestDuration:      60 * time.Second, // 1분 테스트 (성능 검증용)
+		TotalTransactions: 2_000_000,        // 200만개로 충분한 순환 확인
+		GenerationRate:    50_000,           // 초당 5만개로 고속 진행
+		AnalysisWorkers:   8,                // 워커 8 유지
 	}
 
 	fmt.Printf("   ✅ Isolated directory: %s\n", config.IsolatedDir)
@@ -188,17 +189,17 @@ func createFixedTxPipeline(config *IsolatedTestConfig) (*TxPipeline, error) {
 
 	// TxGenerator 생성 (CEX 비율 증가)
 	startTime, _ := time.Parse("2006-01-02", "2025-01-01") // 단일 시간 소스: tx.BlockTime의 기준점
-	genConfig := &domain.TxGeneratorConfig{
+	genConfig := &feederDomain.TxGeneratorConfig{
 		TotalTransactions:            config.TotalTransactions,
 		TransactionsPerSecond:        config.GenerationRate, //기계적으로 생성하는 시간당 tx수
-		StartTime:                    startTime,              // tx.BlockTime 기준이 되는 유일한 시작점
+		StartTime:                    startTime,             // tx.BlockTime 기준이 되는 유일한 시작점
 		TransactionsPerTimeIncrement: 1,                     //하나의 tx마다 10분이 지난 것으로 설정 (순환 테스트 가속화)
-		TimeIncrementDuration:        10 * time.Minute,     //10분씩 시간 증가 (1주=1008분=약17tx, 21주=357tx)
+		TimeIncrementDuration:        10 * time.Minute,      //10분씩 시간 증가 (1주=1008분=약17tx, 21주=357tx)
 		DepositToCexRatio:            50,                    // 1/50 비율로 CEX 주소 사용
 		RandomToDepositRatio:         30,                    //1/15 비율로 Deposit 주소 사용
 	}
 
-	generator := app.NewTxGenerator(genConfig, cexSet)
+	generator := txFeeder.NewTxGenerator(genConfig, cexSet)
 	fmt.Printf("Load MockAndHiddenDeposit from %s", config.MockDepositFile)
 	if err := generator.LoadMockDepositAddresses(config.MockDepositFile); err != nil {
 		return nil, fmt.Errorf("failed to load mock deposits: %w", err)

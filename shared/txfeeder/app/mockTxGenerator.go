@@ -16,7 +16,7 @@ type TxGenerator struct {
 	config           *domain.TxGeneratorConfig
 	state            *domain.TxGeneratorState
 	mockDepositAddrs *domain.MockDepositAddressSet
-	cexSet           *domain.CEXSet
+	cexSet           *sharedDomain.CEXSet
 
 	// Channels for transaction output
 	txChannel chan sharedDomain.MarkedTransaction
@@ -31,7 +31,7 @@ type TxGenerator struct {
 }
 
 // NewTxGenerator creates a new transaction generator
-func NewTxGenerator(config *domain.TxGeneratorConfig, cexSet *domain.CEXSet) *TxGenerator {
+func NewTxGenerator(config *domain.TxGeneratorConfig, cexSet *sharedDomain.CEXSet) *TxGenerator {
 	return &TxGenerator{
 		config:           config,
 		state:            domain.NewTxGeneratorState(config.StartTime, config.TimeIncrementDuration, config.TransactionsPerTimeIncrement),
