@@ -66,7 +66,7 @@ func ProductionConfig(name string) *EOAAnalyzerConfig {
 	return &EOAAnalyzerConfig{
 		Name:                name + "-Production",
 		Mode:                ProductionMode,
-		ChannelBufferSize:   2000,
+		ChannelBufferSize:   200_000,
 		WorkerCount:         8,
 		MaxProcessingTime:   200_000_000,    // 200ms in nanoseconds
 		StatsInterval:       60_000_000_000, // 60s in nanoseconds

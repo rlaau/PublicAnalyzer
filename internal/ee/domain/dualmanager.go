@@ -38,9 +38,11 @@ type DualManager struct {
 	groundKnowledge *GroundKnowledge
 	graphRepo       GraphRepository
 
-	// Sliding window management
+	// Sliding window management (순환 큐 구조)
 	firstActiveTimeBuckets []*TimeBucket // 21개 타임버킷으로 4개월 윈도우 관리
-	currentBucketIndex     int           // 현재 버킷 인덱스
+	frontIndex             int           // 가장 오래된 버킷 인덱스 (제거 대상)
+	rearIndex              int           // 가장 최신 버킷 인덱스 (추가 위치)
+	bucketCount            int           // 현재 버킷 개수 (0~21)
 
 	// Persistent KV storage for to->[]from mappings (대규모 데이터 처리용)
 	pendingRelationsDB *badger.DB // to_address -> []from_address 영구 저장
@@ -63,13 +65,17 @@ func NewDualManager(groundKnowledge *GroundKnowledge, graphRepo GraphRepository,
 		groundKnowledge:        groundKnowledge,
 		graphRepo:              graphRepo,
 		firstActiveTimeBuckets: make([]*TimeBucket, MaxTimeBuckets),
-		currentBucketIndex:     0,
+		frontIndex:             0,  // 첫 번째 버킷이 들어갈 위치
+		rearIndex:              0,  // 첫 번째 버킷이 들어갈 위치
+		bucketCount:            0,  // 초기 버킷 개수
 		pendingRelationsDB:     pendingDB,
 	}
 
-	// Initialize first time bucket
-	now := time.Now()
-	dm.firstActiveTimeBuckets[0] = NewTimeBucket(now)
+	//TODO 첫 번째 트랜잭션의 시간을 기준으로 동적으로 첫 버킷을 생성하도록 변경
+	//TODO 이렇게 하면 txGenerator의 시작 시간과 무관하게 첫 트랜잭션부터 1주일씩 버킷 생성됨
+	// Initialize first time bucket - 첫 트랜잭션이 올 때까지 대기
+	// now := time.Now()
+	// dm.firstActiveTimeBuckets[0] = NewTimeBucket(now)
 
 	return dm, nil
 }
@@ -160,8 +166,7 @@ func (dm *DualManager) handleExceptionalAddress(address domain.Address, addressT
 // ! 성능 관련 로직이 (케스케이딩 버킷) 수정이 필요한 함수
 // TODO 성능 관련 로직 수정 필요!!
 func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Address, tx *domain.MarkedTransaction) error {
-	fmt.Printf("💰 handleDepositDetection: %s → CEX %s\n",
-		depositAddr.String()[:10]+"...", cexAddr.String()[:10]+"...")
+	//fmt.Printf("💰 handleDepositDetection: %s → CEX %s\n",	depositAddr.String()[:10]+"...", cexAddr.String()[:10]+"...")
 
 	// 1. 새로운 입금주소를 detectedDepositAddress에 추가
 	if err := dm.groundKnowledge.DetectNewDepositAddress(depositAddr, cexAddr); err != nil {
@@ -236,6 +241,13 @@ func (dm *DualManager) addToWindowBuffer(tx *domain.MarkedTransaction) error {
 	toAddrStr := tx.To.String()
 	fromAddrStr := tx.From.String()
 
+	// 디버깅: 매 50 트랜잭션마다 시간 로깅 (10분×50=8.3시간마다)
+	static_counter++
+	if static_counter%50 == 0 || static_counter <= 20 {
+		fmt.Printf("⏰ TX #%d time: %s (1주=1008분=약17tx, 21개 버킷=357tx에서 순환)\n",
+			static_counter, txTime.Format("2006-01-02 15:04:05"))
+	}
+
 	// 1. Update firstActiveTimeBuckets (핵심 도메인 로직)
 	if err := dm.updateFirstActiveTimeBuckets(toAddrStr, txTime); err != nil {
 		return err
@@ -249,7 +261,10 @@ func (dm *DualManager) addToWindowBuffer(tx *domain.MarkedTransaction) error {
 	return nil
 }
 
-// updateFirstActiveTimeBuckets updates the sliding window buckets
+// 디버깅용 전역 카운터
+var static_counter int64
+
+// updateFirstActiveTimeBuckets updates the sliding window buckets with circular queue logic
 // ! 중요한 도메인 로직: 윈도우 에이징 알고리즘
 // ! - 한 번 윈도우에 들어온 to user의 값은 갱신하지 않음
 // ! - 4개월 간 선택받지 못하면 자동으로 떨어져 나감
@@ -267,47 +282,114 @@ func (dm *DualManager) updateFirstActiveTimeBuckets(toAddr string, txTime time.T
 	// 3. 새로운 to user를 현재 버킷에 추가
 	currentBucket.ToUsers[toAddr] = txTime
 
-	// 4. 버킷 개수 관리 (22개가 되면 정리)
-	if dm.countActiveBuckets() >= MaxTimeBuckets+1 {
-		return dm.cleanupOldestBucket()
-	}
-
 	return nil
 }
 
-// findOrCreateTimeBucket finds appropriate bucket or creates new one
+// findOrCreateTimeBucket finds appropriate bucket or creates new one with circular queue logic
 func (dm *DualManager) findOrCreateTimeBucket(txTime time.Time) int {
+	// 첫 번째 트랜잭션인 경우 - 첫 트랜잭션 시간을 기준으로 첫 버킷 생성
+	if dm.bucketCount == 0 {
+		weekStart := dm.calculateWeekStart(txTime)
+		dm.firstActiveTimeBuckets[0] = NewTimeBucket(weekStart)
+		
+		// 순환 큐 초기화
+		dm.frontIndex = 0    // 첫 번째 버킷이 가장 오래된 버킷
+		dm.rearIndex = 0     // 첫 번째 버킷이 가장 최신 버킷
+		dm.bucketCount = 1   // 버킷 개수 증가
+		
+		fmt.Printf("🪣 First bucket created at index 0: %s - %s (front:%d, rear:%d, count:%d)\n",
+			weekStart.Format("2006-01-02 15:04:05"),
+			weekStart.Add(SlideInterval).Format("2006-01-02 15:04:05"),
+			dm.frontIndex, dm.rearIndex, dm.bucketCount)
+		return 0
+	}
+
 	// 현재 활성 버킷들 중에서 txTime이 속할 버킷 찾기
-	for i, bucket := range dm.firstActiveTimeBuckets {
-		if bucket == nil {
-			continue
+	for i := 0; i < dm.bucketCount; i++ {
+		bucketIndex := (dm.frontIndex + i) % MaxTimeBuckets
+		bucket := dm.firstActiveTimeBuckets[bucketIndex]
+		
+		// 반닫힌 구간 [StartTime, EndTime): StartTime <= txTime < EndTime
+		if !txTime.Before(bucket.StartTime) && txTime.Before(bucket.EndTime) {
+			return bucketIndex
 		}
-		if txTime.After(bucket.StartTime) && txTime.Before(bucket.EndTime) {
-			return i
+	}
+
+	// 디버깅: 새 버킷이 필요한 경우 현재 상황 로그
+	if dm.bucketCount < 5 { // 처음 몇 개만 로깅
+		fmt.Printf("🔍 No matching bucket found for txTime: %s (active buckets: %d)\n",
+			txTime.Format("2006-01-02 15:04:05"), dm.bucketCount)
+		for i := 0; i < dm.bucketCount; i++ {
+			bucketIndex := (dm.frontIndex + i) % MaxTimeBuckets
+			bucket := dm.firstActiveTimeBuckets[bucketIndex]
+			fmt.Printf("   Bucket[%d]: %s - %s\n", bucketIndex,
+				bucket.StartTime.Format("2006-01-02 15:04:05"),
+				bucket.EndTime.Format("2006-01-02 15:04:05"))
 		}
 	}
 
 	// 새로운 버킷 생성 필요
-	return dm.createNewTimeBucket(txTime)
+	return dm.addNewTimeBucket(txTime)
 }
 
-// createNewTimeBucket creates a new time bucket
-func (dm *DualManager) createNewTimeBucket(txTime time.Time) int {
-	// 빈 슬롯 찾기
-	for i, bucket := range dm.firstActiveTimeBuckets {
-		if bucket == nil {
-			// 1주일 경계로 정렬된 시작 시간 계산
-			weekStart := dm.calculateWeekStart(txTime)
-			dm.firstActiveTimeBuckets[i] = NewTimeBucket(weekStart)
-			return i
-		}
-	}
-
-	// 모든 슬롯이 차있으면 순환적으로 사용
-	dm.currentBucketIndex = (dm.currentBucketIndex + 1) % MaxTimeBuckets
+// addNewTimeBucket adds a new time bucket using proper circular queue logic
+func (dm *DualManager) addNewTimeBucket(txTime time.Time) int {
 	weekStart := dm.calculateWeekStart(txTime)
-	dm.firstActiveTimeBuckets[dm.currentBucketIndex] = NewTimeBucket(weekStart)
-	return dm.currentBucketIndex
+	
+	if dm.bucketCount < MaxTimeBuckets {
+		// 공간이 남아있는 경우: rear 다음 위치에 새 버킷 추가
+		newRearIndex := (dm.rearIndex + 1) % MaxTimeBuckets
+		dm.firstActiveTimeBuckets[newRearIndex] = NewTimeBucket(weekStart)
+		dm.rearIndex = newRearIndex
+		dm.bucketCount++
+		
+		fmt.Printf("🪣 New bucket added at index %d: %s - %s (front:%d, rear:%d, count:%d)\n",
+			newRearIndex,
+			weekStart.Format("2006-01-02 15:04:05"),
+			weekStart.Add(SlideInterval).Format("2006-01-02 15:04:05"),
+			dm.frontIndex, dm.rearIndex, dm.bucketCount)
+		
+		return newRearIndex
+	} else {
+		// 공간이 꽉 찬 경우 (21개): front 버킷을 제거하고 그 자리에 새 버킷 추가
+		oldBucket := dm.firstActiveTimeBuckets[dm.frontIndex]
+		
+		// 기존 버킷의 pendingRelations 정리
+		pendingBefore := dm.countPendingRelations()
+		toUsersCount := len(oldBucket.ToUsers)
+		deletedRelations := 0
+		
+		for toAddr := range oldBucket.ToUsers {
+			if err := dm.deletePendingRelations(toAddr); err != nil {
+				fmt.Printf("   ⚠️ Failed to delete pending relations for %s: %v\n", toAddr[:10]+"...", err)
+				continue
+			}
+			deletedRelations++
+		}
+		
+		// front 위치에 새 버킷 생성 (덮어쓰기)
+		newBucketIndex := dm.frontIndex
+		dm.firstActiveTimeBuckets[newBucketIndex] = NewTimeBucket(weekStart)
+		
+		// front를 다음 위치로 이동, rear는 새로 생성된 버킷으로 설정
+		dm.frontIndex = (dm.frontIndex + 1) % MaxTimeBuckets
+		dm.rearIndex = newBucketIndex
+		// bucketCount는 21 고정
+		
+		pendingAfter := dm.countPendingRelations()
+		
+		fmt.Printf("🪣 BUCKET ROTATION[%d]: %s-%s → %s-%s (front:%d, rear:%d, count:%d)\n",
+			newBucketIndex,
+			oldBucket.StartTime.Format("2006-01-02 15:04"),
+			oldBucket.EndTime.Format("2006-01-02 15:04"),
+			weekStart.Format("2006-01-02 15:04"),
+			weekStart.Add(SlideInterval).Format("2006-01-02 15:04"),
+			dm.frontIndex, dm.rearIndex, dm.bucketCount)
+		fmt.Printf("   🗑️  PendingRelations cleanup: %d→%d (deleted %d/%d toUsers)\n",
+			pendingBefore, pendingAfter, deletedRelations, toUsersCount)
+		
+		return newBucketIndex
+	}
 }
 
 // calculateWeekStart calculates the start of week for given time
@@ -321,64 +403,37 @@ func (dm *DualManager) calculateWeekStart(t time.Time) time.Time {
 }
 
 // isToUserInWindow checks if to user already exists in the entire window
-// TODO 성능 개선 필요. 타임 버킷에서 찾을 떄, "최신 버킷에서부터"찾으면 자동 케싱 겸 성능 개선 가능
-// ! 주요 케싱 로직임!
+// ! 성능 최적화: 최신 버킷(rearIndex)부터 역순으로 검색 - 캐시 효과 극대화
+// ! 도메인 로직: 최근에 등장한 유저가 다시 등장할 확률이 높음
 func (dm *DualManager) isToUserInWindow(toAddr string) bool {
-	for _, bucket := range dm.firstActiveTimeBuckets {
-		if bucket == nil {
-			continue
-		}
-		if _, exists := bucket.ToUsers[toAddr]; exists {
-			return true
+	if dm.bucketCount == 0 {
+		return false
+	}
+
+	// 최신 버킷(rearIndex)부터 역순으로 검색
+	for i := 0; i < dm.bucketCount; i++ {
+		// 순환 큐에서 최신부터 역순 인덱스 계산
+		bucketIndex := (dm.rearIndex - i + MaxTimeBuckets) % MaxTimeBuckets
+		bucket := dm.firstActiveTimeBuckets[bucketIndex]
+		
+		if bucket != nil {
+			if _, exists := bucket.ToUsers[toAddr]; exists {
+				// 성능 로깅 (첫 10개만)
+				if static_counter <= 10 {
+					fmt.Printf("   🔍 Cache hit: User found in bucket[%d] (search depth: %d)\n", bucketIndex, i+1)
+				}
+				return true
+			}
 		}
 	}
 	return false
 }
 
-// countActiveBuckets counts non-nil buckets
+// countActiveBuckets returns cached active bucket count (O(1) 성능)
 func (dm *DualManager) countActiveBuckets() int {
-	count := 0
-	for _, bucket := range dm.firstActiveTimeBuckets {
-		if bucket != nil {
-			count++
-		}
-	}
-	return count
+	return dm.bucketCount
 }
 
-// cleanupOldestBucket removes oldest bucket and its associated kvDB entries
-// TODO 이것도 로깅하기. rear, front를 로깅하면서 순환 큐 만들어야지!!
-func (dm *DualManager) cleanupOldestBucket() error {
-	// 가장 오래된 버킷 찾기
-	var oldestBucket *TimeBucket
-	var oldestIndex int
-	var oldestTime time.Time = time.Now()
-
-	for i, bucket := range dm.firstActiveTimeBuckets {
-		if bucket != nil && bucket.StartTime.Before(oldestTime) {
-			oldestTime = bucket.StartTime
-			oldestBucket = bucket
-			oldestIndex = i
-		}
-	}
-
-	if oldestBucket == nil {
-		return nil
-	}
-
-	// 해당 버킷의 to users들을 키로 하는 pendingRelationsDB 항목들 제거
-	for toAddr := range oldestBucket.ToUsers {
-		if err := dm.deletePendingRelations(toAddr); err != nil {
-			// Log error but continue cleanup
-			continue
-		}
-	}
-
-	// 버킷 제거
-	dm.firstActiveTimeBuckets[oldestIndex] = nil
-
-	return nil
-}
 
 // BadgerDB helper methods for pending relations management
 
@@ -451,6 +506,8 @@ func (dm *DualManager) deletePendingRelations(toAddr string) error {
 }
 
 // countPendingRelations counts the total number of pending relations
+// TODO 현재는 순회를 통해서 카운트함. 성능 개선 필요
+// ! 주요 성능 개선 필요 구간임!
 func (dm *DualManager) countPendingRelations() int {
 	count := 0
 	dm.pendingRelationsDB.View(func(txn *badger.Txn) error {

@@ -244,6 +244,8 @@ func (a *SimpleEOAAnalyzer) processSingleTransaction(tx *shareddomain.MarkedTran
 			workerID, successCount, tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
 	}
 
+	//TODO 배포 환경에선 제거 가능 or 개량 가능
+	//TODO 동일 로직 중복 처리 및 분석이라 성능 저하 가능
 	a.analyzeTransactionResult(tx)
 }
 

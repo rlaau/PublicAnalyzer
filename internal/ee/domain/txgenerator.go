@@ -129,7 +129,7 @@ func NewDefaultTxGeneratorConfig() *TxGeneratorConfig {
 	return &TxGeneratorConfig{
 		TotalTransactions:            400_000_000,
 		TransactionsPerSecond:        1_000_000,
-		TransactionsPerTimeIncrement: 15,
+		TransactionsPerTimeIncrement: 1,
 		TimeIncrementDuration:        time.Second,
 		StartTime:                    startTime,
 		DepositToCexRatio:            50,

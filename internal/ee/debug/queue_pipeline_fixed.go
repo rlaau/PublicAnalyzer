@@ -123,12 +123,12 @@ func setupFixedTestConfig() *IsolatedTestConfig {
 		GraphDBPath:     filepath.Join(isolatedDir, "graph"),
 		PendingDBPath:   filepath.Join(isolatedDir, "pending"),
 
-		// 극소 테스트 설정 - CEX 매칭에 집중
-		ChannelBufferSize: 1_000_000,         // 최소 버퍼
-		TestDuration:      200 * time.Second, // 매우 짧은 테스트
-		TotalTransactions: 100_00000,         // 극소 데이터로 빠른 결과 확인
-		GenerationRate:    10_000,            // 매우 느린 생성률
-		AnalysisWorkers:   8,                 // 워커 4개 유지
+		// 버킷 성능 테스트 설정 - rear/front 인덱스 성능 검증  
+		ChannelBufferSize: 1_000_000,         // 충분한 버퍼
+		TestDuration:      60 * time.Second,  // 1분 테스트 (성능 검증용)
+		TotalTransactions: 2_000_000,         // 200만개로 충분한 순환 확인
+		GenerationRate:    50_000,            // 초당 5만개로 고속 진행
+		AnalysisWorkers:   8,                 // 워커 8 유지
 	}
 
 	fmt.Printf("   ✅ Isolated directory: %s\n", config.IsolatedDir)
@@ -187,14 +187,15 @@ func createFixedTxPipeline(config *IsolatedTestConfig) (*TxPipeline, error) {
 	}
 
 	// TxGenerator 생성 (CEX 비율 증가)
+	startTime, _ := time.Parse("2006-01-02", "2025-01-01") // 단일 시간 소스: tx.BlockTime의 기준점
 	genConfig := &domain.TxGeneratorConfig{
 		TotalTransactions:            config.TotalTransactions,
 		TransactionsPerSecond:        config.GenerationRate, //기계적으로 생성하는 시간당 tx수
-		StartTime:                    time.Now(),
-		TransactionsPerTimeIncrement: 1,           //하나의 tx마나 1초가 지난 것으로 설정
-		TimeIncrementDuration:        time.Second, //1초씩 시간 증가
-		DepositToCexRatio:            50,          // 1/50 비율로 CEX 주소 사용
-		RandomToDepositRatio:         30,          //1/15 비율로 Deposit 주소 사용
+		StartTime:                    startTime,              // tx.BlockTime 기준이 되는 유일한 시작점
+		TransactionsPerTimeIncrement: 1,                     //하나의 tx마다 10분이 지난 것으로 설정 (순환 테스트 가속화)
+		TimeIncrementDuration:        10 * time.Minute,     //10분씩 시간 증가 (1주=1008분=약17tx, 21주=357tx)
+		DepositToCexRatio:            50,                    // 1/50 비율로 CEX 주소 사용
+		RandomToDepositRatio:         30,                    //1/15 비율로 Deposit 주소 사용
 	}
 
 	generator := app.NewTxGenerator(genConfig, cexSet)
@@ -324,7 +325,9 @@ func (p *TxPipeline) runFixedGeneratorBridge(ctx context.Context) {
 			atomic.AddInt64(&p.stats.Generated, 1)
 
 			// 디버깅: 트랜잭션 타입 분석
-			p.analyzeTransactionType(&tx)
+			//*더이상 기능할 수 없는 코드
+			//*고부하 환경에서 돌렸다간 성능저하 극심&제대로된 레포팅도 아님
+			//analyzeTransactionType(&tx)
 
 			// 공유 채널로 전달 (non-blocking)
 			txPtr := &tx
@@ -340,28 +343,28 @@ func (p *TxPipeline) runFixedGeneratorBridge(ctx context.Context) {
 }
 
 // analyzeTransactionType 트랜잭션 타입 분석 (디버깅용)
-func (p *TxPipeline) analyzeTransactionType(tx *shareddomain.MarkedTransaction) {
-	// 간단한 패턴 매칭으로 타입 추정
-	toAddrStr := tx.To.String()
+// func (p *TxPipeline) analyzeTransactionType(tx *shareddomain.MarkedTransaction) {
+// 	// 간단한 패턴 매칭으로 타입 추정
+// 	toAddrStr := tx.To.String()
 
-	// CEX 주소 체크 (하드코딩 체크)
-	if strings.HasPrefix(toAddrStr, "0x0681d8db095565fe8a346fa0277bffde9c0edbbf") ||
-		strings.HasPrefix(toAddrStr, "0x4e9ce36e442e55ecd9025b9a6e0d88485d628a67") ||
-		strings.HasPrefix(toAddrStr, "0x4ed6cf63bd9c009d247ee51224fc1c7041f517f1") {
-		atomic.AddInt64(&p.debugStats.CexToAddresses, 1)
-		return
-	}
+// 	// CEX 주소 체크 (하드코딩 체크)
+// 	if strings.HasPrefix(toAddrStr, "0x0681d8db095565fe8a346fa0277bffde9c0edbbf") ||
+// 		strings.HasPrefix(toAddrStr, "0x4e9ce36e442e55ecd9025b9a6e0d88485d628a67") ||
+// 		strings.HasPrefix(toAddrStr, "0x4ed6cf63bd9c009d247ee51224fc1c7041f517f1") {
+// 		atomic.AddInt64(&p.debugStats.CexToAddresses, 1)
+// 		return
+// 	}
 
-	// Mock Deposit 주소 체크
-	if strings.HasPrefix(toAddrStr, "0xaaaaaaaaaa") ||
-		strings.HasPrefix(toAddrStr, "0xbbbbbbbb") ||
-		strings.HasPrefix(toAddrStr, "0xcccccccc") {
-		atomic.AddInt64(&p.debugStats.DepositToAddresses, 1)
-		return
-	}
+// 	// Mock Deposit 주소 체크
+// 	if strings.HasPrefix(toAddrStr, "0xaaaaaaaaaa") ||
+// 		strings.HasPrefix(toAddrStr, "0xbbbbbbbb") ||
+// 		strings.HasPrefix(toAddrStr, "0xcccccccc") {
+// 		atomic.AddInt64(&p.debugStats.DepositToAddresses, 1)
+// 		return
+// 	}
 
-	atomic.AddInt64(&p.debugStats.RandomTransactions, 1)
-}
+// 	atomic.AddInt64(&p.debugStats.RandomTransactions, 1)
+// }
 
 // runFixedAnalyzerBridge 수정된 Analyzer 브리지
 func (p *TxPipeline) runFixedAnalyzerBridge(ctx context.Context) {
@@ -415,10 +418,10 @@ func (p *TxPipeline) printEnhancedRealtimeStats() {
 	processed := atomic.LoadInt64(&p.stats.Processed)
 
 	// 디버깅 통계
-	cexTxs := atomic.LoadInt64(&p.debugStats.CexToAddresses)
-	depositTxs := atomic.LoadInt64(&p.debugStats.DepositToAddresses)
-	randomTxs := atomic.LoadInt64(&p.debugStats.RandomTransactions)
-	failures := atomic.LoadInt64(&p.debugStats.MatchFailures)
+	// cexTxs := atomic.LoadInt64(&p.debugStats.CexToAddresses)
+	// depositTxs := atomic.LoadInt64(&p.debugStats.DepositToAddresses)
+	// randomTxs := atomic.LoadInt64(&p.debugStats.RandomTransactions)
+	//failures := atomic.LoadInt64(&p.debugStats.MatchFailures)
 
 	uptime := time.Since(p.stats.StartTime).Seconds()
 	channelUsage := len(p.txChannel)
@@ -436,11 +439,11 @@ func (p *TxPipeline) printEnhancedRealtimeStats() {
 		uptime, generated, genRate, processed, processRate,
 		channelUsage, channelCapacity, channelPct, analyzerHealthy)
 
-	fmt.Printf("    🎯 Types: CEX→%d (%.1f%%) | Deposit→%d (%.1f%%) | Random→%d (%.1f%%) | Fail→%d\n",
-		cexTxs, float64(cexTxs)/float64(generated)*100,
-		depositTxs, float64(depositTxs)/float64(generated)*100,
-		randomTxs, float64(randomTxs)/float64(generated)*100,
-		failures)
+	// fmt.Printf("    🎯 Types: CEX→%d (%.1f%%) | Deposit→%d (%.1f%%) | Random→%d (%.1f%%) | Fail→%d\n",
+	// 	cexTxs, float64(cexTxs)/float64(generated)*100,
+	// 	depositTxs, float64(depositTxs)/float64(generated)*100,
+	// 	randomTxs, float64(randomTxs)/float64(generated)*100,
+	// 	failures)
 
 	// 상세 분석기 통계 (주기적)
 	if int(uptime)%6 == 0 {

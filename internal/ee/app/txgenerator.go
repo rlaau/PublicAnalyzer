@@ -26,7 +26,8 @@ type TxGenerator struct {
 	doneChannel chan struct{}
 
 	// Synchronization
-	mutex sync.RWMutex
+	mutex    sync.RWMutex
+	stopOnce sync.Once // 중복 stop 방지
 }
 
 // NewTxGenerator creates a new transaction generator
@@ -53,9 +54,11 @@ func (g *TxGenerator) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop stops transaction generation
+// Stop stops transaction generation (safe for multiple calls)
 func (g *TxGenerator) Stop() {
-	close(g.stopChannel)
+	g.stopOnce.Do(func() {
+		close(g.stopChannel)
+	})
 	<-g.doneChannel
 }
 
@@ -72,7 +75,6 @@ func (g *TxGenerator) GetGeneratedCount() int64 {
 }
 
 // generateTransactions is the main generation loop running in goroutine
-// TODO 아오 ㅋㅋㅋㅋ. 기계적인 생성률은 개나 줬네
 func (g *TxGenerator) generateTransactions(ctx context.Context) {
 	defer close(g.doneChannel)
 	defer close(g.txChannel)
