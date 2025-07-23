@@ -27,12 +27,12 @@ func GenerateMockDepositAddresses(filePath string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	_, err = file.WriteString("# This file contains 100,000 mock deposit addresses for testing\n")
 	if err != nil {
 		return err
 	}
-	
+
 	_, err = file.WriteString("# Format: one Ethereum address per line\n")
 	if err != nil {
 		return err

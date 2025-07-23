@@ -86,7 +86,7 @@ Located in `/shared`:
 - `monitoring/` - Profiling tools
 - `windowkeeper/` - Window-based data processing
 - `workerpool/` - Worker pool implementation
-
+- `txfeeder` - 테스트 환경에서 "가상의 트랜잭션"을 생성 후 각 모듈에 주입해주는 역할을 해
 ## Important Notes
 
 - The project cannot store all blockchain data due to volume constraints
@@ -99,12 +99,12 @@ Located in `/shared`:
 
 The `/testdata` directory contains Ethereum transaction CSV files (eth_tx_000000000000.csv through eth_tx_000000000046.csv) for testing the ingestion pipeline.
 
-### 클로드가 자주 실수한 것들. 주의 사항
+### 주의 사항. 코딩 시 염두할 것.
 1. *_test.go파일은 go run하지 못하니, go test로 실행하든, 파일명을 바꾸든 해야 해.
 2. 임포트 사이클 오류를 조심해야 해.
 3. 클로드는 파일경로 참조를 많이 실수해. 파일 관련 오류가 있으면 파일경로 함수나 명령을 반드시 검토해.
-4. 너는 파일을 읽을 때
- 파싱을 잘못하는 경우가 많아. 파일 관련 로직을 쓰기 전, 파일 내부를 본 후 올바른 전처리, 파싱을 점검해.
+4. 너는 파일을 읽을 때 파싱을 잘못하는 경우가 많아. 파일 관련 로직을 쓰기 전, 파일 내부를 본 후 올바른 전처리, 파싱을 점검해.
+5. 퍼시스턴트 데이터를 관리할 땐, 해당 데이터가 로컬의 어디에 저장되어서 로드되는지 반드시 그 경로를 검토해. 모킹 데이터를 다룰 때도 마찬가지야.
 
 ## annotaions
 1. effective go를 따라
