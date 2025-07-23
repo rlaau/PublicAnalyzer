@@ -13,30 +13,30 @@ import (
 
 // TxGenerator generates transactions for testing EE module
 type TxGenerator struct {
-	config              *domain.TxGeneratorConfig
-	state               *domain.TxGeneratorState
-	mockDepositAddrs    *domain.MockDepositAddressSet
-	cexSet              *domain.CEXSet
-	
+	config           *domain.TxGeneratorConfig
+	state            *domain.TxGeneratorState
+	mockDepositAddrs *domain.MockDepositAddressSet
+	cexSet           *domain.CEXSet
+
 	// Channels for transaction output
-	txChannel           chan sharedDomain.MarkedTransaction
-	
+	txChannel chan sharedDomain.MarkedTransaction
+
 	// Control channels
-	stopChannel         chan struct{}
-	doneChannel         chan struct{}
-	
+	stopChannel chan struct{}
+	doneChannel chan struct{}
+
 	// Synchronization
-	mutex               sync.RWMutex
+	mutex sync.RWMutex
 }
 
 // NewTxGenerator creates a new transaction generator
 func NewTxGenerator(config *domain.TxGeneratorConfig, cexSet *domain.CEXSet) *TxGenerator {
 	return &TxGenerator{
 		config:           config,
-		state:            domain.NewTxGeneratorState(config.StartTime),
+		state:            domain.NewTxGeneratorState(config.StartTime, config.TimeIncrementDuration, config.TransactionsPerTimeIncrement),
 		mockDepositAddrs: domain.NewMockDepositAddressSet(),
 		cexSet:           cexSet,
-		txChannel:        make(chan sharedDomain.MarkedTransaction, 10000), // Buffer for 10k transactions
+		txChannel:        make(chan sharedDomain.MarkedTransaction, 100_000), // Buffer for 10k transactions
 		stopChannel:      make(chan struct{}),
 		doneChannel:      make(chan struct{}),
 	}
@@ -72,16 +72,17 @@ func (g *TxGenerator) GetGeneratedCount() int64 {
 }
 
 // generateTransactions is the main generation loop running in goroutine
+// TODO 아오 ㅋㅋㅋㅋ. 기계적인 생성률은 개나 줬네
 func (g *TxGenerator) generateTransactions(ctx context.Context) {
 	defer close(g.doneChannel)
 	defer close(g.txChannel)
-
-	ticker := time.NewTicker(time.Microsecond) // Generate 1M tx/sec = 1 tx per microsecond
+	fmt.Printf("Starting transaction generation: %d total transactions at %d tx/sec\n",
+		g.config.TotalTransactions, g.config.TransactionsPerSecond)
+	// Calculate dynamic interval based on config.TPS
+	interval := time.Second / time.Duration(g.config.TransactionsPerSecond)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	fmt.Printf("Starting transaction generation: %d total transactions at %d tx/sec\n", 
-		g.config.TotalTransactions, g.config.TransactionsPerSecond)
-	
 	for {
 		select {
 		case <-ctx.Done():
@@ -95,7 +96,7 @@ func (g *TxGenerator) generateTransactions(ctx context.Context) {
 			g.mutex.RLock()
 			currentCount := g.state.GeneratedCount
 			g.mutex.RUnlock()
-			
+
 			if currentCount >= int64(g.config.TotalTransactions) {
 				fmt.Printf("Generated all %d transactions. Stopping.\n", g.config.TotalTransactions)
 				return
@@ -103,7 +104,7 @@ func (g *TxGenerator) generateTransactions(ctx context.Context) {
 
 			// Generate and send transaction
 			tx := g.generateSingleTransaction()
-			
+
 			select {
 			case g.txChannel <- tx:
 				// Transaction sent successfully
@@ -123,21 +124,21 @@ func (g *TxGenerator) generateSingleTransaction() sharedDomain.MarkedTransaction
 
 	// Determine transaction type based on patterns
 	txType := g.determineTransactionType()
-	
+
 	var tx sharedDomain.MarkedTransaction
-	
+
 	switch txType {
 	case DepositToCexTx:
 		tx = g.generateDepositToCexTransaction()
 		// 처음 5개 특별 케이스는 로깅
 		if g.state.GeneratedCount < 5 && txType == DepositToCexTx {
-			fmt.Printf("   ✨ Generated Deposit→CEX: From=%s → To=%s\n", 
+			fmt.Printf("   ✨ Generated Deposit→CEX: From=%s → To=%s\n",
 				tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
 		}
 	case RandomToDepositTx:
 		tx = g.generateRandomToDepositTransaction()
 		if g.state.GeneratedCount < 5 && txType == RandomToDepositTx {
-			fmt.Printf("   ✨ Generated Random→Deposit: From=%s → To=%s\n", 
+			fmt.Printf("   ✨ Generated Random→Deposit: From=%s → To=%s\n",
 				tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
 		}
 	default:
@@ -145,17 +146,17 @@ func (g *TxGenerator) generateSingleTransaction() sharedDomain.MarkedTransaction
 	}
 
 	// Update state
-	g.state.IncrementTransaction(g.config.TimeIncrementDuration)
-	
+	g.state.IncrementTransaction()
+
 	return tx
 }
 
 type TransactionType int
 
 const (
-	RandomTx TransactionType = iota
-	DepositToCexTx    // mockedAndHiddenDepositAddress -> CEX
-	RandomToDepositTx // random address -> mockedAndHiddenDepositAddress
+	RandomTx          TransactionType = iota
+	DepositToCexTx                    // mockedAndHiddenDepositAddress -> CEX
+	RandomToDepositTx                 // random address -> mockedAndHiddenDepositAddress
 )
 
 func (t TransactionType) String() string {
@@ -174,12 +175,12 @@ func (t TransactionType) String() string {
 // determineTransactionType determines what type of transaction to generate
 func (g *TxGenerator) determineTransactionType() TransactionType {
 	count := int(g.state.GeneratedCount)
-	
+
 	// 디버깅: 처음 10개 트랜잭션의 타입 결정 과정 로깅
 	var txType TransactionType
 	var reason string
-	
-	// 1 in 5 chance for DepositToCex transaction  
+
+	// 1 in 5 chance for DepositToCex transaction
 	if count%g.config.DepositToCexRatio == 0 {
 		txType = DepositToCexTx
 		reason = fmt.Sprintf("count=%d %% %d == 0", count, g.config.DepositToCexRatio)
@@ -191,12 +192,12 @@ func (g *TxGenerator) determineTransactionType() TransactionType {
 		txType = RandomTx
 		reason = fmt.Sprintf("count=%d, random", count)
 	}
-	
+
 	// 처음 10개는 디버깅 출력
 	if count < 10 {
 		fmt.Printf("   🎲 TX #%d: %v (%s)\n", count, txType, reason)
 	}
-	
+
 	return txType
 }
 
@@ -204,15 +205,15 @@ func (g *TxGenerator) determineTransactionType() TransactionType {
 func (g *TxGenerator) generateDepositToCexTransaction() sharedDomain.MarkedTransaction {
 	fromAddr := g.mockDepositAddrs.GetRandomAddress()
 	toAddr := g.getRandomCexAddress()
-	
+
 	return g.createMarkedTransaction(fromAddr, toAddr)
 }
 
-// generateRandomToDepositTransaction generates random -> mockedDepositAddress transaction  
+// generateRandomToDepositTransaction generates random -> mockedDepositAddress transaction
 func (g *TxGenerator) generateRandomToDepositTransaction() sharedDomain.MarkedTransaction {
 	fromAddr := domain.GenerateRandomAddress()
 	toAddr := g.mockDepositAddrs.GetRandomAddress()
-	
+
 	return g.createMarkedTransaction(fromAddr, toAddr)
 }
 
@@ -220,21 +221,21 @@ func (g *TxGenerator) generateRandomToDepositTransaction() sharedDomain.MarkedTr
 func (g *TxGenerator) generateRandomTransaction() sharedDomain.MarkedTransaction {
 	fromAddr := domain.GenerateRandomAddress()
 	toAddr := domain.GenerateRandomAddress()
-	
+
 	return g.createMarkedTransaction(fromAddr, toAddr)
 }
 
 // createMarkedTransaction creates a MarkedTransaction with given from/to addresses
 func (g *TxGenerator) createMarkedTransaction(from, to sharedDomain.Address) sharedDomain.MarkedTransaction {
 	txID := domain.GenerateRandomTxID()
-	
+
 	// Generate random value (0.1 to 10 ETH in wei)
 	minWei := new(big.Int)
-	minWei.SetString("100000000000000000", 10)  // 0.1 ETH in wei
+	minWei.SetString("100000000000000000", 10) // 0.1 ETH in wei
 	maxWei := new(big.Int)
 	maxWei.SetString("10000000000000000000", 10) // 10 ETH in wei
 	diff := new(big.Int).Sub(maxWei, minWei)
-	
+
 	// Simple random generation for value
 	randomBytes := make([]byte, 8)
 	for i := range randomBytes {
@@ -243,7 +244,7 @@ func (g *TxGenerator) createMarkedTransaction(from, to sharedDomain.Address) sha
 	randomValue := new(big.Int).SetBytes(randomBytes)
 	randomValue.Mod(randomValue, diff)
 	randomValue.Add(randomValue, minWei)
-	
+
 	return sharedDomain.MarkedTransaction{
 		BlockTime:   g.state.CurrentTime,
 		TxID:        txID,
@@ -254,7 +255,7 @@ func (g *TxGenerator) createMarkedTransaction(from, to sharedDomain.Address) sha
 		To:          to,
 		Value:       sharedDomain.BigInt{Int: randomValue},
 		GasLimit:    sharedDomain.BigInt{Int: big.NewInt(21000)}, // Standard ETH transfer gas
-		Input:       "", // Empty for ETH transfers
+		Input:       "",                                          // Empty for ETH transfers
 	}
 }
 
@@ -264,28 +265,28 @@ func (g *TxGenerator) getRandomCexAddress() sharedDomain.Address {
 	if len(addresses) == 0 {
 		return domain.GenerateRandomAddress() // Fallback to random if no CEX addresses
 	}
-	
+
 	// Simple random selection
 	idx := int(g.state.GeneratedCount) % len(addresses)
-	
+
 	// Convert string address to Address type
 	addr, err := g.parseAddressString(addresses[idx])
 	if err != nil {
 		return domain.GenerateRandomAddress() // Fallback on parse error
 	}
-	
+
 	return addr
 }
 
 // parseAddressString converts hex string to Address type
 func (g *TxGenerator) parseAddressString(hexStr string) (sharedDomain.Address, error) {
 	var addr sharedDomain.Address
-	
+
 	// Remove 0x prefix if present
 	if len(hexStr) >= 2 && hexStr[:2] == "0x" {
 		hexStr = hexStr[2:]
 	}
-	
+
 	if len(hexStr) != 40 {
 		return addr, fmt.Errorf("invalid address length: %d", len(hexStr))
 	}

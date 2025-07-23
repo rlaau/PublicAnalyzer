@@ -2,6 +2,7 @@ package infra
 
 import (
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,6 +45,10 @@ func (r *FileDepositRepository) SaveDetectedDeposit(deposit *domain.DetectedDepo
 	}
 
 	// Check if deposit already exists
+	// TODO 여기도 체킹 로직 제거 가능. 중복임.
+	//TODO 그러나 이 중복은 set을 in-memory로 올려놓을 떄나 중복 로직이고, 만약 불가 시 여기서 한번 더 체크는 필요.
+	//TODO 현재는 중복임
+	//TODO Save호출하기 전 Set에서 한번 확인 후 제거함.
 	addrStr := deposit.Address.String()
 	found := false
 	for _, existing := range deposits {
@@ -61,7 +66,8 @@ func (r *FileDepositRepository) SaveDetectedDeposit(deposit *domain.DetectedDepo
 	}
 
 	// Rewrite file with all deposits
-	return r.rewriteFile(deposits)
+	//* 증분 방식으로 바꿨으나 검증 필요
+	return r.appendDepositToFile(deposit)
 }
 
 // LoadDetectedDeposits loads all detected deposit addresses from CSV file
@@ -207,7 +213,6 @@ func (r *FileDepositRepository) ensureFileExists() error {
 	return nil
 }
 
-
 // rewriteFile rewrites the entire file with given deposits
 func (r *FileDepositRepository) rewriteFile(deposits []*domain.DetectedDepositAddress) error {
 	// Create temporary file
@@ -242,6 +247,52 @@ func (r *FileDepositRepository) rewriteFile(deposits []*domain.DetectedDepositAd
 
 	// Atomic replace
 	return os.Rename(tmpPath, r.filePath)
+}
+func (r *FileDepositRepository) appendDepositToFile(deposit *domain.DetectedDepositAddress) error {
+	// Check if file exists and whether it's empty (헤더가 필요할 수 있음)
+	needHeader := false
+	if _, err := os.Stat(r.filePath); errors.Is(err, os.ErrNotExist) {
+		needHeader = true
+	} else {
+		info, err := os.Stat(r.filePath)
+		if err != nil {
+			return fmt.Errorf("failed to stat deposit file: %w", err)
+		}
+		if info.Size() == 0 {
+			needHeader = true
+		}
+	}
+
+	// Open file in append mode
+	file, err := os.OpenFile(r.filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open deposit file: %w", err)
+	}
+	defer file.Close()
+
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+
+	// Write header if needed
+	if needHeader {
+		header := []string{"address", "detected_at", "cex_address", "tx_count"}
+		if err := writer.Write(header); err != nil {
+			return fmt.Errorf("failed to write header: %w", err)
+		}
+	}
+
+	// Write one record
+	record := []string{
+		deposit.Address.String(),
+		deposit.DetectedAt.Format(time.RFC3339),
+		deposit.CEXAddress.String(),
+		strconv.FormatInt(deposit.TxCount, 10),
+	}
+	if err := writer.Write(record); err != nil {
+		return fmt.Errorf("failed to write deposit record: %w", err)
+	}
+
+	return nil
 }
 
 // parseDepositRecord parses a CSV record into DetectedDepositAddress

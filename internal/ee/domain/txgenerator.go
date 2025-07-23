@@ -34,7 +34,7 @@ func (s *MockDepositAddressSet) LoadFromFile(filePath string) error {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		
+
 		// Skip empty lines and comments
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -56,7 +56,7 @@ func (s *MockDepositAddressSet) GetRandomAddress() domain.Address {
 	if len(s.addresses) == 0 {
 		return domain.Address{} // Return zero address if empty
 	}
-	
+
 	idx := s.randomInt(len(s.addresses))
 	return s.addresses[idx]
 }
@@ -69,12 +69,12 @@ func (s *MockDepositAddressSet) Size() int {
 // parseAddress converts hex string to Address type
 func (s *MockDepositAddressSet) parseAddress(hexStr string) (domain.Address, error) {
 	var addr domain.Address
-	
+
 	// Remove 0x prefix if present
 	if strings.HasPrefix(hexStr, "0x") {
 		hexStr = hexStr[2:]
 	}
-	
+
 	if len(hexStr) != 40 {
 		return addr, fmt.Errorf("invalid address length: %d", len(hexStr))
 	}
@@ -97,70 +97,74 @@ func (s *MockDepositAddressSet) randomInt(max int) int {
 	if max <= 0 {
 		return 0
 	}
-	
+
 	b := make([]byte, 4)
 	rand.Read(b)
-	
+
 	val := int(b[0])<<24 | int(b[1])<<16 | int(b[2])<<8 | int(b[3])
 	if val < 0 {
 		val = -val
 	}
-	
+
 	return val % max
 }
 
 // TxGeneratorConfig holds configuration for transaction generation
 type TxGeneratorConfig struct {
-	TotalTransactions        int           // 400,000,000 total transactions
-	TransactionsPerSecond    int           // 1,000,000 transactions per second
-	TransactionsPerTimeIncrement int       // 15 transactions per time increment
-	TimeIncrementDuration    time.Duration // 1 second per 15 transactions
-	StartTime               time.Time     // 2025-01-01 as base time
-	
+	TotalTransactions            int           // 400,000,000 total transactions
+	TransactionsPerSecond        int           // 1,000,000 transactions per second
+	TransactionsPerTimeIncrement int           // 15 transactions per time increment
+	TimeIncrementDuration        time.Duration // 1 second per 15 transactions
+	StartTime                    time.Time     // 2025-01-01 as base time
+
 	// Transaction pattern ratios
-	DepositToCexRatio       int // 1 in 50 (2%)
-	RandomToDepositRatio    int // 1 in 20 (5%)
+	DepositToCexRatio    int // 1 in 50 (2%)
+	RandomToDepositRatio int // 1 in 20 (5%)
 }
 
 // NewDefaultTxGeneratorConfig creates default configuration
 func NewDefaultTxGeneratorConfig() *TxGeneratorConfig {
 	startTime, _ := time.Parse("2006-01-02", "2025-01-01")
-	
+
 	return &TxGeneratorConfig{
-		TotalTransactions:           400_000_000,
-		TransactionsPerSecond:       1_000_000,
+		TotalTransactions:            400_000_000,
+		TransactionsPerSecond:        1_000_000,
 		TransactionsPerTimeIncrement: 15,
-		TimeIncrementDuration:       time.Second,
-		StartTime:                  startTime,
-		DepositToCexRatio:          50,
-		RandomToDepositRatio:       20,
+		TimeIncrementDuration:        time.Second,
+		StartTime:                    startTime,
+		DepositToCexRatio:            50,
+		RandomToDepositRatio:         20,
 	}
 }
 
 // TxGeneratorState holds the current state of the generator
 type TxGeneratorState struct {
-	GeneratedCount    int64
-	CurrentTime      time.Time
-	TxCounter        int // Counter for time increments
+	GeneratedCount              int64
+	CurrentTime                 time.Time
+	TxCounter                   int // Counter for time increments
+	timeIncrement               time.Duration
+	transactionPerTimeIncrement int
 }
 
 // NewTxGeneratorState creates initial generator state
-func NewTxGeneratorState(startTime time.Time) *TxGeneratorState {
+func NewTxGeneratorState(startTime time.Time, timeIncrement time.Duration, transactionPerTimeIncrement int) *TxGeneratorState {
 	return &TxGeneratorState{
-		GeneratedCount: 0,
-		CurrentTime:   startTime,
-		TxCounter:     0,
+		GeneratedCount:              0,
+		CurrentTime:                 startTime,
+		TxCounter:                   0,
+		timeIncrement:               timeIncrement,
+		transactionPerTimeIncrement: transactionPerTimeIncrement,
 	}
 }
 
 // IncrementTransaction updates state for next transaction
-func (s *TxGeneratorState) IncrementTransaction(timeIncrement time.Duration) {
+func (s *TxGeneratorState) IncrementTransaction() {
 	s.GeneratedCount++
 	s.TxCounter++
-	
-	// Every 15 transactions, increment time by 1 second
-	if s.TxCounter%15 == 0 {
-		s.CurrentTime = s.CurrentTime.Add(timeIncrement)
+
+	// transactionPerTimeIncrement마다 timeIncrement만큼 시간 지난 것으로 측정
+	if s.TxCounter%s.transactionPerTimeIncrement == 0 {
+		s.CurrentTime = s.CurrentTime.Add(s.timeIncrement)
 	}
 }
 

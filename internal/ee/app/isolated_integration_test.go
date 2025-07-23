@@ -41,7 +41,7 @@ func TestIsolatedIntegration(t *testing.T) {
 	analyzerConfig := &EOAAnalyzerConfig{
 		Name:                "Isolated-Test-Analyzer",
 		Mode:                TestingMode,
-		ChannelBufferSize:   10000, // 10K 버퍼로 증가
+		ChannelBufferSize:   5_000_000, // 10K 버퍼로 증가
 		WorkerCount:         4,     // 워커 4개로 증가
 		MaxProcessingTime:   50_000_000,     // 50ms
 		StatsInterval:       2_000_000_000,  // 2초

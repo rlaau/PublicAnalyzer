@@ -85,6 +85,8 @@ func (dm *DualManager) CheckTransaction(tx *domain.MarkedTransaction) error {
 	defer dm.mutex.Unlock()
 
 	// Only process EOA-EOA transactions
+	//todo 근데 이거 중복 체킹이긴 함. 프로덕션 후 문제 없으면 충분히 제거 가능
+	//todo ProcessSingle에서 미리 검사함. 애초에 카프카 큐에서 분리 시 신뢰도 가능하고
 	if tx.TxSyntax[0] != domain.EOAMark || tx.TxSyntax[1] != domain.EOAMark {
 		return nil
 	}
@@ -98,9 +100,9 @@ func (dm *DualManager) handleAddress(tx *domain.MarkedTransaction) error {
 	toAddr := tx.To
 
 	// 디버깅: 모든 트랜잭션의 케이스 분류 과정 로깅 (처음에는 항상 로깅)
-	debugEnabled := true // 일단 모든 트랜잭션 디버깅
+	debugEnabled := false //성능 이슈로 디버깅 취소//true // 일단 모든 트랜잭션 디버깅
 	if debugEnabled {
-		fmt.Printf("🔀 DualManager: From=%s To=%s\n", 
+		fmt.Printf("🔀 DualManager: From=%s To=%s\n",
 			fromAddr.String()[:10]+"...", toAddr.String()[:10]+"...")
 		fmt.Printf("   From_CEX=%t, To_CEX=%t, From_Deposit=%t, To_Deposit=%t\n",
 			dm.groundKnowledge.IsCEXAddress(fromAddr),
@@ -155,18 +157,22 @@ func (dm *DualManager) handleExceptionalAddress(address domain.Address, addressT
 }
 
 // handleDepositDetection handles detection of new deposit addresses
+// ! 성능 관련 로직이 (케스케이딩 버킷) 수정이 필요한 함수
+// TODO 성능 관련 로직 수정 필요!!
 func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Address, tx *domain.MarkedTransaction) error {
-	fmt.Printf("💰 handleDepositDetection: %s → CEX %s\n", 
+	fmt.Printf("💰 handleDepositDetection: %s → CEX %s\n",
 		depositAddr.String()[:10]+"...", cexAddr.String()[:10]+"...")
-		
+
 	// 1. 새로운 입금주소를 detectedDepositAddress에 추가
 	if err := dm.groundKnowledge.DetectNewDepositAddress(depositAddr, cexAddr); err != nil {
 		fmt.Printf("   ❌ DetectNewDepositAddress failed: %v\n", err)
 		return err
 	}
-	fmt.Printf("   ✅ DetectNewDepositAddress succeeded\n")
+	//fmt.Printf("   ✅ DetectNewDepositAddress succeeded\n")
 
 	// 2. DualManager의 pendingRelationsDB에서 depositAddr을 to로 하는 []from 값들 조회
+	// TODO pendingRelations에서 관리하는 타입을 to-> []fromInfo로 변경 요구
+	// TODO fromInfo는 [txTD,address]로 저장하기
 	depositAddrStr := depositAddr.String()
 	fromAddresses, err := dm.getPendingRelations(depositAddrStr)
 	if err == nil && len(fromAddresses) > 0 {
@@ -177,12 +183,15 @@ func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Addres
 				continue
 			}
 
+			//TODO 이 구문 수정 필요. 여기의 txID는 cex,deposit의 관계지, deposit->eoa의 txId가 아님
+			//TODO 추후 pendingRelationsDB에서 fromInfo를 [txTD, address]로 저장하게 한 후, 그거스이 txID쓰기
 			if err := dm.saveConnectionToGraphDB(fromAddr, depositAddr, tx.TxID); err != nil {
 				return err
 			}
 		}
 
 		// 처리된 관계 제거
+		//TODO pendingRelations와 windowBucket은 항상 "holind한 toUser가 동일"해야 하므로, 펜딩에서 제거 시 윈도우에서도 제거 필요
 		if err := dm.deletePendingRelations(depositAddrStr); err != nil {
 			return err
 		}
@@ -312,6 +321,8 @@ func (dm *DualManager) calculateWeekStart(t time.Time) time.Time {
 }
 
 // isToUserInWindow checks if to user already exists in the entire window
+// TODO 성능 개선 필요. 타임 버킷에서 찾을 떄, "최신 버킷에서부터"찾으면 자동 케싱 겸 성능 개선 가능
+// ! 주요 케싱 로직임!
 func (dm *DualManager) isToUserInWindow(toAddr string) bool {
 	for _, bucket := range dm.firstActiveTimeBuckets {
 		if bucket == nil {
@@ -336,6 +347,7 @@ func (dm *DualManager) countActiveBuckets() int {
 }
 
 // cleanupOldestBucket removes oldest bucket and its associated kvDB entries
+// TODO 이것도 로깅하기. rear, front를 로깅하면서 순환 큐 만들어야지!!
 func (dm *DualManager) cleanupOldestBucket() error {
 	// 가장 오래된 버킷 찾기
 	var oldestBucket *TimeBucket
@@ -373,7 +385,7 @@ func (dm *DualManager) cleanupOldestBucket() error {
 // getPendingRelations retrieves the list of from addresses for a given to address
 func (dm *DualManager) getPendingRelations(toAddr string) ([]string, error) {
 	var fromAddresses []string
-	
+
 	err := dm.pendingRelationsDB.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte(toAddr))
 		if err != nil {
@@ -388,7 +400,7 @@ func (dm *DualManager) getPendingRelations(toAddr string) ([]string, error) {
 	if err == badger.ErrKeyNotFound {
 		return []string{}, nil // Return empty slice if not found
 	}
-	
+
 	return fromAddresses, err
 }
 
@@ -401,7 +413,7 @@ func (dm *DualManager) addToPendingRelations(toAddr, fromAddr string) error {
 		if err != nil && err != badger.ErrKeyNotFound {
 			return err
 		}
-		
+
 		if err == nil {
 			err = item.Value(func(val []byte) error {
 				return json.Unmarshal(val, &fromAddresses)
@@ -445,7 +457,7 @@ func (dm *DualManager) countPendingRelations() int {
 		opts := badger.DefaultIteratorOptions
 		it := txn.NewIterator(opts)
 		defer it.Close()
-		
+
 		for it.Rewind(); it.Valid(); it.Next() {
 			count++
 		}

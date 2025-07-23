@@ -24,11 +24,11 @@ type SimpleEOAAnalyzer struct {
 	graphRepo       domain.GraphRepository
 
 	// Channel processing
-	txChannel     chan *shareddomain.MarkedTransaction
-	stopChannel   chan struct{}
-	stopOnce      sync.Once
-	shutdownOnce  sync.Once
-	wg            sync.WaitGroup
+	txChannel    chan *shareddomain.MarkedTransaction
+	stopChannel  chan struct{}
+	stopOnce     sync.Once
+	shutdownOnce sync.Once
+	wg           sync.WaitGroup
 
 	// Configuration
 	config *EOAAnalyzerConfig
@@ -82,13 +82,13 @@ func newSimpleAnalyzer(config *EOAAnalyzerConfig) (*SimpleEOAAnalyzer, error) {
 	log.Printf("📦 Loaded %d CEX addresses", cexSet.Size())
 
 	// Deposit 저장소 초기화 - 모드에 따른 경로 설정
-	var depositFilePath string
+	var detectedDepositFilePath string
 	if config.Mode == TestingMode {
-		depositFilePath = config.DataPath + "/test_deposits.csv"
+		detectedDepositFilePath = config.DataPath + "/test_detected_deposits.csv"
 	} else {
-		depositFilePath = config.DataPath + "/deposits.csv"
+		detectedDepositFilePath = config.DataPath + "/production_detected_deposits.csv"
 	}
-	depositRepo := infra.NewFileDepositRepository(depositFilePath)
+	depositRepo := infra.NewFileDepositRepository(detectedDepositFilePath)
 
 	// GroundKnowledge 생성
 	groundKnowledge := domain.NewGroundKnowledge(cexSet, depositRepo)
@@ -206,14 +206,16 @@ func (a *SimpleEOAAnalyzer) transactionWorker(ctx context.Context, workerID int)
 // processSingleTransaction 개별 트랜잭션 처리
 func (a *SimpleEOAAnalyzer) processSingleTransaction(tx *shareddomain.MarkedTransaction, workerID int) {
 	processedCount := atomic.AddInt64(&a.stats.TotalProcessed, 1)
-	
+
 	// 처음 몇 개 트랜잭션은 디버깅 로그 출력
 	if processedCount <= 5 {
-		log.Printf("🔄 Worker %d: processing tx #%d | From: %s | To: %s", 
+		log.Printf("🔄 Worker %d: processing tx #%d | From: %s | To: %s",
 			workerID, processedCount, tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
 	}
 
 	// EOA-EOA 트랜잭션만 처리
+	//TODO 이건 추후 제거 가능. 어차피 EE트랜잭션만 카프카 큐에 보내줄 거라서..
+	//TODO 뭐, 놔둬도 상관 없긴 함.
 	if tx.TxSyntax[0] != shareddomain.EOAMark || tx.TxSyntax[1] != shareddomain.EOAMark {
 		if processedCount <= 5 {
 			log.Printf("⏭️  Worker %d: skipping non-EOA tx #%d", workerID, processedCount)
@@ -226,7 +228,7 @@ func (a *SimpleEOAAnalyzer) processSingleTransaction(tx *shareddomain.MarkedTran
 		atomic.AddInt64(&a.stats.ErrorCount, 1)
 		errorCount := atomic.LoadInt64(&a.stats.ErrorCount)
 		if errorCount <= 5 { // 처음 5개 에러는 모두 로깅 (디버깅용)
-			log.Printf("⚠️ Worker %d: processing error #%d: %v | From: %s | To: %s", 
+			log.Printf("⚠️ Worker %d: processing error #%d: %v | From: %s | To: %s",
 				workerID, errorCount, err, tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
 		} else if errorCount%20 == 1 { // 이후에는 20번째마다 로깅
 			log.Printf("⚠️ Worker %d: processing error #%d: %v", workerID, errorCount, err)
@@ -235,46 +237,46 @@ func (a *SimpleEOAAnalyzer) processSingleTransaction(tx *shareddomain.MarkedTran
 	}
 
 	successCount := atomic.AddInt64(&a.stats.SuccessCount, 1)
-	
+
 	// 처음 몇 개 성공은 로깅
 	if successCount <= 5 {
-		log.Printf("✅ Worker %d: success #%d | From: %s | To: %s", 
+		log.Printf("✅ Worker %d: success #%d | From: %s | To: %s",
 			workerID, successCount, tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
 	}
-	
+
 	a.analyzeTransactionResult(tx)
 }
 
 // analyzeTransactionResult 트랜잭션 결과 분석
 func (a *SimpleEOAAnalyzer) analyzeTransactionResult(tx *shareddomain.MarkedTransaction) {
 	depositDetected := false
-	
+
 	// 처음 5개 트랜잭션의 CEX 체크 과정을 자세히 로깅
 	processedCount := atomic.LoadInt64(&a.stats.SuccessCount)
-	
+
 	// 입금 주소 탐지
 	isCEX := a.groundKnowledge.IsCEXAddress(tx.To)
 	if processedCount <= 5 {
-		log.Printf("🔍 CEX Check #%d: To=%s → IsCEX=%t", 
+		log.Printf("🔍 CEX Check #%d: To=%s → IsCEX=%t",
 			processedCount, tx.To.String(), isCEX)
 	}
-	
+
 	if isCEX {
 		depositCount := atomic.AddInt64(&a.stats.DepositDetections, 1)
 		depositDetected = true
-		log.Printf("🎯 DEPOSIT DETECTED #%d: From: %s → CEX: %s", 
+		log.Printf("🎯 DEPOSIT DETECTED #%d: From: %s → CEX: %s",
 			depositCount, tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
 	}
 
 	// 그래프/윈도우 업데이트 분류
 	if a.groundKnowledge.IsDepositAddress(tx.To) {
 		graphCount := atomic.AddInt64(&a.stats.GraphUpdates, 1)
-		log.Printf("📊 GRAPH UPDATE #%d: From: %s → Deposit: %s", 
+		log.Printf("📊 GRAPH UPDATE #%d: From: %s → Deposit: %s",
 			graphCount, tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
 	} else {
 		windowCount := atomic.AddInt64(&a.stats.WindowUpdates, 1)
 		if depositDetected {
-			log.Printf("📈 WINDOW UPDATE #%d (with deposit): From: %s → To: %s", 
+			log.Printf("📈 WINDOW UPDATE #%d (with deposit): From: %s → To: %s",
 				windowCount, tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
 		}
 	}

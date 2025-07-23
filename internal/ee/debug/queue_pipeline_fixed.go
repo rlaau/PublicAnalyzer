@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -123,11 +124,11 @@ func setupFixedTestConfig() *IsolatedTestConfig {
 		PendingDBPath:   filepath.Join(isolatedDir, "pending"),
 
 		// 극소 테스트 설정 - CEX 매칭에 집중
-		ChannelBufferSize: 20,              // 최소 버퍼
-		TestDuration:      6 * time.Second, // 매우 짧은 테스트
-		TotalTransactions: 10,              // 극소 데이터로 빠른 결과 확인
-		GenerationRate:    5,               // 매우 느린 생성률
-		AnalysisWorkers:   2,               // 워커 2개 유지
+		ChannelBufferSize: 1_000_000,         // 최소 버퍼
+		TestDuration:      200 * time.Second, // 매우 짧은 테스트
+		TotalTransactions: 100_00000,         // 극소 데이터로 빠른 결과 확인
+		GenerationRate:    10_000,            // 매우 느린 생성률
+		AnalysisWorkers:   8,                 // 워커 4개 유지
 	}
 
 	fmt.Printf("   ✅ Isolated directory: %s\n", config.IsolatedDir)
@@ -187,15 +188,17 @@ func createFixedTxPipeline(config *IsolatedTestConfig) (*TxPipeline, error) {
 
 	// TxGenerator 생성 (CEX 비율 증가)
 	genConfig := &domain.TxGeneratorConfig{
-		TotalTransactions:     config.TotalTransactions,
-		TransactionsPerSecond: config.GenerationRate,
-		StartTime:             time.Now(),
-		TimeIncrementDuration: 1 * time.Millisecond,
-		DepositToCexRatio:     5, // 1/5 = 20% (기존 1/20 = 5%에서 증가)
-		RandomToDepositRatio:  8, // 1/8 = 12.5% (기존 1/15에서 증가)
+		TotalTransactions:            config.TotalTransactions,
+		TransactionsPerSecond:        config.GenerationRate, //기계적으로 생성하는 시간당 tx수
+		StartTime:                    time.Now(),
+		TransactionsPerTimeIncrement: 1,           //하나의 tx마나 1초가 지난 것으로 설정
+		TimeIncrementDuration:        time.Second, //1초씩 시간 증가
+		DepositToCexRatio:            50,          // 1/50 비율로 CEX 주소 사용
+		RandomToDepositRatio:         30,          //1/15 비율로 Deposit 주소 사용
 	}
 
 	generator := app.NewTxGenerator(genConfig, cexSet)
+	fmt.Printf("Load MockAndHiddenDeposit from %s", config.MockDepositFile)
 	if err := generator.LoadMockDepositAddresses(config.MockDepositFile); err != nil {
 		return nil, fmt.Errorf("failed to load mock deposits: %w", err)
 	}
@@ -209,7 +212,6 @@ func createFixedTxPipeline(config *IsolatedTestConfig) (*TxPipeline, error) {
 		Mode:                app.TestingMode,
 		ChannelBufferSize:   config.ChannelBufferSize,
 		WorkerCount:         config.AnalysisWorkers,
-		MaxProcessingTime:   5_000_000,     // 5ms (더 빠른 처리)
 		StatsInterval:       2_000_000_000, // 2초
 		HealthCheckInterval: 3_000_000_000, // 3초
 		DataPath:            config.IsolatedDir,
@@ -634,31 +636,42 @@ func copyFile(src, dst string) error {
 	return err
 }
 
+// * 제너레이터는 mockedAndHiddenDepositAddress.txt 파일을 "debug"용 tmp폴더에 create로 복사 후, 그 파일을 로드함
 func createMockDeposits(filePath string) error {
+	fmt.Printf("   🔍 Creating mock deposit addresses at %s\n", filePath)
 	file, err := os.Create(filePath)
+
 	if err != nil {
 		return err
 	}
 	defer file.Close()
+	root := findProjectRoot()
 
-	deposits := []string{
-		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		"0xcccccccccccccccccccccccccccccccccccccccc",
-		"0xdddddddddddddddddddddddddddddddddddddddd",
-		"0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-		"0xffffffffffffffffffffffffffffffffffffffff",
-		"0x1111111111111111111111111111111111111111",
-		"0x2222222222222222222222222222222222222222",
-		"0x3333333333333333333333333333333333333333",
-		"0x4444444444444444444444444444444444444444",
+	depositFilePath := filepath.Join(root, "internal", "ee", "mockedAndHiddenDepositAddress.txt")
+	fmt.Printf("loading mockedAndHiddenDepositAddress.txt from %s\n", depositFilePath)
+
+	deposits, err := os.Open(depositFilePath)
+	if err != nil {
+		return err
 	}
+	defer deposits.Close()
 
 	file.WriteString("# Mock Deposit Addresses for Fixed Queue Test\n\n")
-	for _, addr := range deposits {
-		file.WriteString(addr + "\n")
+	// 4. 한 줄씩 읽어서 복사
+	scanner := bufio.NewScanner(deposits)
+	totalLength := 0
+	lineCount := 0
+	for scanner.Scan() {
+		line := scanner.Text()
+		file.WriteString(line + "\n")
+		totalLength += len(line)
+		lineCount++
 	}
 
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error reading deposit file: %w", err)
+	}
+	fmt.Printf("   ✅ Copied %d lines (total %d bytes of address strings)\n", lineCount, totalLength)
 	return nil
 }
 
