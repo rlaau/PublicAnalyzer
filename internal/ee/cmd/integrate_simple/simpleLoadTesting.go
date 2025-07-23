@@ -83,7 +83,7 @@ func main() {
 		RandomToDepositRatio:  20,
 	}
 
-	txGenerator := txFeeder.NewTxGenerator(genConfig, cexSet)
+	txGenerator := txFeeder.NewTxFeeder(genConfig, cexSet)
 
 	// 모의 입금 주소 로드 (선택사항)
 	if err := txGenerator.LoadMockDepositAddresses("internal/ee/mockedAndHiddenDepositAddress.txt"); err != nil {
