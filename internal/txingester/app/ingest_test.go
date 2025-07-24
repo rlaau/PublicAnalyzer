@@ -13,15 +13,15 @@ import (
 )
 
 func TestTestingIngester(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	kafkaClient := kafka.NewClient([]string{"localhost:9092"}, "ingest-testing-tx")
-	defer kafkaClient.Close()
+	kafkaProducer := kafka.NewProducer([]string{"localhost:9092"}, "ingest-testing-tx")
+	defer kafkaProducer.Close()
 
 	// CCE 서비스 생성
 	cceService := app.NewMockCCEService()
-	ingester := NewTestingIngester(kafkaClient, cceService)
+	ingester := NewTestingIngester(kafkaProducer, cceService)
 
 	// Start ingesting in a goroutine
 	go func() {
@@ -33,11 +33,11 @@ func TestTestingIngester(t *testing.T) {
 
 	// Start consuming messages with reservoir sampling
 	go func() {
-		reader := kafka.NewReader([]string{"localhost:9092"}, "ingest-testing-tx", "test-consumer-group")
-		defer reader.Close()
+		consumer := kafka.NewConsumer([]string{"localhost:9092"}, "ingest-testing-tx", "test-consumer-group")
+		defer consumer.Close()
 		
-		const targetMessages = 1000000  // 100만개 목표
-		const reservoirSize = 10000     // 1만개 레저버 샘플링
+		const targetMessages = 10000    // 1만개 목표 (메모리 안정성)
+		const reservoirSize = 1000      // 1천개 레저버 샘플링
 		
 		reservoir := make([]string, 0, reservoirSize)
 		messageCount := 0
@@ -54,7 +54,7 @@ func TestTestingIngester(t *testing.T) {
 			default:
 			}
 
-			msg, err := reader.ReadMessage(ctx)
+			_, value, err := consumer.ReadMessage(ctx)
 			if err != nil {
 				if err == context.Canceled {
 					break
@@ -68,12 +68,12 @@ func TestTestingIngester(t *testing.T) {
 			// Reservoir sampling algorithm
 			if len(reservoir) < reservoirSize {
 				// Fill the reservoir initially
-				reservoir = append(reservoir, fmt.Sprintf("Msg_%d_Key_%s", messageCount, string(msg.Key)))
+				reservoir = append(reservoir, fmt.Sprintf("Msg_%d_Value_%s", messageCount, string(value)))
 			} else {
 				// Replace random element with probability k/n
 				j := rand.Intn(messageCount)
 				if j < reservoirSize {
-					reservoir[j] = fmt.Sprintf("Msg_%d_Key_%s", messageCount, string(msg.Key))
+					reservoir[j] = fmt.Sprintf("Msg_%d_Value_%s", messageCount, string(value))
 				}
 			}
 

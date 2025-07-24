@@ -14,6 +14,8 @@ import (
 	"time"
 
 	sharedDomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/dto"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/domain"
 )
 
@@ -69,15 +71,19 @@ type DebugStats struct {
 	MatchFailures      int64 // 매칭 실패
 }
 
-// MockTxFeeder generates transactions for testing EE module with pipeline management
-type MockTxFeeder struct {
+// TxFeeder generates transactions for testing EE module with pipeline management
+type TxFeeder struct {
 	config           *domain.TxGeneratorConfig
 	state            *domain.TxGeneratorState
 	mockDepositAddrs *domain.MockDepositAddressSet
 	cexSet           *sharedDomain.CEXSet
 
-	// Channels for transaction output
+	// Channels for transaction output (backward compatibility)
 	markedTxChannel chan sharedDomain.MarkedTransaction
+
+	// Kafka producer for fed-tx topic
+	kafkaProducer kafka.Producer
+	kafkaBrokers  []string
 
 	// Control channels
 	stopChannel chan struct{}
@@ -91,7 +97,7 @@ type MockTxFeeder struct {
 	baseDir     string
 	isolatedDir string
 
-	// Pipeline management - 출력 채널 등록 방식
+	// Pipeline management - 출력 채널 등록 방식 (backward compatibility)
 	requestedOutputChannels []chan<- *sharedDomain.MarkedTransaction // 등록된 출력 채널들
 
 	// Pipeline 통계 및 상태 관리
@@ -102,7 +108,7 @@ type MockTxFeeder struct {
 }
 
 // NewTxFeeder 간단한 TxFeeder 생성을 위한 헬퍼 함수
-func NewTxFeeder(genConfig *domain.TxGeneratorConfig, envConfig *EnvironmentConfig) (*MockTxFeeder, error) {
+func NewTxFeeder(genConfig *domain.TxGeneratorConfig, envConfig *EnvironmentConfig) (*TxFeeder, error) {
 	config := &TxFeederConfig{
 		GenConfig:            genConfig,
 		EnvConfig:            envConfig,
@@ -113,7 +119,7 @@ func NewTxFeeder(genConfig *domain.TxGeneratorConfig, envConfig *EnvironmentConf
 }
 
 // NewTxFeederWithComplexConfig 통합된 설정으로 TxFeeder를 생성하고 모든 초기화를 완료
-func NewTxFeederWithComplexConfig(config *TxFeederConfig) (*MockTxFeeder, error) {
+func NewTxFeederWithComplexConfig(config *TxFeederConfig) (*TxFeeder, error) {
 	// 1. 기본 TxFeeder 생성 (빈 CEXSet으로 시작)
 	emptyCexSet := sharedDomain.NewCEXSet()
 	feeder := GetRawTxFeeder(config.GenConfig, emptyCexSet)
@@ -144,13 +150,21 @@ func NewTxFeederWithComplexConfig(config *TxFeederConfig) (*MockTxFeeder, error)
 }
 
 // GetRawTxFeeder creates a new transaction generator with pipeline capabilities (기존 호환성용)
-func GetRawTxFeeder(config *domain.TxGeneratorConfig, cexSet *sharedDomain.CEXSet) *MockTxFeeder {
-	return &MockTxFeeder{
+func GetRawTxFeeder(config *domain.TxGeneratorConfig, cexSet *sharedDomain.CEXSet) *TxFeeder {
+	// Kafka 브로커 설정 (기본값: localhost:9092)
+	kafkaBrokers := []string{"localhost:9092"}
+	
+	// Kafka Producer 초기화
+	kafkaProducer := kafka.NewProducer(kafkaBrokers, dto.FedTxTopic)
+
+	return &TxFeeder{
 		config:                  config,
 		state:                   domain.NewTxGeneratorState(config.StartTime, config.TimeIncrementDuration, config.TransactionsPerTimeIncrement),
 		mockDepositAddrs:        domain.NewMockDepositAddressSet(),
 		cexSet:                  cexSet,
 		markedTxChannel:         make(chan sharedDomain.MarkedTransaction, 100_000), // Buffer for 10k transactions
+		kafkaProducer:          kafkaProducer,
+		kafkaBrokers:           kafkaBrokers,
 		stopChannel:             make(chan struct{}),
 		doneChannel:             make(chan struct{}),
 		requestedOutputChannels: make([]chan<- *sharedDomain.MarkedTransaction, 0),
@@ -162,18 +176,28 @@ func GetRawTxFeeder(config *domain.TxGeneratorConfig, cexSet *sharedDomain.CEXSe
 }
 
 // LoadMockDepositAddresses loads mock deposit addresses from file
-func (g *MockTxFeeder) LoadMockDepositAddresses(filePath string) error {
+func (g *TxFeeder) LoadMockDepositAddresses(filePath string) error {
 	return g.mockDepositAddrs.LoadFromFile(filePath)
 }
 
 // Start begins transaction generation
-func (g *MockTxFeeder) Start(ctx context.Context) error {
+func (g *TxFeeder) Start(ctx context.Context) error {
+	// Kafka 연결 상태 확인
+	if err := kafka.EnsureKafkaConnection(g.kafkaBrokers); err != nil {
+		return fmt.Errorf("kafka connection failed: %w", err)
+	}
+
+	// fed-tx 토픽 존재 확인 및 생성
+	if err := kafka.CreateTopicIfNotExists(g.kafkaBrokers, dto.FedTxTopic, 1, 1); err != nil {
+		return fmt.Errorf("failed to ensure fed-tx topic: %w", err)
+	}
+
 	go g.generateTransactions(ctx)
 	return nil
 }
 
 // Stop stops transaction generation (safe for multiple calls)
-func (g *MockTxFeeder) Stop() {
+func (g *TxFeeder) Stop() {
 	g.stopOnce.Do(func() {
 		close(g.stopChannel)
 	})
@@ -181,37 +205,50 @@ func (g *MockTxFeeder) Stop() {
 }
 
 // GetTxChannel returns the channel for receiving generated transactions
-func (g *MockTxFeeder) GetTxChannel() <-chan sharedDomain.MarkedTransaction {
+func (g *TxFeeder) GetTxChannel() <-chan sharedDomain.MarkedTransaction {
 	return g.markedTxChannel
 }
 
 // GetGeneratedCount returns the current count of generated transactions
-func (g *MockTxFeeder) GetGeneratedCount() int64 {
+func (g *TxFeeder) GetGeneratedCount() int64 {
 	g.mutex.RLock()
 	defer g.mutex.RUnlock()
 	return g.state.GeneratedCount
 }
 
 // RegisterOutputChannel registers a channel to receive generated transactions
-func (g *MockTxFeeder) RegisterOutputChannel(outputCh chan<- *sharedDomain.MarkedTransaction) {
+func (g *TxFeeder) RegisterOutputChannel(outputCh chan<- *sharedDomain.MarkedTransaction) {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 	g.requestedOutputChannels = append(g.requestedOutputChannels, outputCh)
 }
 
-// GetPipelineStats returns current pipeline statistics
-func (g *MockTxFeeder) GetPipelineStats() PipelineStats {
+// GetPipelineStats returns current pipeline statistics with TPS
+func (g *TxFeeder) GetPipelineStats() PipelineStats {
+	generated := atomic.LoadInt64(&g.stats.Generated)
+	transmitted := atomic.LoadInt64(&g.stats.Transmitted)
+	
 	return PipelineStats{
-		Generated:   atomic.LoadInt64(&g.stats.Generated),
-		Transmitted: atomic.LoadInt64(&g.stats.Transmitted),
+		Generated:   generated,
+		Transmitted: transmitted,
 		Processed:   atomic.LoadInt64(&g.stats.Processed),
 		Dropped:     atomic.LoadInt64(&g.stats.Dropped),
 		StartTime:   g.stats.StartTime,
 	}
 }
 
+// GetTPS 현재 TPS (초당 트랜잭션 수) 반환
+func (g *TxFeeder) GetTPS() float64 {
+	generated := atomic.LoadInt64(&g.stats.Generated)
+	elapsed := time.Since(g.stats.StartTime).Seconds()
+	if elapsed > 0 {
+		return float64(generated) / elapsed
+	}
+	return 0
+}
+
 // generateTransactions is the main generation loop running in goroutine
-func (g *MockTxFeeder) generateTransactions(ctx context.Context) {
+func (g *TxFeeder) generateTransactions(ctx context.Context) {
 	defer close(g.doneChannel)
 	defer close(g.markedTxChannel)
 	fmt.Printf("Starting transaction generation: %d total transactions at %d tx/sec\n",
@@ -255,14 +292,17 @@ func (g *MockTxFeeder) generateTransactions(ctx context.Context) {
 				atomic.AddInt64(&g.stats.Dropped, 1)
 			}
 
-			// Send to all registered output channels
+			// Send to all registered output channels (backward compatibility)
 			g.sendToOutputChannels(&tx, ctx)
+			
+			// Send to Kafka topic
+			g.sendToKafka(&tx, ctx)
 		}
 	}
 }
 
 // generateSingleTransaction generates a single MarkedTransaction
-func (g *MockTxFeeder) generateSingleTransaction() sharedDomain.MarkedTransaction {
+func (g *TxFeeder) generateSingleTransaction() sharedDomain.MarkedTransaction {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
@@ -317,7 +357,7 @@ func (t TransactionType) String() string {
 }
 
 // determineTransactionType determines what type of transaction to generate
-func (g *MockTxFeeder) determineTransactionType() TransactionType {
+func (g *TxFeeder) determineTransactionType() TransactionType {
 	count := int(g.state.GeneratedCount)
 
 	// 디버깅: 처음 10개 트랜잭션의 타입 결정 과정 로깅
@@ -346,7 +386,7 @@ func (g *MockTxFeeder) determineTransactionType() TransactionType {
 }
 
 // generateDepositToCexTransaction generates mockedDepositAddress -> CEX transaction
-func (g *MockTxFeeder) generateDepositToCexTransaction() sharedDomain.MarkedTransaction {
+func (g *TxFeeder) generateDepositToCexTransaction() sharedDomain.MarkedTransaction {
 	fromAddr := g.mockDepositAddrs.GetRandomAddress()
 	toAddr := g.getRandomCexAddress()
 
@@ -354,7 +394,7 @@ func (g *MockTxFeeder) generateDepositToCexTransaction() sharedDomain.MarkedTran
 }
 
 // generateRandomToDepositTransaction generates random -> mockedDepositAddress transaction
-func (g *MockTxFeeder) generateRandomToDepositTransaction() sharedDomain.MarkedTransaction {
+func (g *TxFeeder) generateRandomToDepositTransaction() sharedDomain.MarkedTransaction {
 	fromAddr := domain.GenerateRandomAddress()
 	toAddr := g.mockDepositAddrs.GetRandomAddress()
 
@@ -362,7 +402,7 @@ func (g *MockTxFeeder) generateRandomToDepositTransaction() sharedDomain.MarkedT
 }
 
 // generateRandomTransaction generates a completely random transaction
-func (g *MockTxFeeder) generateRandomTransaction() sharedDomain.MarkedTransaction {
+func (g *TxFeeder) generateRandomTransaction() sharedDomain.MarkedTransaction {
 	fromAddr := domain.GenerateRandomAddress()
 	toAddr := domain.GenerateRandomAddress()
 
@@ -370,7 +410,7 @@ func (g *MockTxFeeder) generateRandomTransaction() sharedDomain.MarkedTransactio
 }
 
 // createMarkedTransaction creates a MarkedTransaction with given from/to addresses
-func (g *MockTxFeeder) createMarkedTransaction(from, to sharedDomain.Address) sharedDomain.MarkedTransaction {
+func (g *TxFeeder) createMarkedTransaction(from, to sharedDomain.Address) sharedDomain.MarkedTransaction {
 	txID := domain.GenerateRandomTxID()
 
 	// Generate random value (0.1 to 10 ETH in wei)
@@ -404,7 +444,7 @@ func (g *MockTxFeeder) createMarkedTransaction(from, to sharedDomain.Address) sh
 }
 
 // getRandomCexAddress returns a random CEX address from the loaded set
-func (g *MockTxFeeder) getRandomCexAddress() sharedDomain.Address {
+func (g *TxFeeder) getRandomCexAddress() sharedDomain.Address {
 	addresses := g.cexSet.GetAll()
 	if len(addresses) == 0 {
 		return domain.GenerateRandomAddress() // Fallback to random if no CEX addresses
@@ -423,7 +463,7 @@ func (g *MockTxFeeder) getRandomCexAddress() sharedDomain.Address {
 }
 
 // parseAddressString converts hex string to Address type
-func (g *MockTxFeeder) parseAddressString(hexStr string) (sharedDomain.Address, error) {
+func (g *TxFeeder) parseAddressString(hexStr string) (sharedDomain.Address, error) {
 	var addr sharedDomain.Address
 
 	// Remove 0x prefix if present
@@ -448,8 +488,8 @@ func (g *MockTxFeeder) parseAddressString(hexStr string) (sharedDomain.Address, 
 	return addr, nil
 }
 
-// sendToOutputChannels sends transaction to all registered output channels
-func (g *MockTxFeeder) sendToOutputChannels(tx *sharedDomain.MarkedTransaction, ctx context.Context) {
+// sendToOutputChannels sends transaction to all registered output channels (backward compatibility)
+func (g *TxFeeder) sendToOutputChannels(tx *sharedDomain.MarkedTransaction, ctx context.Context) {
 	g.mutex.RLock()
 	channels := g.requestedOutputChannels
 	g.mutex.RUnlock()
@@ -469,8 +509,36 @@ func (g *MockTxFeeder) sendToOutputChannels(tx *sharedDomain.MarkedTransaction, 
 	}
 }
 
+// sendToKafka sends transaction to fed-tx Kafka topic (고성능 비동기, 모노리식 최적화)
+func (g *TxFeeder) sendToKafka(tx *sharedDomain.MarkedTransaction, ctx context.Context) {
+	if g.kafkaProducer == nil {
+		return // Kafka producer not initialized
+	}
+
+	// Create FedTxMessage (간소화)
+	message := &dto.FedTxMessage{
+		Transaction: tx,
+		Timestamp:   time.Now(),
+	}
+
+	// 모노리식 환경이므로 키는 단순하게 (파티션 고려 불필요)
+	key := []byte("tx")
+
+	// Send to Kafka (비동기이므로 타임아웃 제거, 최대 성능)
+	if err := g.kafkaProducer.PublishMessage(ctx, key, message); err != nil {
+		// 비동기에서는 주로 버퍼 풀 에러
+		atomic.AddInt64(&g.stats.Dropped, 1)
+		// 에러 로그 최소화 (10000개마다)
+		if g.stats.Generated%10000 == 0 {
+			fmt.Printf("   ⚠️ Kafka buffer full (sample): %v\n", err)
+		}
+	} else {
+		atomic.AddInt64(&g.stats.Transmitted, 1)
+	}
+}
+
 // SetupEnvironment 격리된 테스트 환경을 설정 (feed_and_analyze.go에서 이동)
-func (g *MockTxFeeder) SetupEnvironment(envConfig *EnvironmentConfig) error {
+func (g *TxFeeder) SetupEnvironment(envConfig *EnvironmentConfig) error {
 	fmt.Println("\n2️⃣ Preparing isolated environment...")
 
 	g.baseDir = envConfig.BaseDir
@@ -522,7 +590,7 @@ func (g *MockTxFeeder) SetupEnvironment(envConfig *EnvironmentConfig) error {
 }
 
 // LoadCEXSetFromFile CEX 주소 집합을 파일에서 로드 (ee/infra 기능 이동)
-func (g *MockTxFeeder) LoadCEXSetFromFile(cexFilePath string) (*sharedDomain.CEXSet, error) {
+func (g *TxFeeder) LoadCEXSetFromFile(cexFilePath string) (*sharedDomain.CEXSet, error) {
 	fmt.Printf("   🔍 CEX file path: %s\n", cexFilePath)
 
 	// 파일 존재 확인
@@ -590,7 +658,7 @@ func (g *MockTxFeeder) LoadCEXSetFromFile(cexFilePath string) (*sharedDomain.CEX
 }
 
 // CleanupEnvironment 격리된 환경 정리 (feed_and_analyze.go에서 이동)
-func (g *MockTxFeeder) CleanupEnvironment() {
+func (g *TxFeeder) CleanupEnvironment() {
 	if g.isolatedDir == "" {
 		return // 격리 디렉토리가 설정되지 않았으면 정리할 것이 없음
 	}
@@ -607,14 +675,39 @@ func (g *MockTxFeeder) CleanupEnvironment() {
 }
 
 // Close 리소스 정리 (트랜잭션 생성만 중지, 환경 정리는 호출자가 담당)
-func (g *MockTxFeeder) Close() error {
+func (g *TxFeeder) Close() error {
 	// Stop을 호출해서 트랜잭션 생성 중지
 	g.Stop()
+	
+	// Kafka Producer 정리
+	if g.kafkaProducer != nil {
+		if err := g.kafkaProducer.Close(); err != nil {
+			fmt.Printf("   ⚠️ Kafka producer close error: %v\n", err)
+		}
+	}
+	
+	return nil
+}
+
+// CleanupKafkaTopic 테스트 완료 후 fed-tx 토픽 데이터 정리
+func (g *TxFeeder) CleanupKafkaTopic() error {
+	if len(g.kafkaBrokers) == 0 {
+		return nil
+	}
+	
+	fmt.Println("🧹 Cleaning up fed-tx Kafka topic...")
+	
+	if err := kafka.CleanupTopic(g.kafkaBrokers, dto.FedTxTopic); err != nil {
+		fmt.Printf("   ⚠️ Kafka topic cleanup warning: %v\n", err)
+		return err
+	}
+	
+	fmt.Printf("   ✅ Fed-tx topic cleaned up\n")
 	return nil
 }
 
 // 내부 헬퍼 메서드들 (feed_and_analyze.go에서 이동)
-func (g *MockTxFeeder) copyFile(src, dst string) error {
+func (g *TxFeeder) copyFile(src, dst string) error {
 	sourceFile, err := os.Open(src)
 	if err != nil {
 		return err
@@ -631,7 +724,7 @@ func (g *MockTxFeeder) copyFile(src, dst string) error {
 	return err
 }
 
-func (g *MockTxFeeder) createMockDeposits(filePath string) error {
+func (g *TxFeeder) createMockDeposits(filePath string) error {
 	fmt.Printf("   🔍 Creating mock deposit addresses at %s\n", filePath)
 	file, err := os.Create(filePath)
 
@@ -670,7 +763,7 @@ func (g *MockTxFeeder) createMockDeposits(filePath string) error {
 }
 
 // findProjectRoot 프로젝트 루트 찾기 (feed_and_analyze.go에서 이동)
-func (g *MockTxFeeder) findProjectRoot() string {
+func (g *TxFeeder) findProjectRoot() string {
 	currentDir, _ := os.Getwd()
 
 	for currentDir != "/" {

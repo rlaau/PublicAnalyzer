@@ -16,10 +16,10 @@ type TxIngester interface {
 	MarkTransaction(domain.RawTransaction) domain.MarkedTransaction
 }
 
-func NewTxIngester(isTesting bool, kafkaClient *kafka.Client, cceService txingester.CCEService) TxIngester {
+func NewTxIngester(isTesting bool, kafkaProducer kafka.Producer, cceService txingester.CCEService) TxIngester {
 
 	if isTesting {
-		return NewTestingIngester(kafkaClient, cceService)
+		return NewTestingIngester(kafkaProducer, cceService)
 	} else {
 		panic("실제 트랜잭션 수집 앱은 아직 구현되지 않았습니다.")
 	}

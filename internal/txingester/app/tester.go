@@ -18,15 +18,15 @@ import (
 )
 
 const (
-	ingestedBatchSize = 1000_000 // TxIngester가 한 번 요청에 받아온 값. 보통은 100개 정도겠지만, 극단성 위해서 1백만개로 설정
-	sleepInterval     = 1 * time.Second
+	ingestedBatchSize = 1000 // TxIngester가 한 번 요청에 받아온 값. 메모리 안정성을 위해 1000개로 설정
+	sleepInterval     = 10 * time.Millisecond // 더 빠른 처리를 위해 간격 단축
 )
 
 type TestingIngester struct {
 	state             *IngestState
 	minInterval       time.Duration
 	transactionSource string // 트랜잭션 소스 (예: "test", "mainnet")
-	kafkaClient       *kafka.Client
+	kafkaProducer     kafka.Producer        // Producer 인터페이스 사용
 	cceService        txingester.CCEService // CCE 모듈과의 통신을 위한 서비스
 	currentFileIndex  int                   // 현재 읽고 있는 파일 인덱스
 	currentLineOffset int                   // 현재 파일 내 라인 오프셋
@@ -37,11 +37,11 @@ type IngestState struct {
 }
 
 // NewTestingIngester returns initialized TestingIngester
-func NewTestingIngester(kafkaClient *kafka.Client, cceService txingester.CCEService) *TestingIngester {
+func NewTestingIngester(kafkaProducer kafka.Producer, cceService txingester.CCEService) *TestingIngester {
 	return &TestingIngester{
 		state:             &IngestState{},
 		minInterval:       1 * time.Second,
-		kafkaClient:       kafkaClient,
+		kafkaProducer:     kafkaProducer,
 		cceService:        cceService,                                   // CCE 서비스를 의존성 주입으로 받음
 		transactionSource: "/home/rlaaudgjs5638/chainAnalyzer/testdata", // 테스트 데이터 디렉토리
 		currentFileIndex:  0,
@@ -77,10 +77,12 @@ func (app *TestingIngester) IngestTransaction(ctx context.Context) error {
 		}
 
 		// CCE 모듈과 연계하여 올바른 트랜잭션 마킹 수행
-		var miniBatch []kafka.Message[domain.MarkedTransaction]
-		// 한번에 inject한 양을 보고 얼마만큼 카프카에 끊어서 보낼 지 결정
 		var publishBatchSize = app.adjustBatchSize(ingestedBatchSize)
+		var batchCount = 0
+		
 		for _, raw := range rawTxs {
+			var markedTx domain.MarkedTransaction
+			
 			if app.CheckContractCreation(raw) {
 				// 컨트렉트 생성 처리
 				creator := domain.Address(safeBytes20(raw.From))
@@ -94,7 +96,7 @@ func (app *TestingIngester) IngestTransaction(ctx context.Context) error {
 				}
 
 				// 컨트렉트 생성 트랜잭션을 마킹
-				markedTx := domain.MarkedTransaction{
+				markedTx = domain.MarkedTransaction{
 					BlockTime: raw.BlockTime,
 					TxID:      app.stringToTxId(raw.TxId),
 					From:      creator,
@@ -108,38 +110,25 @@ func (app *TestingIngester) IngestTransaction(ctx context.Context) error {
 						domain.ContractMark, // Target은 새로 생성된 컨트렉트
 					},
 				}
-
-				miniBatch = append(miniBatch, kafka.Message[domain.MarkedTransaction]{
-					Key:   []byte(raw.From),
-					Value: markedTx,
-				})
 			} else {
-				// 일반 트랜잭션 마킹해서 미니배치에 추가
-				miniBatch = append(miniBatch, kafka.Message[domain.MarkedTransaction]{
-					Key:   []byte(raw.From),
-					Value: app.MarkTransaction(raw),
-				})
+				// 일반 트랜잭션 마킹
+				markedTx = app.MarkTransaction(raw)
 			}
-			//
-			if len(miniBatch) >= publishBatchSize {
-				err := kafka.PublishBatch(ctx, app.kafkaClient.Writer(), miniBatch)
-				log.Printf("[IngestTransaction] Published batch of %d transactions", len(miniBatch))
-				totalMessages += len(miniBatch)
-				if err != nil {
-					log.Printf("Failed to publish batch: %v", err)
-					time.Sleep(delay)
-					continue
-				}
 
-				miniBatch = miniBatch[:0] // miniBatch slice 재사용 (cap은 유지, len만 0으로)
-			}
-		}
-		if len(miniBatch) > 0 {
-			err := kafka.PublishBatch(ctx, app.kafkaClient.Writer(), miniBatch)
-			if err != nil {
-				log.Printf("Failed to publish batch: %v", err)
-				time.Sleep(delay)
+			// Producer 인터페이스로 개별 전송 (간소화)
+			key := []byte(raw.From)
+			if err := app.kafkaProducer.PublishMessage(ctx, key, markedTx); err != nil {
+				log.Printf("Failed to publish transaction: %v", err)
 				continue
+			}
+			
+			batchCount++
+			totalMessages++
+			
+			// 주기적으로 로그 출력
+			if batchCount%publishBatchSize == 0 {
+				log.Printf("[IngestTransaction] Published %d transactions (total: %d)", batchCount, totalMessages)
+				batchCount = 0
 			}
 		}
 		log.Printf("[IngestTransaction] Total published so far: %d", totalMessages)

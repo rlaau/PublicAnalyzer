@@ -67,6 +67,8 @@ func runFixedIntegrationTestInternal() error {
 		if generator != nil {
 			// MockTxFeeder 정리 (트랜잭션 생성 중지)
 			generator.Close()
+			// Kafka 토픽 정리
+			generator.CleanupKafkaTopic()
 			// 환경 정리는 여기서 명시적으로 담당
 			generator.CleanupEnvironment()
 		}
@@ -116,7 +118,7 @@ func setupIsolatedEviromentConfig() *IsolatedTestConfig {
 }
 
 // createSimplifiedPipeline 새로운 채널 등록 방식으로 간소화된 파이프라인 생성
-func createSimplifiedPipeline(config *IsolatedTestConfig) (*txFeeder.MockTxFeeder, app.EOAAnalyzer, chan *shareddomain.MarkedTransaction, error) {
+func createSimplifiedPipeline(config *IsolatedTestConfig) (*txFeeder.TxFeeder, app.EOAAnalyzer, chan *shareddomain.MarkedTransaction, error) {
 	fmt.Println("\n3️⃣ Creating simplified transaction pipeline...")
 
 	// Analyzer용 채널 생성
@@ -180,32 +182,32 @@ func createSimplifiedPipeline(config *IsolatedTestConfig) (*txFeeder.MockTxFeede
 	}
 	fmt.Printf("   ⚙️  EOAAnalyzer created with %d workers\n", config.AnalysisWorkers)
 
-	// TxFeeder에 analyzer 채널 등록
-	transactionFeeder.RegisterOutputChannel(analyzerChannel)
+	// TxFeeder에 analyzer 채널 등록 (backward compatibility - Kafka로 대체됨)
+	// transactionFeeder.RegisterOutputChannel(analyzerChannel)
 
 	fmt.Printf("   ✅ Simplified pipeline created\n")
 	return transactionFeeder, analyzer, analyzerChannel, nil
 }
 
 // runSimplifiedPipelineTest 간소화된 파이프라인 테스트 실행
-func runSimplifiedPipelineTest(txFeeder *txFeeder.MockTxFeeder, analyzer app.EOAAnalyzer, analyzerChannel chan *shareddomain.MarkedTransaction, config *IsolatedTestConfig) error {
+func runSimplifiedPipelineTest(txFeeder *txFeeder.TxFeeder, analyzer app.EOAAnalyzer, analyzerChannel chan *shareddomain.MarkedTransaction, config *IsolatedTestConfig) error {
 	fmt.Println("\n4️⃣ Running simplified pipeline test...")
 
 	ctx, cancel := context.WithTimeout(context.Background(), config.TestDuration)
 	defer cancel()
 
-	// 1. EOA Analyzer 시작 (채널로부터 트랜잭션 받기)
+	// 1. EOA Analyzer 시작 (Kafka에서 트랜잭션 받기)
 	analyzerDone := make(chan error, 1)
 	go func() {
-		analyzerDone <- runAnalyzerWithChannel(analyzer, analyzerChannel, ctx)
+		analyzerDone <- analyzer.Start(ctx)
 	}()
-	fmt.Printf("   🔄 EOA Analyzer started with channel\n")
+	fmt.Printf("   🔄 EOA Analyzer started with Kafka consumer\n")
 
-	// 2. TxGenerator 시작 (등록된 채널로 자동 전송)
+	// 2. TxGenerator 시작 (Kafka로 자동 전송)
 	if err := txFeeder.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start generator: %w", err)
 	}
-	fmt.Printf("   🔄 TxGenerator started\n")
+	fmt.Printf("   🔄 TxGenerator started (publishing to Kafka)\n")
 
 	// 3. 모니터링 (간소화됨)
 	go runSimplifiedMonitoring(txFeeder, analyzer, ctx)
@@ -277,8 +279,8 @@ func runAnalyzerWithChannel(analyzer app.EOAAnalyzer, analyzerChannel chan *shar
 	}
 }
 
-// runSimplifiedMonitoring 간소화된 모니터링
-func runSimplifiedMonitoring(generator *txFeeder.MockTxFeeder, analyzer app.EOAAnalyzer, ctx context.Context) {
+// runSimplifiedMonitoring TPS 모니터링 포함
+func runSimplifiedMonitoring(generator *txFeeder.TxFeeder, analyzer app.EOAAnalyzer, ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -289,16 +291,25 @@ func runSimplifiedMonitoring(generator *txFeeder.MockTxFeeder, analyzer app.EOAA
 		case <-ticker.C:
 			stats := generator.GetPipelineStats()
 			analyzerStats := analyzer.GetStatistics()
-			fmt.Printf("📊 [%.1fs] Gen: %d | Analyzer: %v\n",
+			tps := generator.GetTPS()
+			
+			fmt.Printf("📊 [%.1fs] Gen: %d | Kafka: %d | TPS: %.0f | Analyzer: %v\n",
 				time.Since(stats.StartTime).Seconds(),
 				stats.Generated,
+				stats.Transmitted,
+				tps,
 				analyzerStats["success_count"])
+				
+			// 목표 달성 확인
+			if tps >= 10000 {
+				fmt.Printf("🎯 TARGET ACHIEVED! TPS: %.0f >= 10,000\n", tps)
+			}
 		}
 	}
 }
 
 // printSimplifiedResults 간소화된 결과 출력
-func printSimplifiedResults(generator *txFeeder.MockTxFeeder, analyzer app.EOAAnalyzer) {
+func printSimplifiedResults(generator *txFeeder.TxFeeder, analyzer app.EOAAnalyzer) {
 	stats := generator.GetPipelineStats()
 	analyzerStats := analyzer.GetStatistics()
 

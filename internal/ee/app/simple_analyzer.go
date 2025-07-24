@@ -12,6 +12,7 @@ import (
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
 
@@ -23,12 +24,15 @@ type SimpleEOAAnalyzer struct {
 	dualManager     *domain.DualManager
 	graphRepo       domain.GraphRepository
 
-	// Channel processing
+	// Channel processing (backward compatibility)
 	txChannel    chan *shareddomain.MarkedTransaction
 	stopChannel  chan struct{}
 	stopOnce     sync.Once
 	shutdownOnce sync.Once
 	wg           sync.WaitGroup
+
+	// Transaction consumer (Kafka 기반)
+	txConsumer kafka.TransactionConsumer
 
 	// Configuration
 	config *EOAAnalyzerConfig
@@ -112,12 +116,21 @@ func newSimpleAnalyzer(config *EOAAnalyzerConfig) (*SimpleEOAAnalyzer, error) {
 	}
 	log.Printf("🔄 DualManager with pending DB at: %s", config.PendingDBPath)
 
+	// Transaction Consumer 초기화 - 모드에 따라 다른 토픽 사용
+	kafkaBrokers := []string{"localhost:9092"}
+	isTestMode := (config.Mode == TestingMode)
+	groupID := fmt.Sprintf("ee-analyzer-%s", strings.ReplaceAll(config.Name, " ", "-"))
+	
+	txConsumer := kafka.NewKafkaTransactionConsumer(kafkaBrokers, isTestMode, groupID)
+	log.Printf("📡 Transaction consumer initialized (test mode: %v)", isTestMode)
+
 	analyzer := &SimpleEOAAnalyzer{
 		groundKnowledge: groundKnowledge,
 		dualManager:     dualManager,
 		graphRepo:       graphRepo,
 		txChannel:       make(chan *shareddomain.MarkedTransaction, config.ChannelBufferSize),
 		stopChannel:     make(chan struct{}),
+		txConsumer:      txConsumer,
 		config:          config,
 		stats: SimpleAnalyzerStats{
 			StartTime: time.Now(),
@@ -132,6 +145,13 @@ func newSimpleAnalyzer(config *EOAAnalyzerConfig) (*SimpleEOAAnalyzer, error) {
 func (a *SimpleEOAAnalyzer) Start(ctx context.Context) error {
 	log.Printf("🚀 Starting Simple Analyzer: %s", a.config.Name)
 
+	// Transaction consumer 시작
+	if a.txConsumer != nil {
+		if err := a.txConsumer.Start(ctx, a.txChannel); err != nil {
+			return fmt.Errorf("failed to start transaction consumer: %w", err)
+		}
+	}
+
 	// 워커 고루틴들 시작
 	for i := 0; i < a.config.WorkerCount; i++ {
 		a.wg.Add(1)
@@ -142,7 +162,7 @@ func (a *SimpleEOAAnalyzer) Start(ctx context.Context) error {
 	a.wg.Add(1)
 	go a.statsReporter(ctx)
 
-	log.Printf("✅ Simple Analyzer started: %s (%d workers)", a.config.Name, a.config.WorkerCount)
+	log.Printf("✅ Simple Analyzer started: %s (%d workers + kafka consumer)", a.config.Name, a.config.WorkerCount)
 
 	// 컨텍스트 취소 또는 정지 시그널 대기
 	select {
@@ -494,5 +514,12 @@ func (a *SimpleEOAAnalyzer) cleanup() {
 
 // Close io.Closer 인터페이스 구현
 func (a *SimpleEOAAnalyzer) Close() error {
+	// Transaction Consumer 정리
+	if a.txConsumer != nil {
+		if err := a.txConsumer.Close(); err != nil {
+			log.Printf("⚠️ Error closing transaction consumer: %v", err)
+		}
+	}
+	
 	return a.Stop()
 }
