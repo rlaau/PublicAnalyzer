@@ -33,6 +33,13 @@ type KafkaBatchConfig struct {
 
 // NewKafkaBatchConsumer 제너릭 배치 컨슈머 생성
 func NewKafkaBatchConsumer[T any](config KafkaBatchConfig) *KafkaBatchConsumer[T] {
+	// 글로벌 브로커 설정 업데이트
+	if len(config.Brokers) > 0 {
+		SetGlobalBrokers(config.Brokers)
+	} else {
+		config.Brokers = GetGlobalBrokers()
+	}
+
 	return &KafkaBatchConsumer[T]{
 		reader: kafkaLib.NewReader(kafkaLib.ReaderConfig{
 			Brokers:        config.Brokers,
@@ -139,6 +146,14 @@ func NewKafkaBatchProducer[T any](config KafkaBatchConfig) *KafkaBatchProducer[T
 	if config.BatchTimeout <= 0 {
 		config.BatchTimeout = 200 * time.Millisecond
 	}
+
+	// 글로벌 브로커 설정 업데이트
+	if len(config.Brokers) > 0 {
+		SetGlobalBrokers(config.Brokers)
+	} else {
+		config.Brokers = GetGlobalBrokers()
+	}
+
 	return &KafkaBatchProducer[T]{
 		writer: &kafkaLib.Writer{
 			Addr:         kafkaLib.TCP(config.Brokers...),

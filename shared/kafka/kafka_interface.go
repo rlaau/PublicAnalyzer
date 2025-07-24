@@ -36,3 +36,16 @@ type BatchConsumer[T any] interface {
 	ReadMessagesBatch(ctx context.Context) ([]Message[T], error)
 	SetBatchConfig(batchSize int, timeout time.Duration) error
 }
+
+// MetricsProvider Kafka 메트릭 조회를 위한 인터페이스
+type MetricsProvider interface {
+	GetConsumerLag(ctx context.Context, groupID string, topic string) (int64, error)
+	GetQueueLength(ctx context.Context, topic string) (int64, error)
+	GetPartitionOffsets(ctx context.Context, topic string) (map[int32]int64, error)
+}
+
+// MonitorableConsumer 모니터링 가능한 컨슈머
+type MonitorableConsumer[T any] interface {
+	Consumer[T]
+	MetricsProvider
+}

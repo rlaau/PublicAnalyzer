@@ -3,7 +3,6 @@ package app
 import (
 	"crypto/sha256"
 	"encoding/binary"
-	"log"
 	"sync"
 	"time"
 
@@ -40,8 +39,7 @@ func (m *MockCCEService) RegisterContract(creator domain.Address, nonce uint64, 
 	// Store the mapping
 	m.contracts[contractAddr] = creator
 
-	log.Printf("[MockCCEService] Registered contract %s with creator %s (nonce: %d)",
-		contractAddr.String(), creator.String(), nonce)
+	//log.Printf("[MockCCEService] Registered contract %s with creator %s (nonce: %d)",		contractAddr.String(), creator.String(), nonce)
 
 	return contractAddr, nil
 }

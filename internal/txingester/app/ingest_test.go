@@ -9,26 +9,42 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/cce/app"
+	cce "github.com/rlaaudgjs5638/chainAnalyzer/internal/cce/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring"
 )
 
 func TestTestingIngester(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	kafkaConfig := kafka.KafkaBatchConfig{
 		Brokers: []string{"localhost:9092"},
-		Topic:   "ingest-testing-tx",
+		Topic:   "ingested-tx",
 	}
+
+	// 테스트 시작 전 토픽 명시적 생성
+	log.Printf("Creating topic '%s' with brokers: %v", kafkaConfig.Topic, kafkaConfig.Brokers)
+	err := kafka.CreateTopicIfNotExists(kafkaConfig.Brokers, kafkaConfig.Topic, 1, 1)
+	if err != nil {
+		t.Fatalf("Failed to create topic: %v", err)
+	}
+	log.Printf("Topic '%s' creation completed", kafkaConfig.Topic)
 
 	kafkaProducer := kafka.NewKafkaProducer[domain.MarkedTransaction](kafkaConfig)
 	defer kafkaProducer.Close()
 
 	// CCE 서비스 생성
-	cceService := app.NewMockCCEService()
-	ingester := NewTestingIngester(kafkaProducer, cceService)
+	cceService := cce.NewMockCCEService()
+	
+	// 모니터링 미터 생성
+	consumerMonitor := monitoring.NewSimpleTPSMeter()
+	producerMonitor := monitoring.NewSimpleTPSMeter()
+	defer consumerMonitor.Close()
+	defer producerMonitor.Close()
+	
+	ingester := NewTestingIngester(kafkaProducer, cceService, consumerMonitor, producerMonitor)
 
 	// Start ingesting in a goroutine
 	go func() {
@@ -40,17 +56,17 @@ func TestTestingIngester(t *testing.T) {
 
 	// Start consuming messages with reservoir sampling
 	go func() {
-		consumer := kafka.NewKafkaConsumer[domain.MarkedTransaction]([]string{"localhost:9092"}, "ingest-testing-tx", "test-consumer-group")
+		consumer := kafka.NewKafkaConsumer[domain.MarkedTransaction]([]string{"localhost:9092"}, "ingested-tx", "test-consumer-group")
 		defer consumer.Close()
 
-		const targetMessages = 10000 // 1만개 목표 (메모리 안정성)
+		const targetMessages = 1000000 // 100만개 목표 (메모리 안정성)
 		const reservoirSize = 1000   // 1천개 레저버 샘플링
 
 		reservoir := make([]string, 0, reservoirSize)
 		messageCount := 0
 		rand.Seed(time.Now().UnixNano())
 
-		log.Printf("Starting to consume messages from topic 'ingest-testing-tx'...")
+		log.Printf("Starting to consume messages from topic 'ingested-tx'...")
 		log.Printf("Target: %d messages, Reservoir size: %d", targetMessages, reservoirSize)
 
 		for messageCount < targetMessages {
@@ -111,5 +127,5 @@ func TestTestingIngester(t *testing.T) {
 
 	// Let the test run for the full timeout duration
 	<-ctx.Done()
-	log.Printf("Test completed after 100 seconds")
+	log.Printf("Test completed after 10 seconds")
 }

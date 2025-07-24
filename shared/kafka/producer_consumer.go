@@ -6,10 +6,40 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync"
 	"time"
 
 	kafkaLib "github.com/segmentio/kafka-go"
 )
+
+// 글로벌 Kafka 설정
+var (
+	globalBrokers   []string
+	brokersMutex    sync.RWMutex
+	brokersInitOnce sync.Once
+)
+
+// SetGlobalBrokers 글로벌 브로커 설정
+func SetGlobalBrokers(brokers []string) {
+	brokersMutex.Lock()
+	defer brokersMutex.Unlock()
+	globalBrokers = brokers
+	log.Printf("[Kafka] Global brokers set to: %v", brokers)
+}
+
+// GetGlobalBrokers 글로벌 브로커 반환 (기본값: localhost:9092)
+func GetGlobalBrokers() []string {
+	brokersInitOnce.Do(func() {
+		if len(globalBrokers) == 0 {
+			globalBrokers = []string{"localhost:9092"}
+			log.Printf("[Kafka] Using default brokers: %v", globalBrokers)
+		}
+	})
+
+	brokersMutex.RLock()
+	defer brokersMutex.RUnlock()
+	return globalBrokers
+}
 
 // KafkaProducer Producer 제너릭 구현체
 type KafkaProducer[T any] struct {
@@ -18,11 +48,21 @@ type KafkaProducer[T any] struct {
 
 // KafkaConsumer Consumer 제너릭 구현체
 type KafkaConsumer[T any] struct {
-	reader *kafkaLib.Reader
+	reader  *kafkaLib.Reader
+	brokers []string
+	topic   string
+	groupID string
 }
 
 // NewKafkaConsumer 제너릭 Consumer 생성 (성능 최적화)
 func NewKafkaConsumer[T any](brokers []string, topic string, groupID string) *KafkaConsumer[T] {
+	// 글로벌 브로커 설정 업데이트
+	if len(brokers) > 0 {
+		SetGlobalBrokers(brokers)
+	} else {
+		brokers = GetGlobalBrokers()
+	}
+
 	return &KafkaConsumer[T]{
 		reader: kafkaLib.NewReader(kafkaLib.ReaderConfig{
 			Brokers:        brokers,
@@ -33,6 +73,9 @@ func NewKafkaConsumer[T any](brokers []string, topic string, groupID string) *Ka
 			CommitInterval: 100 * time.Millisecond, // 커밋 간격 단축
 			StartOffset:    kafkaLib.LastOffset,    // 최신 메시지부터 읽기
 		}),
+		brokers: brokers,
+		topic:   topic,
+		groupID: groupID,
 	}
 }
 
@@ -60,7 +103,6 @@ func (c *KafkaConsumer[T]) Close() error {
 }
 
 // NewKafkaProducer 제너릭 Producer 생성 (고성능 비동기 모드)
-// 아 걍 나중에 리팩토링해
 func NewKafkaProducer[T any](config KafkaBatchConfig) *KafkaProducer[T] {
 	if config.BatchSize <= 0 {
 		config.BatchSize = 10_000
@@ -68,6 +110,14 @@ func NewKafkaProducer[T any](config KafkaBatchConfig) *KafkaProducer[T] {
 	if config.BatchTimeout <= 0 {
 		config.BatchTimeout = 20 * time.Millisecond
 	}
+
+	// 글로벌 브로커 설정 업데이트
+	if len(config.Brokers) > 0 {
+		SetGlobalBrokers(config.Brokers)
+	} else {
+		config.Brokers = GetGlobalBrokers()
+	}
+
 	return &KafkaProducer[T]{
 		writer: &kafkaLib.Writer{
 			Addr:         kafkaLib.TCP(config.Brokers...),
