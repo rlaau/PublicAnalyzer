@@ -52,6 +52,11 @@ type TxFeederConfig struct {
 
 	// 추가 데이터 설정 (현재는 사용하지 않음)
 	AdditionalDataConfig *AdditionalDataConfig
+
+	// 배치 모드 설정
+	BatchMode    bool          // 배치 모드 활성화 여부
+	BatchSize    int           // 배치 크기 (기본값: 100)
+	BatchTimeout time.Duration // 배치 타임아웃 (기본값: 50ms)
 }
 
 // PipelineStats 파이프라인 통계
@@ -82,8 +87,12 @@ type TxFeeder struct {
 	markedTxChannel chan sharedDomain.MarkedTransaction
 
 	// Kafka producer for fed-tx topic
-	kafkaProducer kafka.Producer
+	kafkaProducer *kafka.KafkaProducer[*sharedDomain.MarkedTransaction]
+	batchProducer *kafka.KafkaBatchProducer[*sharedDomain.MarkedTransaction] // 배치 모드용 프로듀서 (제너릭)
 	kafkaBrokers  []string
+	batchMode     bool          // 배치 모드 활성화 여부
+	batchSize     int           // 배치 크기
+	batchTimeout  time.Duration // 배치 타임아웃
 
 	// Control channels
 	stopChannel chan struct{}
@@ -124,7 +133,12 @@ func NewTxFeederWithComplexConfig(config *TxFeederConfig) (*TxFeeder, error) {
 	emptyCexSet := sharedDomain.NewCEXSet()
 	feeder := GetRawTxFeeder(config.GenConfig, emptyCexSet)
 
-	// 2. 환경 설정이 있으면 실행
+	// 2. 배치 모드 설정 적용
+	if config.BatchMode {
+		feeder.EnableBatchMode(config.BatchSize, config.BatchTimeout)
+	}
+
+	// 3. 환경 설정이 있으면 실행
 	if config.EnvConfig != nil {
 		if err := feeder.SetupEnvironment(config.EnvConfig); err != nil {
 			return nil, fmt.Errorf("failed to setup environment: %w", err)
@@ -141,7 +155,7 @@ func NewTxFeederWithComplexConfig(config *TxFeederConfig) (*TxFeeder, error) {
 		}
 	}
 
-	// 3. AdditionalDataConfig는 현재 무시 (향후 확장용)
+	// 4. AdditionalDataConfig는 현재 무시 (향후 확장용)
 	// if config.AdditionalDataConfig != nil {
 	//     // 향후 추가 데이터 설정 처리
 	// }
@@ -153,9 +167,12 @@ func NewTxFeederWithComplexConfig(config *TxFeederConfig) (*TxFeeder, error) {
 func GetRawTxFeeder(config *domain.TxGeneratorConfig, cexSet *sharedDomain.CEXSet) *TxFeeder {
 	// Kafka 브로커 설정 (기본값: localhost:9092)
 	kafkaBrokers := []string{"localhost:9092"}
-	
-	// Kafka Producer 초기화
-	kafkaProducer := kafka.NewProducer(kafkaBrokers, dto.FedTxTopic)
+
+	// Kafka Producer 초기화 (기본값: 단건 모드)
+	kafkaConfig := kafka.KafkaBatchConfig{
+		Brokers: kafkaBrokers,
+		Topic:   dto.FedTxTopic}
+	kafkaProducer := kafka.NewKafkaProducer[*sharedDomain.MarkedTransaction](kafkaConfig)
 
 	return &TxFeeder{
 		config:                  config,
@@ -163,8 +180,12 @@ func GetRawTxFeeder(config *domain.TxGeneratorConfig, cexSet *sharedDomain.CEXSe
 		mockDepositAddrs:        domain.NewMockDepositAddressSet(),
 		cexSet:                  cexSet,
 		markedTxChannel:         make(chan sharedDomain.MarkedTransaction, 100_000), // Buffer for 10k transactions
-		kafkaProducer:          kafkaProducer,
-		kafkaBrokers:           kafkaBrokers,
+		kafkaProducer:           kafkaProducer,
+		batchProducer:           nil, // 기본값: 배치 모드 비활성화
+		kafkaBrokers:            kafkaBrokers,
+		batchMode:               false,                 // 기본값: 단건 모드
+		batchSize:               100,                   // 기본 배치 크기
+		batchTimeout:            50 * time.Millisecond, // 기본 배치 타임아웃
 		stopChannel:             make(chan struct{}),
 		doneChannel:             make(chan struct{}),
 		requestedOutputChannels: make([]chan<- *sharedDomain.MarkedTransaction, 0),
@@ -173,6 +194,59 @@ func GetRawTxFeeder(config *domain.TxGeneratorConfig, cexSet *sharedDomain.CEXSe
 		},
 		debugStats: DebugStats{},
 	}
+}
+
+// EnableBatchMode 배치 모드 활성화
+func (g *TxFeeder) EnableBatchMode(batchSize int, batchTimeout time.Duration) error {
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+
+	// 배치 설정 적용 (기본값 처리)
+	if batchSize <= 0 {
+		batchSize = 100 // 기본 배치 크기
+	}
+	if batchTimeout <= 0 {
+		batchTimeout = 50 * time.Millisecond // 기본 배치 타임아웃
+	}
+
+	g.batchMode = true
+	g.batchSize = batchSize
+	g.batchTimeout = batchTimeout
+
+	// BatchProducer 초기화 (제너릭 타입 사용)
+	config := kafka.KafkaBatchConfig{
+		Brokers:      g.kafkaBrokers,
+		Topic:        dto.FedTxTopic,
+		GroupID:      "tx-feeder-batch-group",
+		BatchSize:    batchSize,
+		BatchTimeout: batchTimeout,
+	}
+	g.batchProducer = kafka.NewKafkaBatchProducer[*sharedDomain.MarkedTransaction](config)
+
+	fmt.Printf("🚀 Batch mode enabled: batchSize=%d, timeout=%v\n", batchSize, batchTimeout)
+	return nil
+}
+
+// DisableBatchMode 배치 모드 비활성화 (단건 모드로 복귀)
+func (g *TxFeeder) DisableBatchMode() error {
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+
+	if g.batchProducer != nil {
+		g.batchProducer.Close()
+		g.batchProducer = nil
+	}
+
+	g.batchMode = false
+	fmt.Println("🔄 Switched to single-message mode")
+	return nil
+}
+
+// IsBatchMode 현재 배치 모드 여부 확인
+func (g *TxFeeder) IsBatchMode() bool {
+	g.mutex.RLock()
+	defer g.mutex.RUnlock()
+	return g.batchMode
 }
 
 // LoadMockDepositAddresses loads mock deposit addresses from file
@@ -192,7 +266,12 @@ func (g *TxFeeder) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to ensure fed-tx topic: %w", err)
 	}
 
-	go g.generateTransactions(ctx)
+	// 모드에 따라 다른 생성 로직 실행
+	if g.IsBatchMode() {
+		go g.generateTransactionsBatch(ctx)
+	} else {
+		go g.generateTransactions(ctx)
+	}
 	return nil
 }
 
@@ -227,7 +306,7 @@ func (g *TxFeeder) RegisterOutputChannel(outputCh chan<- *sharedDomain.MarkedTra
 func (g *TxFeeder) GetPipelineStats() PipelineStats {
 	generated := atomic.LoadInt64(&g.stats.Generated)
 	transmitted := atomic.LoadInt64(&g.stats.Transmitted)
-	
+
 	return PipelineStats{
 		Generated:   generated,
 		Transmitted: transmitted,
@@ -294,11 +373,129 @@ func (g *TxFeeder) generateTransactions(ctx context.Context) {
 
 			// Send to all registered output channels (backward compatibility)
 			g.sendToOutputChannels(&tx, ctx)
-			
+
 			// Send to Kafka topic
 			g.sendToKafka(&tx, ctx)
 		}
 	}
+}
+
+// generateTransactionsBatch 배치 모드 트랜잭션 생성 (진정한 배칭)
+func (g *TxFeeder) generateTransactionsBatch(ctx context.Context) {
+	defer close(g.doneChannel)
+	defer close(g.markedTxChannel)
+
+	fmt.Printf("🚀 Starting BATCH transaction generation: %d total transactions at %d tx/sec (batch size: %d)\n",
+		g.config.TotalTransactions, g.config.TransactionsPerSecond, g.batchSize)
+
+	// 배치 간격 계산: 배치 크기만큼 생성하는데 걸리는 시간
+	batchInterval := time.Duration(g.batchSize) * time.Second / time.Duration(g.config.TransactionsPerSecond)
+	ticker := time.NewTicker(batchInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("Batch transaction generation stopped by context")
+			return
+		case <-g.stopChannel:
+			fmt.Println("Batch transaction generation stopped by stop signal")
+			return
+		case <-ticker.C:
+			// 생성할 배치 크기 결정 (남은 트랜잭션 수 고려)
+			g.mutex.RLock()
+			currentCount := g.state.GeneratedCount
+			g.mutex.RUnlock()
+
+			remainingTx := int64(g.config.TotalTransactions) - currentCount
+			if remainingTx <= 0 {
+				fmt.Printf("Generated all %d transactions. Stopping batch mode.\n", g.config.TotalTransactions)
+				return
+			}
+
+			// 실제 배치 크기 결정 (남은 트랜잭션이 배치 크기보다 작으면 조정)
+			actualBatchSize := g.batchSize
+			if remainingTx < int64(g.batchSize) {
+				actualBatchSize = int(remainingTx)
+			}
+
+			// 배치 생성 및 전송
+			if err := g.generateAndSendBatch(ctx, actualBatchSize); err != nil {
+				fmt.Printf("⚠️ Batch generation error: %v\n", err)
+				continue
+			}
+		}
+	}
+}
+
+// generateAndSendBatch 배치 생성 및 전송 (진정한 배칭)
+func (g *TxFeeder) generateAndSendBatch(ctx context.Context, batchSize int) error {
+	// 1. 배치 크기만큼 트랜잭션 생성
+	transactions := make([]*sharedDomain.MarkedTransaction, 0, batchSize)
+	messages := make([]kafka.Message[*sharedDomain.MarkedTransaction], 0, batchSize)
+
+	for i := 0; i < batchSize; i++ {
+		// 트랜잭션 생성
+		tx := g.generateSingleTransaction()
+		transactions = append(transactions, &tx)
+
+		// 타입화된 Kafka 메시지 생성 (직접 MarkedTransaction 전송)
+		messages = append(messages, kafka.Message[*sharedDomain.MarkedTransaction]{
+			Key:   []byte("tx"),
+			Value: &tx, // 직접 MarkedTransaction 포인터 전송
+		})
+	}
+
+	// 2. 통계 업데이트
+	atomic.AddInt64(&g.stats.Generated, int64(len(transactions)))
+
+	// 3. Legacy 채널들에 전송 (backward compatibility)
+	g.sendBatchToLegacyChannels(transactions, ctx)
+
+	// 4. Kafka 배치 전송 (진정한 배칭!)
+	if err := g.sendBatchToKafka(messages, ctx); err != nil {
+		return fmt.Errorf("batch kafka send failed: %w", err)
+	}
+
+	return nil
+}
+
+// sendBatchToLegacyChannels 배치를 레거시 채널들에 전송
+func (g *TxFeeder) sendBatchToLegacyChannels(transactions []*sharedDomain.MarkedTransaction, ctx context.Context) {
+	for _, tx := range transactions {
+		// Legacy channel (backward compatibility)
+		select {
+		case g.markedTxChannel <- *tx:
+		case <-ctx.Done():
+			return
+		case <-g.stopChannel:
+			return
+		default:
+			atomic.AddInt64(&g.stats.Dropped, 1)
+		}
+
+		// Registered output channels (backward compatibility)
+		g.sendToOutputChannels(tx, ctx)
+	}
+}
+
+// sendBatchToKafka 배치를 Kafka에 전송 (진정한 배칭)
+func (g *TxFeeder) sendBatchToKafka(messages []kafka.Message[*sharedDomain.MarkedTransaction], ctx context.Context) error {
+	if g.batchProducer == nil {
+		return fmt.Errorf("batch producer not initialized")
+	}
+
+	// 진정한 배치 전송 (한 번의 네트워크 호출로 모든 메시지 전송)
+	if err := g.batchProducer.PublishMessagesBatch(ctx, messages); err != nil {
+		// 배치 전체가 실패한 경우
+		atomic.AddInt64(&g.stats.Dropped, int64(len(messages)))
+		return err
+	} else {
+		// 배치 전체가 성공한 경우
+		atomic.AddInt64(&g.stats.Transmitted, int64(len(messages)))
+	}
+
+	return nil
 }
 
 // generateSingleTransaction generates a single MarkedTransaction
@@ -515,17 +712,11 @@ func (g *TxFeeder) sendToKafka(tx *sharedDomain.MarkedTransaction, ctx context.C
 		return // Kafka producer not initialized
 	}
 
-	// Create FedTxMessage (간소화)
-	message := &dto.FedTxMessage{
-		Transaction: tx,
-		Timestamp:   time.Now(),
-	}
-
 	// 모노리식 환경이므로 키는 단순하게 (파티션 고려 불필요)
 	key := []byte("tx")
 
-	// Send to Kafka (비동기이므로 타임아웃 제거, 최대 성능)
-	if err := g.kafkaProducer.PublishMessage(ctx, key, message); err != nil {
+	// Send MarkedTransaction directly to Kafka (제너릭 타입으로 직접 전송)
+	if err := g.kafkaProducer.PublishMessage(ctx, key, tx); err != nil {
 		// 비동기에서는 주로 버퍼 풀 에러
 		atomic.AddInt64(&g.stats.Dropped, 1)
 		// 에러 로그 최소화 (10000개마다)
@@ -678,14 +869,21 @@ func (g *TxFeeder) CleanupEnvironment() {
 func (g *TxFeeder) Close() error {
 	// Stop을 호출해서 트랜잭션 생성 중지
 	g.Stop()
-	
+
 	// Kafka Producer 정리
 	if g.kafkaProducer != nil {
 		if err := g.kafkaProducer.Close(); err != nil {
 			fmt.Printf("   ⚠️ Kafka producer close error: %v\n", err)
 		}
 	}
-	
+
+	// Batch Producer 정리
+	if g.batchProducer != nil {
+		if err := g.batchProducer.Close(); err != nil {
+			fmt.Printf("   ⚠️ Batch producer close error: %v\n", err)
+		}
+	}
+
 	return nil
 }
 
@@ -694,14 +892,14 @@ func (g *TxFeeder) CleanupKafkaTopic() error {
 	if len(g.kafkaBrokers) == 0 {
 		return nil
 	}
-	
+
 	fmt.Println("🧹 Cleaning up fed-tx Kafka topic...")
-	
-	if err := kafka.CleanupTopic(g.kafkaBrokers, dto.FedTxTopic); err != nil {
+
+	if err := kafka.CleanupTopicComplete(g.kafkaBrokers, dto.FedTxTopic, 1, 1); err != nil {
 		fmt.Printf("   ⚠️ Kafka topic cleanup warning: %v\n", err)
 		return err
 	}
-	
+
 	fmt.Printf("   ✅ Fed-tx topic cleaned up\n")
 	return nil
 }

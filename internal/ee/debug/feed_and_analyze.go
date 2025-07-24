@@ -151,8 +151,16 @@ func createSimplifiedPipeline(config *IsolatedTestConfig) (*txFeeder.TxFeeder, a
 		AnalysisWorkers:   config.AnalysisWorkers,
 	}
 
-	// 통합된 설정으로 TxFeeder 생성 (모든 초기화 완료)
-	transactionFeeder, err := txFeeder.NewTxFeeder(genConfig, envConfig)
+	// 배치 모드를 위한 통합 설정으로 TxFeeder 생성
+	feederConfig := &txFeeder.TxFeederConfig{
+		GenConfig:  genConfig,
+		EnvConfig:  envConfig,
+		BatchMode:  true,           // 배치 모드 활성화
+		BatchSize:  200,            // 200개씩 배치 (고성능 테스트)  
+		BatchTimeout: 10 * time.Millisecond, // 10ms 타임아웃
+	}
+	
+	transactionFeeder, err := txFeeder.NewTxFeederWithComplexConfig(feederConfig)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create TxFeeder: %w", err)
 	}
@@ -190,7 +198,7 @@ func createSimplifiedPipeline(config *IsolatedTestConfig) (*txFeeder.TxFeeder, a
 }
 
 // runSimplifiedPipelineTest 간소화된 파이프라인 테스트 실행
-func runSimplifiedPipelineTest(txFeeder *txFeeder.TxFeeder, analyzer app.EOAAnalyzer, analyzerChannel chan *shareddomain.MarkedTransaction, config *IsolatedTestConfig) error {
+func runSimplifiedPipelineTest(txFeeder *txFeeder.TxFeeder, analyzer app.EOAAnalyzer, _ chan *shareddomain.MarkedTransaction, config *IsolatedTestConfig) error {
 	fmt.Println("\n4️⃣ Running simplified pipeline test...")
 
 	ctx, cancel := context.WithTimeout(context.Background(), config.TestDuration)
@@ -232,52 +240,6 @@ func runSimplifiedPipelineTest(txFeeder *txFeeder.TxFeeder, analyzer app.EOAAnal
 	return nil
 }
 
-// runAnalyzerWithChannel analyzer가 채널로부터 트랜잭션을 받아 처리
-func runAnalyzerWithChannel(analyzer app.EOAAnalyzer, analyzerChannel chan *shareddomain.MarkedTransaction, ctx context.Context) error {
-	fmt.Printf("   🔗 Starting analyzer with external channel (capacity: %d)\n", cap(analyzerChannel))
-
-	// analyzer를 별도 고루틴에서 시작
-	analyzerDone := make(chan error, 1)
-	go func() {
-		analyzerDone <- analyzer.Start(ctx)
-	}()
-
-	// 채널 브릿지: 외부 채널 → analyzer 내부 채널
-	fmt.Printf("   🔗 Starting channel bridge: external → internal\n")
-	bridgeCount := int64(0)
-
-	for {
-		select {
-		case <-ctx.Done():
-			fmt.Printf("   🔗 Channel bridge stopping (context), bridged %d transactions\n", bridgeCount)
-			return ctx.Err()
-		case tx := <-analyzerChannel:
-			if tx == nil {
-				fmt.Printf("   🔗 Channel bridge stopping (channel closed), bridged %d transactions\n", bridgeCount)
-				return nil
-			}
-
-			// 트랜잭션을 analyzer로 전달
-			if err := analyzer.ProcessTransaction(tx); err != nil {
-				// 에러는 로깅하지만 계속 진행
-				if bridgeCount < 5 {
-					fmt.Printf("   ⚠️ Bridge error #%d: %v\n", bridgeCount+1, err)
-				}
-			}
-			bridgeCount++
-
-			// 처음 몇 개는 브릿지 성공 로깅
-			if bridgeCount <= 5 {
-				fmt.Printf("   🔗 Bridged tx #%d: %s → %s\n",
-					bridgeCount, tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
-			}
-
-		case err := <-analyzerDone:
-			fmt.Printf("   🔗 Analyzer stopped, bridged %d transactions\n", bridgeCount)
-			return err
-		}
-	}
-}
 
 // runSimplifiedMonitoring TPS 모니터링 포함
 func runSimplifiedMonitoring(generator *txFeeder.TxFeeder, analyzer app.EOAAnalyzer, ctx context.Context) {
@@ -293,7 +255,7 @@ func runSimplifiedMonitoring(generator *txFeeder.TxFeeder, analyzer app.EOAAnaly
 			analyzerStats := analyzer.GetStatistics()
 			tps := generator.GetTPS()
 			
-			fmt.Printf("📊 [%.1fs] Gen: %d | Kafka: %d | TPS: %.0f | Analyzer: %v\n",
+			fmt.Printf("📊 [%.1fs] Gen: %d | Kafka: %d | TPS: %.0f | Analyzer: %v | 🚀 BATCH MODE\n",
 				time.Since(stats.StartTime).Seconds(),
 				stats.Generated,
 				stats.Transmitted,

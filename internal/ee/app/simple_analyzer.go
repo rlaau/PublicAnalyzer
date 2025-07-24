@@ -12,8 +12,8 @@ import (
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 )
 
 // SimpleEOAAnalyzer 간단한 EOA 분석기 구현체
@@ -32,7 +32,8 @@ type SimpleEOAAnalyzer struct {
 	wg           sync.WaitGroup
 
 	// Transaction consumer (Kafka 기반)
-	txConsumer kafka.TransactionConsumer
+	batchConsumer *kafka.KafkaBatchConsumer[*shareddomain.MarkedTransaction] // 배치 모드용 컨슈머
+	batchMode     bool                                                       // 배치 모드 활성화 여부
 
 	// Configuration
 	config *EOAAnalyzerConfig
@@ -120,9 +121,30 @@ func newSimpleAnalyzer(config *EOAAnalyzerConfig) (*SimpleEOAAnalyzer, error) {
 	kafkaBrokers := []string{"localhost:9092"}
 	isTestMode := (config.Mode == TestingMode)
 	groupID := fmt.Sprintf("ee-analyzer-%s", strings.ReplaceAll(config.Name, " ", "-"))
-	
-	txConsumer := kafka.NewKafkaTransactionConsumer(kafkaBrokers, isTestMode, groupID)
-	log.Printf("📡 Transaction consumer initialized (test mode: %v)", isTestMode)
+
+	// 배치 모드 Consumer 초기화 (고성능)
+	batchSize := 100                      // 100개씩 배치 처리
+	batchTimeout := 20 * time.Millisecond // 20ms 타임아웃
+
+	var topic string
+	if isTestMode {
+		topic = "fed-tx" // 테스트용 토픽
+	} else {
+		topic = "ingested-transactions" // 프로덕션용 토픽
+	}
+
+	consumerConfig := kafka.KafkaBatchConfig{
+		Brokers:      kafkaBrokers,
+		Topic:        topic,
+		GroupID:      groupID,
+		BatchSize:    batchSize,
+		BatchTimeout: batchTimeout,
+	}
+	batchConsumer := kafka.NewKafkaBatchConsumer[*shareddomain.MarkedTransaction](consumerConfig)
+
+	// 기존 단건 Consumer도 호환성을 위해 유지
+
+	log.Printf("📡 Batch consumer initialized (test mode: %v, batch size: %d)", isTestMode, batchSize)
 
 	analyzer := &SimpleEOAAnalyzer{
 		groundKnowledge: groundKnowledge,
@@ -130,7 +152,8 @@ func newSimpleAnalyzer(config *EOAAnalyzerConfig) (*SimpleEOAAnalyzer, error) {
 		graphRepo:       graphRepo,
 		txChannel:       make(chan *shareddomain.MarkedTransaction, config.ChannelBufferSize),
 		stopChannel:     make(chan struct{}),
-		txConsumer:      txConsumer,
+		batchConsumer:   batchConsumer,
+		batchMode:       true, // 기본값: 배치 모드 활성화
 		config:          config,
 		stats: SimpleAnalyzerStats{
 			StartTime: time.Now(),
@@ -145,11 +168,14 @@ func newSimpleAnalyzer(config *EOAAnalyzerConfig) (*SimpleEOAAnalyzer, error) {
 func (a *SimpleEOAAnalyzer) Start(ctx context.Context) error {
 	log.Printf("🚀 Starting Simple Analyzer: %s", a.config.Name)
 
-	// Transaction consumer 시작
-	if a.txConsumer != nil {
-		if err := a.txConsumer.Start(ctx, a.txChannel); err != nil {
-			return fmt.Errorf("failed to start transaction consumer: %w", err)
-		}
+	// Consumer 시작 (배치 모드 or 단건 모드)
+	if a.batchMode && a.batchConsumer != nil {
+		// 배치 모드: 배치 Consumer 시작
+		a.wg.Add(1)
+		go a.batchConsumerWorker(ctx)
+		log.Printf("🚀 Batch consumer started")
+	} else {
+		log.Printf("단건 컨슈머는 걍 지웠음.")
 	}
 
 	// 워커 고루틴들 시작
@@ -220,6 +246,84 @@ func (a *SimpleEOAAnalyzer) transactionWorker(ctx context.Context, workerID int)
 		case tx := <-a.txChannel:
 			a.processSingleTransaction(tx, workerID)
 		}
+	}
+}
+
+// batchConsumerWorker 배치 Consumer 워커 (고성능 배치 처리)
+func (a *SimpleEOAAnalyzer) batchConsumerWorker(ctx context.Context) {
+	defer a.wg.Done()
+
+	log.Printf("🚀 Batch consumer worker started")
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("🛑 Batch consumer worker stopping (context)")
+			return
+		case <-a.stopChannel:
+			log.Printf("🛑 Batch consumer worker stopping (signal)")
+			return
+		default:
+			// 배치 메시지 읽기 (블로킹)
+			messages, err := a.batchConsumer.ReadMessagesBatch(ctx)
+			if err != nil {
+				// Context cancellation은 정상적인 종료
+				if ctx.Err() != nil {
+					return
+				}
+				// 기타 에러는 로깅하고 계속
+				log.Printf("⚠️ Batch read error: %v", err)
+				time.Sleep(100 * time.Millisecond) // 에러 시 짧은 대기
+				continue
+			}
+
+			// 배치가 비어있으면 스킵
+			if len(messages) == 0 {
+				continue
+			}
+
+			// 배치 처리 (진정한 배칭!)
+			a.processBatch(messages)
+		}
+	}
+}
+
+// processBatch 배치 메시지 처리 (고효율)
+func (a *SimpleEOAAnalyzer) processBatch(messages []kafka.Message[*shareddomain.MarkedTransaction]) {
+	batchSize := len(messages)
+	processedCount := atomic.LoadInt64(&a.stats.TotalProcessed)
+
+	// 배치 처리 시작 로깅 (처음 몇 배치만)
+	if processedCount < 500 {
+		log.Printf("📦 Processing batch of %d messages (total processed: %d)", batchSize, processedCount)
+	}
+
+	transactions := make([]*shareddomain.MarkedTransaction, 0, batchSize)
+
+	// 1. 메시지에서 직접 트랜잭션 추출 (파싱 불필요!)
+	for _, msg := range messages {
+		if msg.Value != nil {
+			transactions = append(transactions, msg.Value)
+		} else {
+			atomic.AddInt64(&a.stats.ErrorCount, 1)
+		}
+	}
+
+	// 2. 트랜잭션 처리 (배치로 처리)
+	for _, tx := range transactions {
+		// 내부 채널로 전달하여 기존 워커들이 처리하도록 함
+		select {
+		case a.txChannel <- tx:
+			// 성공
+		default:
+			// 채널이 가득 찬 경우 드롭
+			atomic.AddInt64(&a.stats.DroppedTxs, 1)
+		}
+	}
+
+	// 배치 처리 완료 로깅 (처음 몇 배치만)
+	if processedCount < 500 {
+		log.Printf("📦 Batch processed: %d messages → %d transactions", batchSize, len(transactions))
 	}
 }
 
@@ -365,8 +469,8 @@ func (a *SimpleEOAAnalyzer) printStatistics() {
 }
 
 // GetStatistics 통계 반환
-func (a *SimpleEOAAnalyzer) GetStatistics() map[string]interface{} {
-	return map[string]interface{}{
+func (a *SimpleEOAAnalyzer) GetStatistics() map[string]any {
+	return map[string]any{
 		"mode":               string(a.config.Mode),
 		"name":               a.config.Name,
 		"total_processed":    atomic.LoadInt64(&a.stats.TotalProcessed),
@@ -514,12 +618,13 @@ func (a *SimpleEOAAnalyzer) cleanup() {
 
 // Close io.Closer 인터페이스 구현
 func (a *SimpleEOAAnalyzer) Close() error {
-	// Transaction Consumer 정리
-	if a.txConsumer != nil {
-		if err := a.txConsumer.Close(); err != nil {
-			log.Printf("⚠️ Error closing transaction consumer: %v", err)
+
+	// Batch Consumer 정리
+	if a.batchConsumer != nil {
+		if err := a.batchConsumer.Close(); err != nil {
+			log.Printf("⚠️ Error closing batch consumer: %v", err)
 		}
 	}
-	
+
 	return a.Stop()
 }

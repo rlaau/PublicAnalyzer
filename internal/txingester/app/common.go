@@ -16,7 +16,7 @@ type TxIngester interface {
 	MarkTransaction(domain.RawTransaction) domain.MarkedTransaction
 }
 
-func NewTxIngester(isTesting bool, kafkaProducer kafka.Producer, cceService txingester.CCEService) TxIngester {
+func NewTxIngester(isTesting bool, kafkaProducer kafka.Producer[domain.MarkedTransaction], cceService txingester.CCEService) TxIngester {
 
 	if isTesting {
 		return NewTestingIngester(kafkaProducer, cceService)
