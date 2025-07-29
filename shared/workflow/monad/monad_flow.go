@@ -22,6 +22,6 @@ func (f *MonadFlow[T]) Run(input Monad[T]) Monad[T] {
 }
 
 // 생성자
-func NewMonoFlow[T any]() *MonadFlow[T] {
+func NewMonadFlow[T any]() *MonadFlow[T] {
 	return &MonadFlow[T]{}
 }

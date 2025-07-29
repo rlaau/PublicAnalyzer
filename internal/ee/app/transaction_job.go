@@ -5,7 +5,9 @@ import (
 	"log"
 	"sync/atomic"
 
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/monad"
 )
 
 // TransactionJob implements workerpool.Job interface for transaction processing
@@ -50,8 +52,15 @@ func (a *SimpleEOAAnalyzer) processSingleTransactionJob(tx *shareddomain.MarkedT
 	}
 
 	// DualManager를 통한 트랜잭션 처리
+	//* 모나드 처리로 로직 간명화
+	result := monad.NewMonadFlow[*domain.MarkedTransaction]().
+		Then(a.dualManager.CheckTransaction).
+		Then(a.dualManager.HandleAddress).
+		Then(a.dualManager.AddToWindowBuffer).
+		Run(monad.Ok(tx))
+	_, err := result.Unwrap()
 
-	if err := a.dualManager.CheckTransaction(tx); err != nil {
+	if err != nil {
 		atomic.AddInt64(&a.stats.ErrorCount, 1)
 		errorCount := atomic.LoadInt64(&a.stats.ErrorCount)
 		if errorCount <= 5 { // 처음 5개 에러는 모두 로깅 (디버깅용)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/monad"
 )
 
 const (
@@ -47,8 +48,9 @@ type DualManager struct {
 	// Persistent KV storage for to->[]from mappings (대규모 데이터 처리용)
 	pendingRelationsDB *badger.DB // to_address -> []from_address 영구 저장
 
-	// Synchronization
-	mutex sync.RWMutex
+	// Synchronization (최적화된 뮤텍스)
+	mutex        sync.RWMutex // 전체 구조체 보호용 (구조 변경 등)
+	bucketsMutex sync.RWMutex // TimeBucket 관련 작업 전용 (BadgerDB는 자체 동시성 보장)
 }
 
 // NewDualManager creates a new dual manager instance
@@ -86,22 +88,34 @@ func (dm *DualManager) Close() error {
 }
 
 // CheckTransaction is the main entry point for transaction analysis
-func (dm *DualManager) CheckTransaction(tx *domain.MarkedTransaction) error {
+func (dm *DualManager) CheckTransaction(txMondad monad.Monad[*domain.MarkedTransaction]) monad.Monad[*domain.MarkedTransaction] {
 	dm.mutex.Lock()
 	defer dm.mutex.Unlock()
+	tx, _ := txMondad.Unwrap()
 
 	// Only process EOA-EOA transactions
 	//todo 근데 이거 중복 체킹이긴 함. 프로덕션 후 문제 없으면 충분히 제거 가능
 	//todo ProcessSingle에서 미리 검사함. 애초에 카프카 큐에서 분리 시 신뢰도 가능하고
 	if tx.TxSyntax[0] != domain.EOAMark || tx.TxSyntax[1] != domain.EOAMark {
-		return nil
+		return monad.Err[*domain.MarkedTransaction](nil)
 	}
-
-	return dm.handleAddress(tx)
+	return monad.Ok(tx)
+	//return dm.handleAddress(tx)
 }
 
-// handleAddress processes transaction addresses according to their types
-func (dm *DualManager) handleAddress(tx *domain.MarkedTransaction) error {
+func HandleMarkedTxMonadError(errOrNil error) monad.Monad[*domain.MarkedTransaction] {
+	if errOrNil != nil {
+		return monad.Err[*domain.MarkedTransaction](errOrNil)
+	}
+	return monad.Ok[*domain.MarkedTransaction](nil)
+}
+
+// HandleAddress processes transaction addresses according to their types
+func (dm *DualManager) HandleAddress(txMondad monad.Monad[*domain.MarkedTransaction]) monad.Monad[*domain.MarkedTransaction] {
+	tx, err := txMondad.Unwrap()
+	if err != nil {
+		return monad.Err[*domain.MarkedTransaction](err)
+	}
 	fromAddr := tx.From
 	toAddr := tx.To
 
@@ -122,7 +136,8 @@ func (dm *DualManager) handleAddress(tx *domain.MarkedTransaction) error {
 		if debugEnabled {
 			fmt.Printf("   → Case 1: CEX → Address (txFromCexAddress)\n")
 		}
-		return dm.handleExceptionalAddress(toAddr, "txFromCexAddress")
+		err := dm.handleExceptionalAddress(toAddr, "txFromCexAddress")
+		return HandleMarkedTxMonadError(err)
 	}
 
 	// Case 2: to가 CEX인 경우 - 새로운 입금주소 탐지
@@ -130,7 +145,8 @@ func (dm *DualManager) handleAddress(tx *domain.MarkedTransaction) error {
 		if debugEnabled {
 			fmt.Printf("   → Case 2: Deposit Detection (Address → CEX)\n")
 		}
-		return dm.handleDepositDetection(toAddr, fromAddr, tx)
+		err := dm.handleDepositDetection(toAddr, fromAddr, tx)
+		return HandleMarkedTxMonadError(err)
 	}
 
 	// Case 3: from이 detectedDepositAddress인 경우 - to는 "txFromDepositAddress"로 특수 처리
@@ -138,7 +154,8 @@ func (dm *DualManager) handleAddress(tx *domain.MarkedTransaction) error {
 		if debugEnabled {
 			fmt.Printf("   → Case 3: Detected Deposit → Address (txFromDepositAddress)\n")
 		}
-		return dm.handleExceptionalAddress(toAddr, "txFromDepositAddress")
+		err := dm.handleExceptionalAddress(toAddr, "txFromDepositAddress")
+		return HandleMarkedTxMonadError(err)
 	}
 
 	// Case 4: to가 detectedDepositAddress인 경우 - from,to 듀얼을 그래프DB에 저장
@@ -146,14 +163,16 @@ func (dm *DualManager) handleAddress(tx *domain.MarkedTransaction) error {
 		if debugEnabled {
 			fmt.Printf("   → Case 4: Address → Detected Deposit (saveToGraphDB)\n")
 		}
-		return dm.saveToGraphDB(fromAddr, toAddr, tx)
+		err := dm.saveToGraphDB(fromAddr, toAddr, tx)
+		return HandleMarkedTxMonadError(err)
 	}
 
 	// Case 5: 일반 트랜잭션 - DualManager 윈도우 버퍼에 추가
 	if debugEnabled {
 		fmt.Printf("   → Case 5: Regular Transaction (addToWindowBuffer)\n")
 	}
-	return dm.addToWindowBuffer(tx)
+	return monad.Ok(tx)
+	//return dm.addToWindowBuffer(tx)
 }
 
 // handleExceptionalAddress processes exceptional addresses (to be implemented)
@@ -235,8 +254,16 @@ func (dm *DualManager) saveConnectionToGraphDB(fromAddr, toAddr domain.Address, 
 	return dm.graphRepo.UpdateEdgeEvidence(fromAddr, toAddr, txID, SameDepositUsage)
 }
 
-// addToWindowBuffer adds transaction to the sliding window buffer
-func (dm *DualManager) addToWindowBuffer(tx *domain.MarkedTransaction) error {
+// AddToWindowBuffer adds transaction to the sliding window buffer
+func (dm *DualManager) AddToWindowBuffer(txMonad monad.Monad[*domain.MarkedTransaction]) monad.Monad[*domain.MarkedTransaction] {
+	tx, err := txMonad.Unwrap()
+	if err != nil {
+		return monad.Err[*domain.MarkedTransaction](err)
+	}
+	//모나드 체이닝 과정에서 완료 but 그 자체로 이전 단계에서 완료되어 Ok(nil)리턴 시 즉시 리턴.
+	if tx == nil {
+		return monad.Ok[*domain.MarkedTransaction](nil)
+	}
 	txTime := tx.BlockTime
 	toAddrStr := tx.To.String()
 	fromAddrStr := tx.From.String()
@@ -250,15 +277,15 @@ func (dm *DualManager) addToWindowBuffer(tx *domain.MarkedTransaction) error {
 
 	// 1. Update firstActiveTimeBuckets (핵심 도메인 로직)
 	if err := dm.updateFirstActiveTimeBuckets(toAddrStr, txTime); err != nil {
-		return err
+		return monad.Err[*domain.MarkedTransaction](err)
 	}
 
 	// 2. Add to pending relations in BadgerDB
 	if err := dm.addToPendingRelations(toAddrStr, fromAddrStr); err != nil {
-		return err
+		return monad.Err[*domain.MarkedTransaction](err)
 	}
 
-	return nil
+	return monad.Ok[*domain.MarkedTransaction](nil)
 }
 
 // 디버깅용 전역 카운터
@@ -270,17 +297,25 @@ var static_counter int64
 // ! - 4개월 간 선택받지 못하면 자동으로 떨어져 나감
 // ! - 에이징의 대상은 "to user"(입금 주소 탐지를 위한 핵심 로직)
 func (dm *DualManager) updateFirstActiveTimeBuckets(toAddr string, txTime time.Time) error {
-	// 1. 적절한 타임버킷 찾기 또는 생성
+	// 1. 적절한 타임버킷 찾기 또는 생성 (쓰기 락 필요)
+	dm.bucketsMutex.Lock()
 	bucketIndex := dm.findOrCreateTimeBucket(txTime)
 	currentBucket := dm.firstActiveTimeBuckets[bucketIndex]
+	dm.bucketsMutex.Unlock()
 
-	// 2. 윈도우 전체에서 해당 to user가 이미 존재하는지 확인
-	if dm.isToUserInWindow(toAddr) {
+	// 2. 윈도우 전체에서 해당 to user가 이미 존재하는지 확인 (읽기 락)
+	dm.bucketsMutex.RLock()
+	exists := dm.isToUserInWindow(toAddr)
+	dm.bucketsMutex.RUnlock()
+
+	if exists {
 		return nil // 이미 윈도우에 있으면 갱신하지 않음 (핵심 도메인 로직)
 	}
 
-	// 3. 새로운 to user를 현재 버킷에 추가
+	// 3. 새로운 to user를 현재 버킷에 추가 (쓰기 락)
+	dm.bucketsMutex.Lock()
 	currentBucket.ToUsers[toAddr] = txTime
+	dm.bucketsMutex.Unlock()
 
 	return nil
 }
