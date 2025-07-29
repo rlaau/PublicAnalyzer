@@ -84,8 +84,8 @@ Located in `/shared`:
 - `dto/` - Common data transfer objects
 - `alerting/` - Email alerting service
 - `monitoring/` - Profiling tools
-- `windowkeeper/` - Window-based data processing
-- `workerpool/` - Worker pool implementation
+- `groundknowledge`-프로젝트에서 공유되는 지식을 관리함. (단일 진실 출처, 단일 시간 출처)
+- `workflow/` - 워커풀, 함수 파이프라이닝 패턴을 정의한 라이브러리. 로직을 구현하는 틀을 마련헀으므로, 로직 구현 시 해당 workflow에 맞춰 구현하면 좋을 거야.
 - `txfeeder` - 테스트 환경에서 "가상의 트랜잭션"을 생성 후 각 모듈에 주입해주는 역할을 해
 ## Important Notes
 
@@ -105,6 +105,7 @@ The `/testdata` directory contains Ethereum transaction CSV files (eth_tx_000000
 3. 클로드는 파일경로 참조를 많이 실수해. 파일 관련 오류가 있으면 파일경로 함수나 명령을 반드시 검토해.
 4. 너는 파일을 읽을 때 파싱을 잘못하는 경우가 많아. 파일 관련 로직을 쓰기 전, 파일 내부를 본 후 올바른 전처리, 파싱을 점검해.
 5. 퍼시스턴트 데이터를 관리할 땐, 해당 데이터가 로컬의 어디에 저장되어서 로드되는지 반드시 그 경로를 검토해. 모킹 데이터를 다룰 때도 마찬가지야.
+6. 공유 데이터 사용 시엔 @/groundknowledge, 병렬 워커풀 사용 시엔 @/workerpool폴더 탐조할 것.
 
 ## annotaions
 1. effective go를 따라

@@ -65,9 +65,9 @@ func NewDualManager(groundKnowledge *GroundKnowledge, graphRepo GraphRepository,
 		groundKnowledge:        groundKnowledge,
 		graphRepo:              graphRepo,
 		firstActiveTimeBuckets: make([]*TimeBucket, MaxTimeBuckets),
-		frontIndex:             0,  // 첫 번째 버킷이 들어갈 위치
-		rearIndex:              0,  // 첫 번째 버킷이 들어갈 위치
-		bucketCount:            0,  // 초기 버킷 개수
+		frontIndex:             0, // 첫 번째 버킷이 들어갈 위치
+		rearIndex:              0, // 첫 번째 버킷이 들어갈 위치
+		bucketCount:            0, // 초기 버킷 개수
 		pendingRelationsDB:     pendingDB,
 	}
 
@@ -291,12 +291,12 @@ func (dm *DualManager) findOrCreateTimeBucket(txTime time.Time) int {
 	if dm.bucketCount == 0 {
 		weekStart := dm.calculateWeekStart(txTime)
 		dm.firstActiveTimeBuckets[0] = NewTimeBucket(weekStart)
-		
+
 		// 순환 큐 초기화
-		dm.frontIndex = 0    // 첫 번째 버킷이 가장 오래된 버킷
-		dm.rearIndex = 0     // 첫 번째 버킷이 가장 최신 버킷
-		dm.bucketCount = 1   // 버킷 개수 증가
-		
+		dm.frontIndex = 0  // 첫 번째 버킷이 가장 오래된 버킷
+		dm.rearIndex = 0   // 첫 번째 버킷이 가장 최신 버킷
+		dm.bucketCount = 1 // 버킷 개수 증가
+
 		fmt.Printf("🪣 First bucket created at index 0: %s - %s (front:%d, rear:%d, count:%d)\n",
 			weekStart.Format("2006-01-02 15:04:05"),
 			weekStart.Add(SlideInterval).Format("2006-01-02 15:04:05"),
@@ -308,7 +308,7 @@ func (dm *DualManager) findOrCreateTimeBucket(txTime time.Time) int {
 	for i := 0; i < dm.bucketCount; i++ {
 		bucketIndex := (dm.frontIndex + i) % MaxTimeBuckets
 		bucket := dm.firstActiveTimeBuckets[bucketIndex]
-		
+
 		// 반닫힌 구간 [StartTime, EndTime): StartTime <= txTime < EndTime
 		if !txTime.Before(bucket.StartTime) && txTime.Before(bucket.EndTime) {
 			return bucketIndex
@@ -335,30 +335,30 @@ func (dm *DualManager) findOrCreateTimeBucket(txTime time.Time) int {
 // addNewTimeBucket adds a new time bucket using proper circular queue logic
 func (dm *DualManager) addNewTimeBucket(txTime time.Time) int {
 	weekStart := dm.calculateWeekStart(txTime)
-	
+
 	if dm.bucketCount < MaxTimeBuckets {
 		// 공간이 남아있는 경우: rear 다음 위치에 새 버킷 추가
 		newRearIndex := (dm.rearIndex + 1) % MaxTimeBuckets
 		dm.firstActiveTimeBuckets[newRearIndex] = NewTimeBucket(weekStart)
 		dm.rearIndex = newRearIndex
 		dm.bucketCount++
-		
+
 		fmt.Printf("🪣 New bucket added at index %d: %s - %s (front:%d, rear:%d, count:%d)\n",
 			newRearIndex,
 			weekStart.Format("2006-01-02 15:04:05"),
 			weekStart.Add(SlideInterval).Format("2006-01-02 15:04:05"),
 			dm.frontIndex, dm.rearIndex, dm.bucketCount)
-		
+
 		return newRearIndex
 	} else {
 		// 공간이 꽉 찬 경우 (21개): front 버킷을 제거하고 그 자리에 새 버킷 추가
 		oldBucket := dm.firstActiveTimeBuckets[dm.frontIndex]
-		
+
 		// 기존 버킷의 pendingRelations 정리
 		pendingBefore := dm.countPendingRelations()
 		toUsersCount := len(oldBucket.ToUsers)
 		deletedRelations := 0
-		
+
 		for toAddr := range oldBucket.ToUsers {
 			if err := dm.deletePendingRelations(toAddr); err != nil {
 				fmt.Printf("   ⚠️ Failed to delete pending relations for %s: %v\n", toAddr[:10]+"...", err)
@@ -366,18 +366,18 @@ func (dm *DualManager) addNewTimeBucket(txTime time.Time) int {
 			}
 			deletedRelations++
 		}
-		
+
 		// front 위치에 새 버킷 생성 (덮어쓰기)
 		newBucketIndex := dm.frontIndex
 		dm.firstActiveTimeBuckets[newBucketIndex] = NewTimeBucket(weekStart)
-		
+
 		// front를 다음 위치로 이동, rear는 새로 생성된 버킷으로 설정
 		dm.frontIndex = (dm.frontIndex + 1) % MaxTimeBuckets
 		dm.rearIndex = newBucketIndex
 		// bucketCount는 21 고정
-		
+
 		pendingAfter := dm.countPendingRelations()
-		
+
 		fmt.Printf("🪣 BUCKET ROTATION[%d]: %s-%s → %s-%s (front:%d, rear:%d, count:%d)\n",
 			newBucketIndex,
 			oldBucket.StartTime.Format("2006-01-02 15:04"),
@@ -387,7 +387,7 @@ func (dm *DualManager) addNewTimeBucket(txTime time.Time) int {
 			dm.frontIndex, dm.rearIndex, dm.bucketCount)
 		fmt.Printf("   🗑️  PendingRelations cleanup: %d→%d (deleted %d/%d toUsers)\n",
 			pendingBefore, pendingAfter, deletedRelations, toUsersCount)
-		
+
 		return newBucketIndex
 	}
 }
@@ -415,7 +415,7 @@ func (dm *DualManager) isToUserInWindow(toAddr string) bool {
 		// 순환 큐에서 최신부터 역순 인덱스 계산
 		bucketIndex := (dm.rearIndex - i + MaxTimeBuckets) % MaxTimeBuckets
 		bucket := dm.firstActiveTimeBuckets[bucketIndex]
-		
+
 		if bucket != nil {
 			if _, exists := bucket.ToUsers[toAddr]; exists {
 				// 성능 로깅 (첫 10개만)
@@ -433,7 +433,6 @@ func (dm *DualManager) isToUserInWindow(toAddr string) bool {
 func (dm *DualManager) countActiveBuckets() int {
 	return dm.bucketCount
 }
-
 
 // BadgerDB helper methods for pending relations management
 

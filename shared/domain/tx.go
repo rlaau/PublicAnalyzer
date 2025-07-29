@@ -11,24 +11,17 @@ type RawTransaction struct {
 	TxId      string
 	From      string
 	To        string
-	Value     string
-	Gas       string
-	Input     string // ABI encoded data (함수 시그니처 및 파라미터)
 	Nonce     string // 트랜잭션 nonce (선택적, 필요시 사용)
 }
 
 // 트랜잭션 구조체
 type MarkedTransaction struct {
-	BlockTime   time.Time
-	TxID        TxId
-	TxSyntax    [2]ContractBoolMark //해당 tx가 C2C, C2C, C2D, D2C, D2D 중 어떤 형태인지 표기
-	Nonce       uint64
-	BlockNumber BlockNumber
-	From        Address
-	To          Address
-	Value       BigInt
-	GasLimit    BigInt
-	Input       string
+	BlockTime time.Time
+	TxID      TxId
+	TxSyntax  [2]ContractBoolMark //해당 tx가 C2C, C2C, C2D, D2C, D2D 중 어떤 형태인지 표기
+	Nonce     uint64
+	From      Address
+	To        Address
 }
 
 type TxId [32]byte

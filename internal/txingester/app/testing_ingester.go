@@ -292,9 +292,6 @@ func (ti *TestingIngester) IngestTransaction(ctx context.Context) error {
 					TxID:      ti.stringToTxId(raw.TxId),
 					From:      creator,
 					To:        contractAddr,
-					Value:     domain.NewBigInt(raw.Value),
-					GasLimit:  domain.NewBigInt(raw.Gas),
-					Input:     raw.Input,
 					Nonce:     nonce,
 					TxSyntax: [2]domain.ContractBoolMark{
 						domain.EOAMark,      // Creator는 항상 EOA
@@ -413,9 +410,6 @@ func (ti *TestingIngester) MarkTransaction(rawTx domain.RawTransaction) domain.M
 		TxID:      ti.stringToTxId(rawTx.TxId),
 		From:      fromAddr,
 		To:        toAddr,
-		Value:     domain.NewBigInt(rawTx.Value),
-		GasLimit:  domain.NewBigInt(rawTx.Gas),
-		Input:     rawTx.Input,
 		Nonce:     nonce,
 		TxSyntax: [2]domain.ContractBoolMark{
 			ti.CheckIsContract(fromAddr), // CCE 모듈을 통해 확인
@@ -517,9 +511,6 @@ func (ti *TestingIngester) loadTestBatch(_ int, limit int) []domain.RawTransacti
 				To:        to,
 				BlockTime: time.Now(), // 테스트용 현재 시간
 				TxId:      fmt.Sprintf("test_tx_%d_%d", ti.currentFileIndex, ti.currentLineOffset+linesRead),
-				Value:     "0",
-				Gas:       "21000",
-				Input:     "",
 			})
 			remainingToLoad--
 

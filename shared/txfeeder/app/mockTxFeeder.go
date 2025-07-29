@@ -627,16 +627,12 @@ func (g *TxFeeder) createMarkedTransaction(from, to sharedDomain.Address) shared
 	randomValue.Add(randomValue, minWei)
 
 	return sharedDomain.MarkedTransaction{
-		BlockTime:   g.state.CurrentTime,
-		TxID:        txID,
-		TxSyntax:    [2]sharedDomain.ContractBoolMark{sharedDomain.EOAMark, sharedDomain.EOAMark}, // Assume EOA-to-EOA for simplicity
-		Nonce:       uint64(g.state.GeneratedCount),
-		BlockNumber: sharedDomain.BlockNumber(g.state.GeneratedCount / 100), // Rough block number
-		From:        from,
-		To:          to,
-		Value:       sharedDomain.BigInt{Int: randomValue},
-		GasLimit:    sharedDomain.BigInt{Int: big.NewInt(21000)}, // Standard ETH transfer gas
-		Input:       "",                                          // Empty for ETH transfers
+		BlockTime: g.state.CurrentTime,
+		TxID:      txID,
+		TxSyntax:  [2]sharedDomain.ContractBoolMark{sharedDomain.EOAMark, sharedDomain.EOAMark}, // Assume EOA-to-EOA for simplicity
+		Nonce:     uint64(g.state.GeneratedCount),
+		From:      from,
+		To:        to,
 	}
 }
 

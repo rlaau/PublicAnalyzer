@@ -14,6 +14,7 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/workerpool"
 )
 
 // SimpleEOAAnalyzer 간단한 EOA 분석기 구현체
@@ -24,8 +25,9 @@ type SimpleEOAAnalyzer struct {
 	dualManager     *domain.DualManager
 	graphRepo       domain.GraphRepository
 
-	// Channel processing (backward compatibility)
-	txChannel    chan *shareddomain.MarkedTransaction
+	// WorkerPool integration
+	txJobChannel chan workerpool.Job
+	workerPool   *workerpool.Pool
 	stopChannel  chan struct{}
 	stopOnce     sync.Once
 	shutdownOnce sync.Once
@@ -150,7 +152,7 @@ func newSimpleAnalyzer(config *EOAAnalyzerConfig) (*SimpleEOAAnalyzer, error) {
 		groundKnowledge: groundKnowledge,
 		dualManager:     dualManager,
 		graphRepo:       graphRepo,
-		txChannel:       make(chan *shareddomain.MarkedTransaction, config.ChannelBufferSize),
+		txJobChannel:    make(chan workerpool.Job, config.ChannelBufferSize),
 		stopChannel:     make(chan struct{}),
 		batchConsumer:   batchConsumer,
 		batchMode:       true, // 기본값: 배치 모드 활성화
@@ -178,11 +180,9 @@ func (a *SimpleEOAAnalyzer) Start(ctx context.Context) error {
 		log.Printf("단건 컨슈머는 걍 지웠음.")
 	}
 
-	// 워커 고루틴들 시작
-	for i := 0; i < a.config.WorkerCount; i++ {
-		a.wg.Add(1)
-		go a.transactionWorker(ctx, i)
-	}
+	// 워커풀 시작
+	a.workerPool = workerpool.New(ctx, a.config.WorkerCount, a.txJobChannel)
+	log.Printf("🔧 WorkerPool initialized with %d workers", a.config.WorkerCount)
 
 	// 통계 리포터 시작
 	a.wg.Add(1)
@@ -211,8 +211,9 @@ func (a *SimpleEOAAnalyzer) Stop() error {
 
 // ProcessTransaction 트랜잭션 처리 (non-blocking)
 func (a *SimpleEOAAnalyzer) ProcessTransaction(tx *shareddomain.MarkedTransaction) error {
+	job := NewTransactionJob(tx, a, 0) // workerID는 워커풀에서 자동 관리
 	select {
-	case a.txChannel <- tx:
+	case a.txJobChannel <- job:
 		return nil
 	default:
 		atomic.AddInt64(&a.stats.DroppedTxs, 1)
@@ -230,24 +231,8 @@ func (a *SimpleEOAAnalyzer) ProcessTransactions(txs []*shareddomain.MarkedTransa
 	return nil
 }
 
-// transactionWorker 트랜잭션 처리 워커
-func (a *SimpleEOAAnalyzer) transactionWorker(ctx context.Context, workerID int) {
-	defer a.wg.Done()
-	log.Printf("🔧 Worker %d started", workerID)
-
-	for {
-		select {
-		case <-ctx.Done():
-			log.Printf("🔧 Worker %d stopping (context)", workerID)
-			return
-		case <-a.stopChannel:
-			log.Printf("🔧 Worker %d stopping (signal)", workerID)
-			return
-		case tx := <-a.txChannel:
-			a.processSingleTransaction(tx, workerID)
-		}
-	}
-}
+// transactionWorker는 이제 워커풀에 의해 대체됨 - 하위 호환성을 위해 주석 처리
+// 실제 작업은 TransactionJob.Do()에서 처리됨
 
 // batchConsumerWorker 배치 Consumer 워커 (고성능 배치 처리)
 func (a *SimpleEOAAnalyzer) batchConsumerWorker(ctx context.Context) {
@@ -311,9 +296,10 @@ func (a *SimpleEOAAnalyzer) processBatch(messages []kafka.Message[*shareddomain.
 
 	// 2. 트랜잭션 처리 (배치로 처리)
 	for _, tx := range transactions {
-		// 내부 채널로 전달하여 기존 워커들이 처리하도록 함
+		// 워커풀로 작업 전달
+		job := NewTransactionJob(tx, a, 0)
 		select {
-		case a.txChannel <- tx:
+		case a.txJobChannel <- job:
 			// 성공
 		default:
 			// 채널이 가득 찬 경우 드롭
@@ -327,51 +313,8 @@ func (a *SimpleEOAAnalyzer) processBatch(messages []kafka.Message[*shareddomain.
 	}
 }
 
-// processSingleTransaction 개별 트랜잭션 처리
-func (a *SimpleEOAAnalyzer) processSingleTransaction(tx *shareddomain.MarkedTransaction, workerID int) {
-	processedCount := atomic.AddInt64(&a.stats.TotalProcessed, 1)
-
-	// 처음 몇 개 트랜잭션은 디버깅 로그 출력
-	if processedCount <= 5 {
-		log.Printf("🔄 Worker %d: processing tx #%d | From: %s | To: %s",
-			workerID, processedCount, tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
-	}
-
-	// EOA-EOA 트랜잭션만 처리
-	//TODO 이건 추후 제거 가능. 어차피 EE트랜잭션만 카프카 큐에 보내줄 거라서..
-	//TODO 뭐, 놔둬도 상관 없긴 함.
-	if tx.TxSyntax[0] != shareddomain.EOAMark || tx.TxSyntax[1] != shareddomain.EOAMark {
-		if processedCount <= 5 {
-			log.Printf("⏭️  Worker %d: skipping non-EOA tx #%d", workerID, processedCount)
-		}
-		return
-	}
-
-	// DualManager를 통한 트랜잭션 처리
-	if err := a.dualManager.CheckTransaction(tx); err != nil {
-		atomic.AddInt64(&a.stats.ErrorCount, 1)
-		errorCount := atomic.LoadInt64(&a.stats.ErrorCount)
-		if errorCount <= 5 { // 처음 5개 에러는 모두 로깅 (디버깅용)
-			log.Printf("⚠️ Worker %d: processing error #%d: %v | From: %s | To: %s",
-				workerID, errorCount, err, tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
-		} else if errorCount%20 == 1 { // 이후에는 20번째마다 로깅
-			log.Printf("⚠️ Worker %d: processing error #%d: %v", workerID, errorCount, err)
-		}
-		return
-	}
-
-	successCount := atomic.AddInt64(&a.stats.SuccessCount, 1)
-
-	// 처음 몇 개 성공은 로깅
-	if successCount <= 5 {
-		log.Printf("✅ Worker %d: success #%d | From: %s | To: %s",
-			workerID, successCount, tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
-	}
-
-	//TODO 배포 환경에선 제거 가능 or 개량 가능
-	//TODO 동일 로직 중복 처리 및 분석이라 성능 저하 가능
-	a.analyzeTransactionResult(tx)
-}
+// processSingleTransaction 메서드는 TransactionJob.Do()로 이동됨
+// 하위 호환성을 위해 삭제
 
 // analyzeTransactionResult 트랜잭션 결과 분석
 func (a *SimpleEOAAnalyzer) analyzeTransactionResult(tx *shareddomain.MarkedTransaction) {
@@ -438,8 +381,8 @@ func (a *SimpleEOAAnalyzer) printStatistics() {
 	dropped := atomic.LoadInt64(&a.stats.DroppedTxs)
 
 	uptime := time.Since(a.stats.StartTime)
-	channelUsage := len(a.txChannel)
-	channelCapacity := cap(a.txChannel)
+	channelUsage := len(a.txJobChannel)
+	channelCapacity := cap(a.txJobChannel)
 	usagePercent := float64(channelUsage) / float64(channelCapacity) * 100
 
 	log.Printf("📊 [%s] %s Statistics:", a.config.Mode, a.config.Name)
@@ -481,8 +424,8 @@ func (a *SimpleEOAAnalyzer) GetStatistics() map[string]any {
 		"window_updates":     atomic.LoadInt64(&a.stats.WindowUpdates),
 		"dropped_txs":        atomic.LoadInt64(&a.stats.DroppedTxs),
 		"uptime_seconds":     time.Since(a.stats.StartTime).Seconds(),
-		"channel_usage":      len(a.txChannel),
-		"channel_capacity":   cap(a.txChannel),
+		"channel_usage":      len(a.txJobChannel),
+		"channel_capacity":   cap(a.txJobChannel),
 	}
 }
 
@@ -495,7 +438,7 @@ func (a *SimpleEOAAnalyzer) IsHealthy() bool {
 		return true // 아직 트랜잭션이 없으면 건강함
 	}
 
-	channelUsage := float64(len(a.txChannel)) / float64(cap(a.txChannel))
+	channelUsage := float64(len(a.txJobChannel)) / float64(cap(a.txJobChannel))
 	errorRate := float64(errors) / float64(total)
 
 	// 채널 사용률 90% 이하, 에러율 10% 이하
@@ -504,16 +447,22 @@ func (a *SimpleEOAAnalyzer) IsHealthy() bool {
 
 // GetChannelStatus 채널 상태 반환
 func (a *SimpleEOAAnalyzer) GetChannelStatus() (int, int) {
-	return len(a.txChannel), cap(a.txChannel)
+	return len(a.txJobChannel), cap(a.txJobChannel)
 }
 
 // shutdown 우아한 종료
 func (a *SimpleEOAAnalyzer) shutdown() error {
 	log.Printf("🔄 Shutting down: %s", a.config.Name)
 
+	// 워커풀 종료
+	if a.workerPool != nil {
+		a.workerPool.Shutdown()
+		log.Printf("🔧 WorkerPool shutdown completed")
+	}
+
 	// 새 트랜잭션 수신 중지 (한 번만)
 	a.shutdownOnce.Do(func() {
-		close(a.txChannel)
+		close(a.txJobChannel)
 	})
 
 	// 모든 워커 완료 대기

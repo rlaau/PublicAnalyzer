@@ -153,13 +153,13 @@ func createSimplifiedPipeline(config *IsolatedTestConfig) (*txFeeder.TxFeeder, a
 
 	// 배치 모드를 위한 통합 설정으로 TxFeeder 생성
 	feederConfig := &txFeeder.TxFeederConfig{
-		GenConfig:  genConfig,
-		EnvConfig:  envConfig,
-		BatchMode:  true,           // 배치 모드 활성화
-		BatchSize:  200,            // 200개씩 배치 (고성능 테스트)  
+		GenConfig:    genConfig,
+		EnvConfig:    envConfig,
+		BatchMode:    true,                  // 배치 모드 활성화
+		BatchSize:    200,                   // 200개씩 배치 (고성능 테스트)
 		BatchTimeout: 10 * time.Millisecond, // 10ms 타임아웃
 	}
-	
+
 	transactionFeeder, err := txFeeder.NewTxFeederWithComplexConfig(feederConfig)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create TxFeeder: %w", err)
@@ -204,18 +204,20 @@ func runSimplifiedPipelineTest(txFeeder *txFeeder.TxFeeder, analyzer app.EOAAnal
 	ctx, cancel := context.WithTimeout(context.Background(), config.TestDuration)
 	defer cancel()
 
-	// 1. EOA Analyzer 시작 (Kafka에서 트랜잭션 받기)
+	// 1. TxGenerator 시작 (Kafka로 자동 전송) - 먼저 시작
+	go func() {
+		if err := txFeeder.Start(ctx); err != nil {
+			fmt.Printf("   ❌ TxGenerator failed to start: %v\n", err)
+		}
+	}()
+	fmt.Printf("   🔄 TxGenerator started (publishing to Kafka)\n")
+
+	// 2. EOA Analyzer 시작 (Kafka에서 트랜잭션 받기)
 	analyzerDone := make(chan error, 1)
 	go func() {
 		analyzerDone <- analyzer.Start(ctx)
 	}()
 	fmt.Printf("   🔄 EOA Analyzer started with Kafka consumer\n")
-
-	// 2. TxGenerator 시작 (Kafka로 자동 전송)
-	if err := txFeeder.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start generator: %w", err)
-	}
-	fmt.Printf("   🔄 TxGenerator started (publishing to Kafka)\n")
 
 	// 3. 모니터링 (간소화됨)
 	go runSimplifiedMonitoring(txFeeder, analyzer, ctx)
@@ -240,7 +242,6 @@ func runSimplifiedPipelineTest(txFeeder *txFeeder.TxFeeder, analyzer app.EOAAnal
 	return nil
 }
 
-
 // runSimplifiedMonitoring TPS 모니터링 포함
 func runSimplifiedMonitoring(generator *txFeeder.TxFeeder, analyzer app.EOAAnalyzer, ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
@@ -254,14 +255,14 @@ func runSimplifiedMonitoring(generator *txFeeder.TxFeeder, analyzer app.EOAAnaly
 			stats := generator.GetPipelineStats()
 			analyzerStats := analyzer.GetStatistics()
 			tps := generator.GetTPS()
-			
+
 			fmt.Printf("📊 [%.1fs] Gen: %d | Kafka: %d | TPS: %.0f | Analyzer: %v | 🚀 BATCH MODE\n",
 				time.Since(stats.StartTime).Seconds(),
 				stats.Generated,
 				stats.Transmitted,
 				tps,
 				analyzerStats["success_count"])
-				
+
 			// 목표 달성 확인
 			if tps >= 10000 {
 				fmt.Printf("🎯 TARGET ACHIEVED! TPS: %.0f >= 10,000\n", tps)

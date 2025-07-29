@@ -112,16 +112,12 @@ func main() {
 
 				// 트랜잭션 포인터로 변환
 				txPtr := &shareddomain.MarkedTransaction{
-					BlockTime:   tx.BlockTime,
-					TxID:        tx.TxID,
-					TxSyntax:    tx.TxSyntax,
-					Nonce:       tx.Nonce,
-					BlockNumber: tx.BlockNumber,
-					From:        tx.From,
-					To:          tx.To,
-					Value:       tx.Value,
-					GasLimit:    tx.GasLimit,
-					Input:       tx.Input,
+					BlockTime: tx.BlockTime,
+					TxID:      tx.TxID,
+					TxSyntax:  tx.TxSyntax,
+					Nonce:     tx.Nonce,
+					From:      tx.From,
+					To:        tx.To,
 				}
 
 				// 분석기로 전송
