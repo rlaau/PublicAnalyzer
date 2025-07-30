@@ -10,9 +10,10 @@ import (
 	"time"
 
 	cce "github.com/rlaaudgjs5638/chainAnalyzer/internal/cce/app"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/txingester"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring/monitor/kfkmtr"
 )
 
 func TestTestingIngester(t *testing.T) {
@@ -37,14 +38,14 @@ func TestTestingIngester(t *testing.T) {
 
 	// CCE 서비스 생성
 	cceService := cce.NewMockCCEService()
-	
+
 	// 모니터링 미터 생성
-	consumerMonitor := monitoring.NewSimpleTPSMeter()
-	producerMonitor := monitoring.NewSimpleTPSMeter()
-	defer consumerMonitor.Close()
-	defer producerMonitor.Close()
-	
-	ingester := NewTestingIngester(kafkaProducer, cceService, consumerMonitor, producerMonitor)
+	kafkaMonitor := kfkmtr.NewKafkaMonitor()
+	defer kafkaMonitor.Close()
+	//* 테스트환경, 배치 사용 x므로 일단 "",nil이용
+	infra := txingester.NewInfrastructure(cceService, *kafkaMonitor, "", kafkaProducer, nil)
+	testing := true
+	ingester := NewTxIngester(testing, *infra)
 
 	// Start ingesting in a goroutine
 	go func() {
@@ -60,7 +61,7 @@ func TestTestingIngester(t *testing.T) {
 		defer consumer.Close()
 
 		const targetMessages = 1000000 // 100만개 목표 (메모리 안정성)
-		const reservoirSize = 1000   // 1천개 레저버 샘플링
+		const reservoirSize = 1000     // 1천개 레저버 샘플링
 
 		reservoir := make([]string, 0, reservoirSize)
 		messageCount := 0

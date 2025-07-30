@@ -53,12 +53,12 @@ func (a *SimpleEOAAnalyzer) processSingleTransactionJob(tx *shareddomain.MarkedT
 
 	// DualManager를 통한 트랜잭션 처리
 	//* 모나드 처리로 로직 간명화
-	result := monad.NewMonadFlow[*domain.MarkedTransaction]().
+	_, err := monad.NewMonadFlow[*domain.MarkedTransaction]().
+		RegisterInput(tx).
 		Then(a.dualManager.CheckTransaction).
 		Then(a.dualManager.HandleAddress).
 		Then(a.dualManager.AddToWindowBuffer).
-		Run(monad.Ok(tx))
-	_, err := result.Unwrap()
+		Run()
 
 	if err != nil {
 		atomic.AddInt64(&a.stats.ErrorCount, 1)

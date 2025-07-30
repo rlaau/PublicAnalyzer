@@ -15,9 +15,10 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/txingester"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring"
 )
 
+// TODO 이런것도 결국 상수 배제하기
+// TODO 벡프레셔에 관리시키거나 할 것. 지금 이건 개-쓰레기 코드임
 const (
 	ingestedBatchSize = 1000                  // TxIngester가 한 번 요청에 받아온 값. 메모리 안정성을 위해 1000개로 설정
 	sleepInterval     = 10 * time.Millisecond // 더 빠른 처리를 위해 간격 단축
@@ -42,30 +43,34 @@ const (
 )
 
 type TestingIngester struct {
-	state             *IngestState
-	minInterval       time.Duration
-	transactionSource string                                        // 트랜잭션 소스 (예: "test", "mainnet")
-	kafkaProducer     kafka.Producer[domain.MarkedTransaction]      // 제너릭 Producer 사용
-	batchProducer     kafka.BatchProducer[domain.MarkedTransaction] // 제너릭 배치 프로듀서
-	cceService        txingester.CCEService                         // CCE 모듈과의 통신을 위한 서비스
-	currentFileIndex  int                                           // 현재 읽고 있는 파일 인덱스
-	currentLineOffset int                                           // 현재 파일 내 라인 오프셋
-	batchMode         bool                                          // 배치 모드 활성화 여부
-	batchSize         int                                           // 배치 크기
-	batchTimeout      time.Duration                                 // 배치 타임아웃
+	//인제스터가 마지막으로 인제스트한 tx시간 기록
+	state *IngestState
+	// 타임아웃 용 최소 인터벌
+	minInterval time.Duration
+	//TODO 파일 읽는 용도-> 추후 state에 통합하기.
+	//TODO 모드에 따라 움직이기. 파일 기반 or 스트리밍 기반이냐 따라 관리 상태 다름
+	//TODO 모드 딸깍 하면 선택 적용시키기
+	currentFileIndex  int // 현재 읽고 있는 파일 인덱스
+	currentLineOffset int // 현재 파일 내 라인 오프셋
+	//TODO 현재는 배치모드 뿐임. 근데 이제 배치와는 별개로 파일 처리도 분리.
+	batchMode    bool          // 배치 모드 활성화 여부
+	batchSize    int           // 배치 크기
+	batchTimeout time.Duration // 배치 타임아웃
 
 	// 백프레셔 관리를 위한 필드들
-	consumerMonitor   monitoring.TPSMeter // Consumer TPS 모니터링
-	producerMonitor   monitoring.TPSMeter // Producer TPS 모니터링
-	currentInterval   time.Duration       // 현재 생성 간격 (q)
-	currentBatchCount int                 // 현재 배치 크기 (p)
-	firstProduction   bool                // 첫 프로듀싱 여부
+	currentInterval   time.Duration // 현재 생성 간격 (q)
+	currentBatchCount int           // 현재 배치 크기 (p)
+	firstProduction   bool          // 첫 프로듀싱 여부
 
-	// 큐 상태 추적을 위한 필드들
+	// 큐 상태 추적을 위한 추가 필드들
+	//TODO 추후 얘내도 제거. 인제스터가 왜 큐 상태까지 보는것임. 백프레셔가 알아서 해라
 	estimatedQueueSize  float64   // 추정 큐 크기 (누적 계산)
 	lastUpdateTime      time.Time // 마지막 업데이트 시간
 	smoothedProducerTPS float64   // 평활화된 Producer TPS
 	smoothedConsumerTPS float64   // 평활화된 Consumer TPS
+
+	//* 카프카 프로듀서, 동기 연결할 CCE서비스, 모니터링 등 정의
+	infraStructure txingester.Infrastructure
 }
 
 type IngestState struct {
@@ -73,14 +78,14 @@ type IngestState struct {
 }
 
 // NewTestingIngester returns initialized TestingIngester (기본 모드)
-// TODO 실제 투입 시엔 cceService를 프로덕션 레벨로 갈아 끼운 후 의존성 주입받기
-func NewTestingIngester(kafkaProducer kafka.Producer[domain.MarkedTransaction], cceService txingester.CCEService, consumerMonitor, producerMonitor monitoring.TPSMeter) *TestingIngester {
+func NewTestingIngester(infra txingester.Infrastructure) *TestingIngester {
+	if infra.TransactionSource == "" {
+		infra.TransactionSource = "/home/rlaaudgjs5638/chainAnalyzer/testdata"
+	}
+
 	return &TestingIngester{
 		state:             &IngestState{},
 		minInterval:       1 * time.Second,
-		kafkaProducer:     kafkaProducer,
-		cceService:        cceService,                                   // CCE 서비스를 의존성 주입으로 받음
-		transactionSource: "/home/rlaaudgjs5638/chainAnalyzer/testdata", // 테스트 데이터 디렉토리
 		currentFileIndex:  0,
 		currentLineOffset: 0,
 		batchMode:         false,                 // 기본값: 비배치 모드
@@ -88,8 +93,6 @@ func NewTestingIngester(kafkaProducer kafka.Producer[domain.MarkedTransaction], 
 		batchTimeout:      10 * time.Millisecond, // 기본 배치 타임아웃
 
 		// 백프레셔 관리 초기화
-		consumerMonitor:   consumerMonitor,
-		producerMonitor:   producerMonitor,
 		currentInterval:   minInterval,      // 최소 간격으로 시작
 		currentBatchCount: initialBatchSize, // 첫 프로듀싱은 1만개
 		firstProduction:   true,
@@ -99,17 +102,19 @@ func NewTestingIngester(kafkaProducer kafka.Producer[domain.MarkedTransaction], 
 		lastUpdateTime:      time.Now(),
 		smoothedProducerTPS: float64(minTPSThreshold), // 최소 TPS로 시작
 		smoothedConsumerTPS: float64(minTPSThreshold), // 최소 TPS로 시작
+
+		infraStructure: infra,
 	}
 }
 
 // NewTestingIngesterWithBatch returns initialized TestingIngester with batch mode
-func NewTestingIngesterWithBatch(batchProducer kafka.BatchProducer[domain.MarkedTransaction], cceService txingester.CCEService, batchSize int, batchTimeout time.Duration, consumerMonitor, producerMonitor monitoring.TPSMeter) *TestingIngester {
+func NewTestingIngesterWithBatch(infra txingester.Infrastructure, batchSize int, batchTimeout time.Duration) *TestingIngester {
+	if infra.TransactionSource == "" {
+		infra.TransactionSource = "/home/rlaaudgjs5638/chainAnalyzer/testdata"
+	}
 	return &TestingIngester{
 		state:             &IngestState{},
 		minInterval:       1 * time.Second,
-		batchProducer:     batchProducer,
-		cceService:        cceService,
-		transactionSource: "/home/rlaaudgjs5638/chainAnalyzer/testdata",
 		currentFileIndex:  0,
 		currentLineOffset: 0,
 		batchMode:         true, // 배치 모드 활성화
@@ -117,8 +122,6 @@ func NewTestingIngesterWithBatch(batchProducer kafka.BatchProducer[domain.Marked
 		batchTimeout:      batchTimeout,
 
 		// 백프레셔 관리 초기화
-		consumerMonitor:   consumerMonitor,
-		producerMonitor:   producerMonitor,
 		currentInterval:   minInterval,      // 최소 간격으로 시작
 		currentBatchCount: initialBatchSize, // 첫 프로듀싱은 1만개
 		firstProduction:   true,
@@ -128,6 +131,8 @@ func NewTestingIngesterWithBatch(batchProducer kafka.BatchProducer[domain.Marked
 		lastUpdateTime:      time.Now(),
 		smoothedProducerTPS: float64(minTPSThreshold), // 최소 TPS로 시작
 		smoothedConsumerTPS: float64(minTPSThreshold), // 최소 TPS로 시작
+
+		infraStructure: infra,
 	}
 }
 
@@ -142,8 +147,8 @@ func (ti *TestingIngester) calculateBackpressure() {
 	}
 
 	// 현재 TPS 값들 가져오기
-	rawConsumerTPS := ti.consumerMonitor.GetCurrentTPS()
-	rawProducerTPS := ti.producerMonitor.GetCurrentTPS()
+	rawConsumerTPS := ti.infraStructure.KafkaMonitor.GetConsumerTPS()
+	rawProducerTPS := ti.infraStructure.KafkaMonitor.GetProducerTPS()
 
 	// 초기 TPS가 0인 경우 최소값으로 설정
 	if rawConsumerTPS < float64(minTPSThreshold) {
@@ -280,7 +285,7 @@ func (ti *TestingIngester) IngestTransaction(ctx context.Context) error {
 				nonce, _ := strconv.ParseUint(raw.Nonce, 10, 64)
 
 				// CCE 모듈에 컨트렉트 등록하고 컨트렉트 주소 받기
-				contractAddr, err := ti.cceService.RegisterContract(creator, nonce, raw.BlockTime)
+				contractAddr, err := ti.infraStructure.CCEService.RegisterContract(creator, nonce, raw.BlockTime)
 				if err != nil {
 					log.Printf("Failed to register contract: %v", err)
 					continue
@@ -307,7 +312,7 @@ func (ti *TestingIngester) IngestTransaction(ctx context.Context) error {
 		}
 
 		// 배치 또는 개별 전송 (모드에 따라 선택)
-		if ti.batchMode && ti.batchProducer != nil {
+		if ti.batchMode && ti.infraStructure.BatchProducer != nil {
 			// 배치 전송 모드
 			if err := ti.publishBatch(ctx, rawTxs, markedTxs); err != nil {
 				log.Printf("Failed to publish batch: %v", err)
@@ -315,7 +320,7 @@ func (ti *TestingIngester) IngestTransaction(ctx context.Context) error {
 				continue
 			}
 			// Producer TPS 모니터링 - 배치 단위로 기록
-			ti.producerMonitor.RecordEvents(len(markedTxs))
+			ti.infraStructure.KafkaMonitor.RecordProducerTpsEvents(len(markedTxs))
 			totalMessages += len(markedTxs)
 			log.Printf("[IngestTransaction] Batch published %d transactions (total: %d)", len(markedTxs), totalMessages)
 		} else {
@@ -324,12 +329,12 @@ func (ti *TestingIngester) IngestTransaction(ctx context.Context) error {
 
 			for i, markedTx := range markedTxs {
 				key := []byte(rawTxs[i].From)
-				if err := ti.kafkaProducer.PublishMessage(ctx, key, markedTx); err != nil {
+				if err := ti.infraStructure.KafkaProducer.PublishMessage(ctx, key, markedTx); err != nil {
 					log.Printf("Failed to publish transaction: %v", err)
 					continue
 				}
 				// Producer TPS 모니터링 - 개별 메시지마다 기록
-				ti.producerMonitor.RecordEvent()
+				ti.infraStructure.KafkaMonitor.RecordProducerTpsEvent()
 				successCount++
 			}
 
@@ -368,7 +373,7 @@ func (ti *TestingIngester) simulateConsumerReading(ctx context.Context, topic st
 		}
 
 		// Consumer TPS 모니터링 - ReadMessage 성공 시마다 기록
-		ti.consumerMonitor.RecordEvent()
+		ti.infraStructure.KafkaMonitor.RecordConsumerTpsEvent()
 	}
 }
 
@@ -420,7 +425,7 @@ func (ti *TestingIngester) MarkTransaction(rawTx domain.RawTransaction) domain.M
 }
 
 func (ti *TestingIngester) CheckIsContract(address domain.Address) domain.ContractBoolMark {
-	if ti.cceService.CheckIsContract(address) {
+	if ti.infraStructure.CCEService.CheckIsContract(address) {
 		return domain.ContractMark
 	}
 	return domain.EOAMark
@@ -448,7 +453,7 @@ func (ti *TestingIngester) loadTestBatch(_ int, limit int) []domain.RawTransacti
 	for remainingToLoad > 0 {
 		// 파일명 생성 (eth_tx_000000000000.csv 형식)
 		fileName := fmt.Sprintf("eth_tx_%012d.csv", ti.currentFileIndex)
-		filePath := filepath.Join(ti.transactionSource, fileName)
+		filePath := filepath.Join(ti.infraStructure.TransactionSource, fileName)
 
 		// 파일이 존재하는지 확인
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
@@ -548,5 +553,5 @@ func (ti *TestingIngester) publishBatch(ctx context.Context, rawTxs []domain.Raw
 	}
 
 	// 배치 전송
-	return ti.batchProducer.PublishMessagesBatch(ctx, messages)
+	return ti.infraStructure.BatchProducer.PublishMessagesBatch(ctx, messages)
 }

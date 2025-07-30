@@ -88,34 +88,21 @@ func (dm *DualManager) Close() error {
 }
 
 // CheckTransaction is the main entry point for transaction analysis
-func (dm *DualManager) CheckTransaction(txMondad monad.Monad[*domain.MarkedTransaction]) monad.Monad[*domain.MarkedTransaction] {
+func (dm *DualManager) CheckTransaction(tx *domain.MarkedTransaction) (*domain.MarkedTransaction, error) {
 	dm.mutex.Lock()
 	defer dm.mutex.Unlock()
-	tx, _ := txMondad.Unwrap()
 
 	// Only process EOA-EOA transactions
 	//todo 근데 이거 중복 체킹이긴 함. 프로덕션 후 문제 없으면 충분히 제거 가능
 	//todo ProcessSingle에서 미리 검사함. 애초에 카프카 큐에서 분리 시 신뢰도 가능하고
 	if tx.TxSyntax[0] != domain.EOAMark || tx.TxSyntax[1] != domain.EOAMark {
-		return monad.Err[*domain.MarkedTransaction](nil)
+		return nil, monad.ErrorSkipStep
 	}
-	return monad.Ok(tx)
-	//return dm.handleAddress(tx)
-}
-
-func HandleMarkedTxMonadError(errOrNil error) monad.Monad[*domain.MarkedTransaction] {
-	if errOrNil != nil {
-		return monad.Err[*domain.MarkedTransaction](errOrNil)
-	}
-	return monad.Ok[*domain.MarkedTransaction](nil)
+	return tx, nil
 }
 
 // HandleAddress processes transaction addresses according to their types
-func (dm *DualManager) HandleAddress(txMondad monad.Monad[*domain.MarkedTransaction]) monad.Monad[*domain.MarkedTransaction] {
-	tx, err := txMondad.Unwrap()
-	if err != nil {
-		return monad.Err[*domain.MarkedTransaction](err)
-	}
+func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.MarkedTransaction, error) {
 	fromAddr := tx.From
 	toAddr := tx.To
 
@@ -137,7 +124,7 @@ func (dm *DualManager) HandleAddress(txMondad monad.Monad[*domain.MarkedTransact
 			fmt.Printf("   → Case 1: CEX → Address (txFromCexAddress)\n")
 		}
 		err := dm.handleExceptionalAddress(toAddr, "txFromCexAddress")
-		return HandleMarkedTxMonadError(err)
+		return nil, monad.HandleErrOrNilToSkipStep(err)
 	}
 
 	// Case 2: to가 CEX인 경우 - 새로운 입금주소 탐지
@@ -146,7 +133,7 @@ func (dm *DualManager) HandleAddress(txMondad monad.Monad[*domain.MarkedTransact
 			fmt.Printf("   → Case 2: Deposit Detection (Address → CEX)\n")
 		}
 		err := dm.handleDepositDetection(toAddr, fromAddr, tx)
-		return HandleMarkedTxMonadError(err)
+		return nil, monad.HandleErrOrNilToSkipStep(err)
 	}
 
 	// Case 3: from이 detectedDepositAddress인 경우 - to는 "txFromDepositAddress"로 특수 처리
@@ -155,7 +142,7 @@ func (dm *DualManager) HandleAddress(txMondad monad.Monad[*domain.MarkedTransact
 			fmt.Printf("   → Case 3: Detected Deposit → Address (txFromDepositAddress)\n")
 		}
 		err := dm.handleExceptionalAddress(toAddr, "txFromDepositAddress")
-		return HandleMarkedTxMonadError(err)
+		return nil, monad.HandleErrOrNilToSkipStep(err)
 	}
 
 	// Case 4: to가 detectedDepositAddress인 경우 - from,to 듀얼을 그래프DB에 저장
@@ -164,15 +151,14 @@ func (dm *DualManager) HandleAddress(txMondad monad.Monad[*domain.MarkedTransact
 			fmt.Printf("   → Case 4: Address → Detected Deposit (saveToGraphDB)\n")
 		}
 		err := dm.saveToGraphDB(fromAddr, toAddr, tx)
-		return HandleMarkedTxMonadError(err)
+		return nil, monad.HandleErrOrNilToSkipStep(err)
 	}
 
 	// Case 5: 일반 트랜잭션 - DualManager 윈도우 버퍼에 추가
 	if debugEnabled {
 		fmt.Printf("   → Case 5: Regular Transaction (addToWindowBuffer)\n")
 	}
-	return monad.Ok(tx)
-	//return dm.addToWindowBuffer(tx)
+	return tx, nil
 }
 
 // handleExceptionalAddress processes exceptional addresses (to be implemented)
@@ -255,15 +241,7 @@ func (dm *DualManager) saveConnectionToGraphDB(fromAddr, toAddr domain.Address, 
 }
 
 // AddToWindowBuffer adds transaction to the sliding window buffer
-func (dm *DualManager) AddToWindowBuffer(txMonad monad.Monad[*domain.MarkedTransaction]) monad.Monad[*domain.MarkedTransaction] {
-	tx, err := txMonad.Unwrap()
-	if err != nil {
-		return monad.Err[*domain.MarkedTransaction](err)
-	}
-	//모나드 체이닝 과정에서 완료 but 그 자체로 이전 단계에서 완료되어 Ok(nil)리턴 시 즉시 리턴.
-	if tx == nil {
-		return monad.Ok[*domain.MarkedTransaction](nil)
-	}
+func (dm *DualManager) AddToWindowBuffer(tx *domain.MarkedTransaction) (*domain.MarkedTransaction, error) {
 	txTime := tx.BlockTime
 	toAddrStr := tx.To.String()
 	fromAddrStr := tx.From.String()
@@ -277,15 +255,15 @@ func (dm *DualManager) AddToWindowBuffer(txMonad monad.Monad[*domain.MarkedTrans
 
 	// 1. Update firstActiveTimeBuckets (핵심 도메인 로직)
 	if err := dm.updateFirstActiveTimeBuckets(toAddrStr, txTime); err != nil {
-		return monad.Err[*domain.MarkedTransaction](err)
+		return nil, err
 	}
 
 	// 2. Add to pending relations in BadgerDB
 	if err := dm.addToPendingRelations(toAddrStr, fromAddrStr); err != nil {
-		return monad.Err[*domain.MarkedTransaction](err)
+		return nil, err
 	}
 
-	return monad.Ok[*domain.MarkedTransaction](nil)
+	return nil, monad.ErrorSkipStep
 }
 
 // 디버깅용 전역 카운터

@@ -1,4 +1,4 @@
-package monitoring
+package meter
 
 import (
 	"sync/atomic"
@@ -10,13 +10,13 @@ type SimpleTPSMeter struct {
 	// 원자적 카운터들
 	currentCounter int64 // 현재 1초 동안의 카운터
 	totalCounter   int64 // 전체 누적 카운터
-	
+
 	// 현재 TPS (마지막 1초 동안의 처리량)
 	currentTPS int64 // atomic으로 관리
-	
+
 	// 시작 시간
 	startTime time.Time
-	
+
 	// Ticker 제어
 	ticker  *time.Ticker
 	stopCh  chan struct{}
@@ -30,22 +30,22 @@ func NewSimpleTPSMeter() TPSMeter {
 		ticker:    time.NewTicker(1 * time.Second), // 1초마다 tick
 		stopCh:    make(chan struct{}),
 	}
-	
+
 	// 1초마다 TPS 계산하는 고루틴 시작
 	atomic.StoreInt32(&meter.running, 1)
 	go meter.tickerRoutine()
-	
+
 	return meter
 }
 
-// RecordEvent 이벤트 발생 기록 (워커가 호출)
-func (m *SimpleTPSMeter) RecordEvent() {
+// RecordTpsEvent 이벤트 발생 기록 (워커가 호출)
+func (m *SimpleTPSMeter) RecordTpsEvent() {
 	atomic.AddInt64(&m.currentCounter, 1)
 	atomic.AddInt64(&m.totalCounter, 1)
 }
 
-// RecordEvents 여러 이벤트를 한 번에 기록
-func (m *SimpleTPSMeter) RecordEvents(count int) {
+// RecordTpsEvents 여러 이벤트를 한 번에 기록
+func (m *SimpleTPSMeter) RecordTpsEvents(count int) {
 	if count <= 0 {
 		return
 	}
@@ -64,12 +64,12 @@ func (m *SimpleTPSMeter) GetAverageTPS() float64 {
 	if totalEvents == 0 {
 		return 0.0
 	}
-	
+
 	duration := time.Since(m.startTime).Seconds()
 	if duration <= 0 {
 		return 0.0
 	}
-	
+
 	return float64(totalEvents) / duration
 }
 
@@ -102,21 +102,9 @@ func (m *SimpleTPSMeter) tickerRoutine() {
 			// 현재 카운터를 TPS로 설정하고 카운터 리셋
 			currentCount := atomic.SwapInt64(&m.currentCounter, 0)
 			atomic.StoreInt64(&m.currentTPS, currentCount)
-			
+
 		case <-m.stopCh:
 			return
 		}
-	}
-}
-
-// GetStats 현재 통계 정보 반환
-func (m *SimpleTPSMeter) GetStats(component string) MonitoringStats {
-	return MonitoringStats{
-		Timestamp:     time.Now(),
-		CurrentTPS:    m.GetCurrentTPS(),
-		AverageTPS:    m.GetAverageTPS(),
-		TotalEvents:   m.GetTotalEvents(),
-		WindowSeconds: 1.0, // 1초 윈도우
-		Component:     component,
 	}
 }
