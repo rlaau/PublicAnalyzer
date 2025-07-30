@@ -36,7 +36,7 @@ func NewTimeBucket(startTime time.Time) *TimeBucket {
 
 // DualManager manages EOA relationships through sliding window analysis
 type DualManager struct {
-	groundKnowledge *GroundKnowledge
+	groundKnowledge *DomainKnowledge
 	graphRepo       GraphRepository
 
 	// Sliding window management (순환 큐 구조)
@@ -54,7 +54,7 @@ type DualManager struct {
 }
 
 // NewDualManager creates a new dual manager instance
-func NewDualManager(groundKnowledge *GroundKnowledge, graphRepo GraphRepository, pendingRelationsDBPath string) (*DualManager, error) {
+func NewDualManager(groundKnowledge *DomainKnowledge, graphRepo GraphRepository, pendingRelationsDBPath string) (*DualManager, error) {
 	// Open BadgerDB for pending relations
 	opts := badger.DefaultOptions(pendingRelationsDBPath)
 	opts.Logger = nil

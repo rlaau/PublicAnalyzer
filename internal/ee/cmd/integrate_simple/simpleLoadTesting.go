@@ -40,25 +40,25 @@ func main() {
 		MaxProcessingTime:   50_000_000,
 		StatsInterval:       3_000_000_000, // 3초
 		HealthCheckInterval: 5_000_000_000, // 5초
-		DataPath:            testDir,
+		FileDBPath:          testDir,
 		GraphDBPath:         filepath.Join(testDir, "graph"),
 		PendingDBPath:       filepath.Join(testDir, "pending"),
 		AutoCleanup:         true,
 		ResultReporting:     true,
 	}
 
+	// 컨텍스트 설정 (15초 테스트)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
 	// 분석기 생성
-	analyzer, err := app.CreateAnalyzer(config)
+	analyzer, err := app.CreateAnalyzer(config, ctx)
 	if err != nil {
 		log.Fatalf("❌ Failed to create analyzer: %v", err)
 	}
 	defer analyzer.Close()
 
 	log.Println("✅ Analyzer created successfully")
-
-	// 컨텍스트 설정 (15초 테스트)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
 
 	// 분석기 시작
 	analyzerDone := make(chan error, 1)

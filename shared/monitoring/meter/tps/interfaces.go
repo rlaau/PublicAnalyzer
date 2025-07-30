@@ -1,4 +1,4 @@
-package meter
+package tps
 
 // TPSMeter TPS 측정을 위한 인터페이스
 type TPSMeter interface {

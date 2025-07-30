@@ -14,34 +14,36 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/workerpool"
 )
 
 // SimpleEOAAnalyzer 간단한 EOA 분석기 구현체
-// ! 테스트용과 프로덕션용 모두 지원하는 기본 구현
+// * 테스트용과 프로덕션용 모두 지원하는 기본 구현
 type SimpleEOAAnalyzer struct {
 	// Core domain components
-	groundKnowledge *domain.GroundKnowledge
-	dualManager     *domain.DualManager
-	graphRepo       domain.GraphRepository
+	//*gk
+	dualManager *domain.DualManager
+	//*gr
 
 	// WorkerPool integration
-	txJobChannel chan workerpool.Job
-	workerPool   *workerpool.Pool
+	//내부 채널임
+	//*tj
+	//*wp
 	stopChannel  chan struct{}
 	stopOnce     sync.Once
 	shutdownOnce sync.Once
 	wg           sync.WaitGroup
 
 	// Transaction consumer (Kafka 기반)
-	batchConsumer *kafka.KafkaBatchConsumer[*shareddomain.MarkedTransaction] // 배치 모드용 컨슈머
-	batchMode     bool                                                       // 배치 모드 활성화 여부
+	//*bc
+	batchMode bool // 배치 모드 활성화 여부
 
 	// Configuration
 	config *EOAAnalyzerConfig
 
 	// Statistics (thread-safe atomic counters)
 	stats SimpleAnalyzerStats
+
+	infra infra.EOAAnalyzerInfra
 }
 
 // SimpleAnalyzerStats 간단한 분석기 통계
@@ -57,106 +59,111 @@ type SimpleAnalyzerStats struct {
 }
 
 // NewProductionEOAAnalyzer 프로덕션용 분석기 생성
-func NewProductionEOAAnalyzer(config *EOAAnalyzerConfig) (EOAAnalyzer, error) {
-	return newSimpleAnalyzer(config)
+func NewProductionEOAAnalyzer(config *EOAAnalyzerConfig, ctx context.Context) (EOAAnalyzer, error) {
+	infraStructure := NewInfraByConfig(config, ctx)
+	return newSimpleAnalyzer(config, infraStructure)
 }
 
 // NewTestingEOAAnalyzer 테스트용 분석기 생성
-func NewTestingEOAAnalyzer(config *EOAAnalyzerConfig) (EOAAnalyzer, error) {
-	return newSimpleAnalyzer(config)
+func NewTestingEOAAnalyzer(config *EOAAnalyzerConfig, ctx context.Context) (EOAAnalyzer, error) {
+	infraStructure := NewInfraByConfig(config, ctx)
+	return newSimpleAnalyzer(config, infraStructure)
 }
 
 // newSimpleAnalyzer 공통 분석기 생성 로직
-func newSimpleAnalyzer(config *EOAAnalyzerConfig) (*SimpleEOAAnalyzer, error) {
-	log.Printf("🚀 Initializing Simple EOA Analyzer: %s (Mode: %s)", config.Name, config.Mode)
+func newSimpleAnalyzer(config *EOAAnalyzerConfig, infraStructure infra.EOAAnalyzerInfra) (*SimpleEOAAnalyzer, error) {
+	// log.Printf("🚀 Initializing Simple EOA Analyzer: %s (Mode: %s)", config.Name, config.Mode)
 
-	// 데이터 디렉토리 생성
-	if err := os.MkdirAll(config.DataPath, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create data directory: %w", err)
-	}
-
-	// CEX 저장소 초기화 - 설정에서 파일 경로 사용
-	cexFilePath := config.CEXFilePath
-	if cexFilePath == "" {
-		// 기본 경로 사용 (후방 호환성)
-		cexFilePath = "internal/ee/cex.txt"
-	}
-	cexRepo := infra.NewFileCEXRepository(cexFilePath)
-	cexSet, err := cexRepo.LoadCEXSet()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load CEX set from %s: %w", cexFilePath, err)
-	}
-	log.Printf("📦 Loaded %d CEX addresses", cexSet.Size())
-
-	// Deposit 저장소 초기화 - 모드에 따른 경로 설정
-	var detectedDepositFilePath string
-	if config.Mode == TestingMode {
-		detectedDepositFilePath = config.DataPath + "/test_detected_deposits.csv"
-	} else {
-		detectedDepositFilePath = config.DataPath + "/production_detected_deposits.csv"
-	}
-	depositRepo := infra.NewFileDepositRepository(detectedDepositFilePath)
-
-	// GroundKnowledge 생성
-	groundKnowledge := domain.NewGroundKnowledge(cexSet, depositRepo)
-	if err := groundKnowledge.Load(); err != nil {
-		return nil, fmt.Errorf("failed to load ground knowledge: %w", err)
-	}
-	log.Printf("🧠 Ground knowledge loaded")
-
-	// Graph Repository 초기화
-	graphRepo, err := infra.NewBadgerGraphRepository(config.GraphDBPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create graph repository: %w", err)
-	}
-	log.Printf("🗂️  Graph repository at: %s", config.GraphDBPath)
-
+	// // CEX 저장소 초기화 - 설정에서 파일 경로 사용
+	// cexFilePath := config.CEXFilePath
+	// if cexFilePath == "" {
+	// 	// 기본 경로 사용 (후방 호환성)
+	// 	cexFilePath = "internal/ee/cex.txt"
+	// }
+	// cexRepo := infra.NewFileCEXRepository(cexFilePath)
+	// cexSet, err := cexRepo.LoadCEXSet()
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to load CEX set from %s: %w", cexFilePath, err)
+	// }
+	// log.Printf("📦 Loaded %d CEX addresses", cexSet.Size())
+	// //******
+	// // 데이터 디렉토리 생성
+	// if err := os.MkdirAll(config.FileDBPath, 0755); err != nil {
+	// 	return nil, fmt.Errorf("failed to create data directory: %w", err)
+	// }
+	// // Deposit 저장소 초기화 - 모드에 따른 경로 설정
+	// var detectedDepositFilePath string
+	// //TODO 로직은 그럴듯 하지만, FileDBPath자체가 Isolated 폴더 내부라 실은 효용이 없음. 추후 isolated관련 feed_XX_XX.go수정 필요.
+	// //TODO 테스트 시에만 isolated되게 해야 함.
+	// if config.Mode == TestingMode {
+	// 	detectedDepositFilePath = config.FileDBPath + "/test_detected_deposits.csv"
+	// } else {
+	// 	detectedDepositFilePath = config.FileDBPath + "/production_detected_deposits.csv"
+	// }
+	// depositRepo := infra.NewFileDepositRepository(detectedDepositFilePath)
+	// //****
+	// // GroundKnowledge 생성
+	// groundKnowledge := domain.NewDomainKnowledge(cexSet, depositRepo)
+	// if err := groundKnowledge.Load(); err != nil {
+	// 	return nil, fmt.Errorf("failed to load ground knowledge: %w", err)
+	// }
+	// log.Printf("🧠 Ground knowledge loaded")
+	// //**********
+	// // Graph Repository 초기화
+	// graphRepo, err := infra.NewBadgerGraphRepository(config.GraphDBPath)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to create graph repository: %w", err)
+	// }
+	// log.Printf("🗂️  Graph repository at: %s", config.GraphDBPath)
+	// //*******
 	// DualManager 초기화
-	dualManager, err := domain.NewDualManager(groundKnowledge, graphRepo, config.PendingDBPath)
+	//TODO 여기도 infra기반 리팩 터링 후 수저앟기
+	//TODO config.PendingDBPath에 의존하지 말고 걍 infra의 pendingDB에 의존해야 함. 마지막에 하기
+	//TODO 이건 dualManger의 infra로직임. config대신 dualMangerInfra로 주기. 또한, SimpleAnalyzer의 모듈을 그럼 두 개로 구분해야함
+	//TODO 프로세서 인프라, 듀얼메니져 인프라로 구분해서 전달하기
+	dualManager, err := domain.NewDualManager(infraStructure.GroundKnowledge, infraStructure.GraphRepo, config.PendingDBPath)
 	if err != nil {
-		graphRepo.Close()
+		infraStructure.GraphRepo.Close()
 		return nil, fmt.Errorf("failed to create dual manager: %w", err)
 	}
 	log.Printf("🔄 DualManager with pending DB at: %s", config.PendingDBPath)
 
-	// Transaction Consumer 초기화 - 모드에 따라 다른 토픽 사용
-	kafkaBrokers := []string{"localhost:9092"}
-	isTestMode := (config.Mode == TestingMode)
-	groupID := fmt.Sprintf("ee-analyzer-%s", strings.ReplaceAll(config.Name, " ", "-"))
+	// // Transaction Consumer 초기화 - 모드에 따라 다른 토픽 사용
+	// kafkaBrokers := []string{"localhost:9092"}
+	// isTestMode := (config.Mode == TestingMode)
+	// groupID := fmt.Sprintf("ee-analyzer-%s", strings.ReplaceAll(config.Name, " ", "-"))
 
-	// 배치 모드 Consumer 초기화 (고성능)
-	batchSize := 100                      // 100개씩 배치 처리
-	batchTimeout := 20 * time.Millisecond // 20ms 타임아웃
+	// // 배치 모드 Consumer 초기화 (고성능)
+	// batchSize := 100                      // 100개씩 배치 처리
+	// batchTimeout := 20 * time.Millisecond // 20ms 타임아웃
 
-	var topic string
-	if isTestMode {
-		topic = "fed-tx" // 테스트용 토픽
-	} else {
-		topic = "ingested-transactions" // 프로덕션용 토픽
-	}
+	// var topic string
+	// if isTestMode {
+	// 	topic = "fed-tx" // 테스트용 토픽
+	// } else {
+	// 	topic = "ingested-transactions" // 프로덕션용 토픽
+	// }
 
-	consumerConfig := kafka.KafkaBatchConfig{
-		Brokers:      kafkaBrokers,
-		Topic:        topic,
-		GroupID:      groupID,
-		BatchSize:    batchSize,
-		BatchTimeout: batchTimeout,
-	}
-	batchConsumer := kafka.NewKafkaBatchConsumer[*shareddomain.MarkedTransaction](consumerConfig)
+	// consumerConfig := kafka.KafkaBatchConfig{
+	// 	Brokers:      kafkaBrokers,
+	// 	Topic:        topic,
+	// 	GroupID:      groupID,
+	// 	BatchSize:    batchSize,
+	// 	BatchTimeout: batchTimeout,
+	// }
+
+	//batchConsumer := kafka.NewKafkaBatchConsumer[*shareddomain.MarkedTransaction](consumerConfig)
 
 	// 기존 단건 Consumer도 호환성을 위해 유지
 
-	log.Printf("📡 Batch consumer initialized (test mode: %v, batch size: %d)", isTestMode, batchSize)
+	// log.Printf("📡 Batch consumer initialized (test mode: %v, batch size: %d)", isTestMode, batchSize)
 
 	analyzer := &SimpleEOAAnalyzer{
-		groundKnowledge: groundKnowledge,
-		dualManager:     dualManager,
-		graphRepo:       graphRepo,
-		txJobChannel:    make(chan workerpool.Job, config.ChannelBufferSize),
-		stopChannel:     make(chan struct{}),
-		batchConsumer:   batchConsumer,
-		batchMode:       true, // 기본값: 배치 모드 활성화
-		config:          config,
+		infra:       infraStructure,
+		dualManager: dualManager,
+		stopChannel: make(chan struct{}),
+		batchMode:   true, // 기본값: 배치 모드 활성화
+		config:      config,
 		stats: SimpleAnalyzerStats{
 			StartTime: time.Now(),
 		},
@@ -171,7 +178,7 @@ func (a *SimpleEOAAnalyzer) Start(ctx context.Context) error {
 	log.Printf("🚀 Starting Simple Analyzer: %s", a.config.Name)
 
 	// Consumer 시작 (배치 모드 or 단건 모드)
-	if a.batchMode && a.batchConsumer != nil {
+	if a.batchMode && a.infra.BatchConsumer != nil {
 		// 배치 모드: 배치 Consumer 시작
 		a.wg.Add(1)
 		go a.batchConsumerWorker(ctx)
@@ -181,8 +188,9 @@ func (a *SimpleEOAAnalyzer) Start(ctx context.Context) error {
 	}
 
 	// 워커풀 시작
-	a.workerPool = workerpool.New(ctx, a.config.WorkerCount, a.txJobChannel)
-	log.Printf("🔧 WorkerPool initialized with %d workers", a.config.WorkerCount)
+	//**여기도 제거했음
+	//a.workerPool = workerpool.New(ctx, a.config.WorkerCount, a.txJobChannel)
+	//log.Printf("🔧 WorkerPool initialized with %d workers", a.config.WorkerCount)
 
 	// 통계 리포터 시작
 	a.wg.Add(1)
@@ -213,7 +221,7 @@ func (a *SimpleEOAAnalyzer) Stop() error {
 func (a *SimpleEOAAnalyzer) ProcessTransaction(tx *shareddomain.MarkedTransaction) error {
 	job := NewTransactionJob(tx, a, 0) // workerID는 워커풀에서 자동 관리
 	select {
-	case a.txJobChannel <- job:
+	case a.infra.TxJobChannel <- job:
 		return nil
 	default:
 		atomic.AddInt64(&a.stats.DroppedTxs, 1)
@@ -250,7 +258,7 @@ func (a *SimpleEOAAnalyzer) batchConsumerWorker(ctx context.Context) {
 			return
 		default:
 			// 배치 메시지 읽기 (블로킹)
-			messages, err := a.batchConsumer.ReadMessagesBatch(ctx)
+			messages, err := a.infra.BatchConsumer.ReadMessagesBatch(ctx)
 			if err != nil {
 				// Context cancellation은 정상적인 종료
 				if ctx.Err() != nil {
@@ -299,7 +307,7 @@ func (a *SimpleEOAAnalyzer) processBatch(messages []kafka.Message[*shareddomain.
 		// 워커풀로 작업 전달
 		job := NewTransactionJob(tx, a, 0)
 		select {
-		case a.txJobChannel <- job:
+		case a.infra.TxJobChannel <- job:
 			// 성공
 		default:
 			// 채널이 가득 찬 경우 드롭
@@ -324,7 +332,7 @@ func (a *SimpleEOAAnalyzer) analyzeTransactionResult(tx *shareddomain.MarkedTran
 	processedCount := atomic.LoadInt64(&a.stats.SuccessCount)
 
 	// 입금 주소 탐지
-	isCEX := a.groundKnowledge.IsCEXAddress(tx.To)
+	isCEX := a.infra.GroundKnowledge.IsCEXAddress(tx.To)
 	if processedCount <= 5 {
 		log.Printf("🔍 CEX Check #%d: To=%s → IsCEX=%t",
 			processedCount, tx.To.String(), isCEX)
@@ -338,7 +346,7 @@ func (a *SimpleEOAAnalyzer) analyzeTransactionResult(tx *shareddomain.MarkedTran
 	}
 
 	// 그래프/윈도우 업데이트 분류
-	if a.groundKnowledge.IsDepositAddress(tx.To) {
+	if a.infra.GroundKnowledge.IsDepositAddress(tx.To) {
 		graphCount := atomic.AddInt64(&a.stats.GraphUpdates, 1)
 		log.Printf("📊 GRAPH UPDATE #%d: From: %s → Deposit: %s",
 			graphCount, tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
@@ -381,8 +389,8 @@ func (a *SimpleEOAAnalyzer) printStatistics() {
 	dropped := atomic.LoadInt64(&a.stats.DroppedTxs)
 
 	uptime := time.Since(a.stats.StartTime)
-	channelUsage := len(a.txJobChannel)
-	channelCapacity := cap(a.txJobChannel)
+	channelUsage := len(a.infra.TxJobChannel)
+	channelCapacity := cap(a.infra.TxJobChannel)
 	usagePercent := float64(channelUsage) / float64(channelCapacity) * 100
 
 	log.Printf("📊 [%s] %s Statistics:", a.config.Mode, a.config.Name)
@@ -405,7 +413,7 @@ func (a *SimpleEOAAnalyzer) printStatistics() {
 	}
 
 	// Graph 통계
-	if graphStats, err := a.graphRepo.GetGraphStats(); err == nil {
+	if graphStats, err := a.infra.GraphRepo.GetGraphStats(); err == nil {
 		log.Printf("   Graph: %v nodes | %v edges",
 			graphStats["total_nodes"], graphStats["total_edges"])
 	}
@@ -424,8 +432,8 @@ func (a *SimpleEOAAnalyzer) GetStatistics() map[string]any {
 		"window_updates":     atomic.LoadInt64(&a.stats.WindowUpdates),
 		"dropped_txs":        atomic.LoadInt64(&a.stats.DroppedTxs),
 		"uptime_seconds":     time.Since(a.stats.StartTime).Seconds(),
-		"channel_usage":      len(a.txJobChannel),
-		"channel_capacity":   cap(a.txJobChannel),
+		"channel_usage":      len(a.infra.TxJobChannel),
+		"channel_capacity":   cap(a.infra.TxJobChannel),
 	}
 }
 
@@ -438,7 +446,7 @@ func (a *SimpleEOAAnalyzer) IsHealthy() bool {
 		return true // 아직 트랜잭션이 없으면 건강함
 	}
 
-	channelUsage := float64(len(a.txJobChannel)) / float64(cap(a.txJobChannel))
+	channelUsage := float64(len(a.infra.TxJobChannel)) / float64(cap(a.infra.TxJobChannel))
 	errorRate := float64(errors) / float64(total)
 
 	// 채널 사용률 90% 이하, 에러율 10% 이하
@@ -447,7 +455,7 @@ func (a *SimpleEOAAnalyzer) IsHealthy() bool {
 
 // GetChannelStatus 채널 상태 반환
 func (a *SimpleEOAAnalyzer) GetChannelStatus() (int, int) {
-	return len(a.txJobChannel), cap(a.txJobChannel)
+	return len(a.infra.TxJobChannel), cap(a.infra.TxJobChannel)
 }
 
 // shutdown 우아한 종료
@@ -455,14 +463,14 @@ func (a *SimpleEOAAnalyzer) shutdown() error {
 	log.Printf("🔄 Shutting down: %s", a.config.Name)
 
 	// 워커풀 종료
-	if a.workerPool != nil {
-		a.workerPool.Shutdown()
+	if a.infra.WorkerPool != nil {
+		a.infra.WorkerPool.Shutdown()
 		log.Printf("🔧 WorkerPool shutdown completed")
 	}
 
 	// 새 트랜잭션 수신 중지 (한 번만)
 	a.shutdownOnce.Do(func() {
-		close(a.txJobChannel)
+		close(a.infra.TxJobChannel)
 	})
 
 	// 모든 워커 완료 대기
@@ -490,7 +498,7 @@ func (a *SimpleEOAAnalyzer) shutdown() error {
 		log.Printf("⚠️ Error closing dual manager: %v", err)
 	}
 
-	if err := a.graphRepo.Close(); err != nil {
+	if err := a.infra.GraphRepo.Close(); err != nil {
 		log.Printf("⚠️ Error closing graph repository: %v", err)
 	}
 
@@ -540,7 +548,7 @@ func (a *SimpleEOAAnalyzer) printFinalReport() {
 	}
 
 	// Graph 최종 통계
-	if graphStats, err := a.graphRepo.GetGraphStats(); err == nil {
+	if graphStats, err := a.infra.GraphRepo.GetGraphStats(); err == nil {
 		log.Printf("\n🗂️  Graph Database State:")
 		for key, value := range graphStats {
 			log.Printf("   %s: %v", key, value)
@@ -556,9 +564,9 @@ func (a *SimpleEOAAnalyzer) cleanup() {
 		return
 	}
 
-	log.Printf("🧹 Cleaning up test data: %s", a.config.DataPath)
+	log.Printf("🧹 Cleaning up test data: %s", a.config.FileDBPath)
 
-	if err := os.RemoveAll(a.config.DataPath); err != nil {
+	if err := os.RemoveAll(a.config.FileDBPath); err != nil {
 		log.Printf("⚠️ Failed to cleanup test data: %v", err)
 	} else {
 		log.Printf("✅ Test data cleaned up")
@@ -569,8 +577,8 @@ func (a *SimpleEOAAnalyzer) cleanup() {
 func (a *SimpleEOAAnalyzer) Close() error {
 
 	// Batch Consumer 정리
-	if a.batchConsumer != nil {
-		if err := a.batchConsumer.Close(); err != nil {
+	if a.infra.BatchConsumer != nil {
+		if err := a.infra.BatchConsumer.Close(); err != nil {
 			log.Printf("⚠️ Error closing batch consumer: %v", err)
 		}
 	}

@@ -50,8 +50,10 @@ type EOAAnalyzerConfig struct {
 	StatsInterval       int64 // 통계 출력 간격 (나노초)
 	HealthCheckInterval int64 // 헬스체크 간격 (나노초)
 
-	// 저장소 설정
-	DataPath      string // 데이터 저장 경로
+	// *FileDBPath는 모듈 데이터베이스의 루트 경로임
+	// 로직: findRoot를 통해 루트를 찾고, 그 안에 새로운 데이터 폴더를 생성하거나 찾는 것.
+	// 테스트 시엔 고립된 DB통해서 얻고, 상용 시엔 다른 path에서 얻기
+	FileDBPath    string // 데이터 저장 경로
 	GraphDBPath   string // 그래프 DB 경로
 	PendingDBPath string // 펜딩 관계 DB 경로
 	CEXFilePath   string // CEX 주소 파일 경로
@@ -71,7 +73,7 @@ func ProductionConfig(name string) *EOAAnalyzerConfig {
 		MaxProcessingTime:   200_000_000,    // 200ms in nanoseconds
 		StatsInterval:       60_000_000_000, // 60s in nanoseconds
 		HealthCheckInterval: 30_000_000_000, // 30s in nanoseconds
-		DataPath:            "data/ee",
+		FileDBPath:          "data/ee",
 		GraphDBPath:         "data/ee/graph",
 		PendingDBPath:       "data/ee/pending",
 		AutoCleanup:         false,
@@ -89,7 +91,7 @@ func TestingConfig(name string) *EOAAnalyzerConfig {
 		MaxProcessingTime:   100_000_000,    // 100ms in nanoseconds
 		StatsInterval:       5_000_000_000,  // 5s in nanoseconds
 		HealthCheckInterval: 10_000_000_000, // 10s in nanoseconds
-		DataPath:            "test_data/ee",
+		FileDBPath:          "test_data/ee",
 		GraphDBPath:         "test_data/ee/graph",
 		PendingDBPath:       "test_data/ee/pending",
 		AutoCleanup:         true,
@@ -101,12 +103,12 @@ func TestingConfig(name string) *EOAAnalyzerConfig {
 type AnalyzerFactory func(config *EOAAnalyzerConfig) (EOAAnalyzer, error)
 
 // CreateAnalyzer 설정에 따라 적절한 분석기 생성
-func CreateAnalyzer(config *EOAAnalyzerConfig) (EOAAnalyzer, error) {
+func CreateAnalyzer(config *EOAAnalyzerConfig, ctx context.Context) (EOAAnalyzer, error) {
 	switch config.Mode {
 	case ProductionMode:
-		return NewProductionEOAAnalyzer(config)
+		return NewProductionEOAAnalyzer(config, ctx)
 	case TestingMode:
-		return NewTestingEOAAnalyzer(config)
+		return NewTestingEOAAnalyzer(config, ctx)
 	default:
 		return nil, ErrInvalidAnalyzerMode{Mode: string(config.Mode)}
 	}

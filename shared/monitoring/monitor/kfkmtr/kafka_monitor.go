@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring/meter"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring/meter/tps"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring/monitor"
 )
 
@@ -30,8 +30,8 @@ type TpsStats struct {
 
 // KafkaMonitor Kafka Producer/Consumer TPS 모니터링
 type KafkaMonitor struct {
-	ProducerTPS meter.TPSMeter // Producer TPS 측정기
-	ConsumerTPS meter.TPSMeter // Consumer TPS 측정기
+	ProducerTPS tps.TPSMeter // Producer TPS 측정기
+	ConsumerTPS tps.TPSMeter // Consumer TPS 측정기
 
 	// TPS 리포팅 설정
 	tpsReportInterval time.Duration
@@ -46,8 +46,8 @@ type KafkaMonitor struct {
 // NewKafkaMonitor 새로운 Kafka 모니터 생성
 func NewKafkaMonitor() *KafkaMonitor {
 	return &KafkaMonitor{
-		ProducerTPS:  meter.NewSimpleTPSMeter(),
-		ConsumerTPS:  meter.NewSimpleTPSMeter(),
+		ProducerTPS:  tps.NewSafeTPSMeter(),
+		ConsumerTPS:  tps.NewSafeTPSMeter(),
 		reportStopCh: make(chan struct{}),
 	}
 }

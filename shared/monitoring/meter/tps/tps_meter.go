@@ -1,12 +1,12 @@
-package meter
+package tps
 
 import (
 	"sync/atomic"
 	"time"
 )
 
-// SimpleTPSMeter 원자적 카운터 기반 간단한 TPS 측정기
-type SimpleTPSMeter struct {
+// ThreadSafeTPSMeter 원자적 카운터 기반 간단한 TPS 측정기
+type ThreadSafeTPSMeter struct {
 	// 원자적 카운터들
 	currentCounter int64 // 현재 1초 동안의 카운터
 	totalCounter   int64 // 전체 누적 카운터
@@ -23,9 +23,9 @@ type SimpleTPSMeter struct {
 	running int32 // atomic flag
 }
 
-// NewSimpleTPSMeter 새로운 간단한 TPS 측정기 생성
-func NewSimpleTPSMeter() TPSMeter {
-	meter := &SimpleTPSMeter{
+// NewSafeTPSMeter 새로운 간단한 TPS 측정기 생성
+func NewSafeTPSMeter() TPSMeter {
+	meter := &ThreadSafeTPSMeter{
 		startTime: time.Now(),
 		ticker:    time.NewTicker(1 * time.Second), // 1초마다 tick
 		stopCh:    make(chan struct{}),
@@ -39,13 +39,13 @@ func NewSimpleTPSMeter() TPSMeter {
 }
 
 // RecordTpsEvent 이벤트 발생 기록 (워커가 호출)
-func (m *SimpleTPSMeter) RecordTpsEvent() {
+func (m *ThreadSafeTPSMeter) RecordTpsEvent() {
 	atomic.AddInt64(&m.currentCounter, 1)
 	atomic.AddInt64(&m.totalCounter, 1)
 }
 
 // RecordTpsEvents 여러 이벤트를 한 번에 기록
-func (m *SimpleTPSMeter) RecordTpsEvents(count int) {
+func (m *ThreadSafeTPSMeter) RecordTpsEvents(count int) {
 	if count <= 0 {
 		return
 	}
@@ -54,12 +54,12 @@ func (m *SimpleTPSMeter) RecordTpsEvents(count int) {
 }
 
 // GetCurrentTPS 현재 TPS 반환 (마지막 1초 동안의 처리량)
-func (m *SimpleTPSMeter) GetCurrentTPS() float64 {
+func (m *ThreadSafeTPSMeter) GetCurrentTPS() float64 {
 	return float64(atomic.LoadInt64(&m.currentTPS))
 }
 
 // GetAverageTPS 전체 평균 TPS 반환
-func (m *SimpleTPSMeter) GetAverageTPS() float64 {
+func (m *ThreadSafeTPSMeter) GetAverageTPS() float64 {
 	totalEvents := atomic.LoadInt64(&m.totalCounter)
 	if totalEvents == 0 {
 		return 0.0
@@ -74,12 +74,12 @@ func (m *SimpleTPSMeter) GetAverageTPS() float64 {
 }
 
 // GetTotalEvents 총 이벤트 수 반환
-func (m *SimpleTPSMeter) GetTotalEvents() int64 {
+func (m *ThreadSafeTPSMeter) GetTotalEvents() int64 {
 	return atomic.LoadInt64(&m.totalCounter)
 }
 
 // Reset 통계 초기화
-func (m *SimpleTPSMeter) Reset() {
+func (m *ThreadSafeTPSMeter) Reset() {
 	atomic.StoreInt64(&m.currentCounter, 0)
 	atomic.StoreInt64(&m.totalCounter, 0)
 	atomic.StoreInt64(&m.currentTPS, 0)
@@ -87,7 +87,7 @@ func (m *SimpleTPSMeter) Reset() {
 }
 
 // Close 리소스 정리
-func (m *SimpleTPSMeter) Close() {
+func (m *ThreadSafeTPSMeter) Close() {
 	if atomic.CompareAndSwapInt32(&m.running, 1, 0) {
 		m.ticker.Stop()
 		close(m.stopCh)
@@ -95,7 +95,7 @@ func (m *SimpleTPSMeter) Close() {
 }
 
 // tickerRoutine 1초마다 TPS 계산하는 고루틴
-func (m *SimpleTPSMeter) tickerRoutine() {
+func (m *ThreadSafeTPSMeter) tickerRoutine() {
 	for {
 		select {
 		case <-m.ticker.C:

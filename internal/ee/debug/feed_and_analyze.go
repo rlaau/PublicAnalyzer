@@ -55,9 +55,11 @@ func runFixedIntegrationTest() {
 func runFixedIntegrationTestInternal() error {
 	// 1. 테스트 설정 (개선됨)
 	config := setupIsolatedEviromentConfig()
+	ctx, cancel := context.WithTimeout(context.Background(), config.TestDuration)
+	defer cancel()
 
 	// 2. 파이프라인 생성
-	generator, analyzer, analyzerChannel, err := createSimplifiedPipeline(config)
+	generator, analyzer, analyzerChannel, err, ctx := createSimplifiedPipeline(config, ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create pipeline: %w", err)
 	}
@@ -81,7 +83,7 @@ func runFixedIntegrationTestInternal() error {
 	}()
 
 	// 4. 통합 테스트 실행
-	if err := runSimplifiedPipelineTest(generator, analyzer, analyzerChannel, config); err != nil {
+	if err := runSimplifiedPipelineTest(generator, analyzer, analyzerChannel, config, ctx); err != nil {
 		return fmt.Errorf("pipeline test failed: %w", err)
 	}
 
@@ -118,7 +120,7 @@ func setupIsolatedEviromentConfig() *IsolatedTestConfig {
 }
 
 // createSimplifiedPipeline 새로운 채널 등록 방식으로 간소화된 파이프라인 생성
-func createSimplifiedPipeline(config *IsolatedTestConfig) (*txFeeder.TxFeeder, app.EOAAnalyzer, chan *shareddomain.MarkedTransaction, error) {
+func createSimplifiedPipeline(config *IsolatedTestConfig, ctx context.Context) (*txFeeder.TxFeeder, app.EOAAnalyzer, chan *shareddomain.MarkedTransaction, error, context.Context) {
 	fmt.Println("\n3️⃣ Creating simplified transaction pipeline...")
 
 	// Analyzer용 채널 생성
@@ -162,7 +164,7 @@ func createSimplifiedPipeline(config *IsolatedTestConfig) (*txFeeder.TxFeeder, a
 
 	transactionFeeder, err := txFeeder.NewTxFeederWithComplexConfig(feederConfig)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to create TxFeeder: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create TxFeeder: %w", err), nil
 	}
 	fmt.Printf("   ⚙️  TxGenerator: CEX ratio 1/%d (%.1f%%), Deposit ratio 1/%d (%.1f%%)\n",
 		genConfig.DepositToCexRatio, 100.0/float64(genConfig.DepositToCexRatio),
@@ -176,17 +178,16 @@ func createSimplifiedPipeline(config *IsolatedTestConfig) (*txFeeder.TxFeeder, a
 		WorkerCount:         config.AnalysisWorkers,
 		StatsInterval:       2_000_000_000, // 2초
 		HealthCheckInterval: 3_000_000_000, // 3초
-		DataPath:            config.IsolatedDir,
+		FileDBPath:          config.IsolatedDir,
 		GraphDBPath:         config.GraphDBPath,
 		PendingDBPath:       config.PendingDBPath,
 		CEXFilePath:         config.CEXFilePath, // 격리된 환경의 CEX 파일 사용
 		AutoCleanup:         true,
 		ResultReporting:     true,
 	}
-
-	analyzer, err := app.CreateAnalyzer(analyzerConfig)
+	analyzer, err := app.CreateAnalyzer(analyzerConfig, ctx)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to create analyzer: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create analyzer: %w", err), nil
 	}
 	fmt.Printf("   ⚙️  EOAAnalyzer created with %d workers\n", config.AnalysisWorkers)
 
@@ -194,15 +195,15 @@ func createSimplifiedPipeline(config *IsolatedTestConfig) (*txFeeder.TxFeeder, a
 	// transactionFeeder.RegisterOutputChannel(analyzerChannel)
 
 	fmt.Printf("   ✅ Simplified pipeline created\n")
-	return transactionFeeder, analyzer, analyzerChannel, nil
+	return transactionFeeder, analyzer, analyzerChannel, nil, ctx
 }
 
 // runSimplifiedPipelineTest 간소화된 파이프라인 테스트 실행
-func runSimplifiedPipelineTest(txFeeder *txFeeder.TxFeeder, analyzer app.EOAAnalyzer, _ chan *shareddomain.MarkedTransaction, config *IsolatedTestConfig) error {
+func runSimplifiedPipelineTest(txFeeder *txFeeder.TxFeeder, analyzer app.EOAAnalyzer, _ chan *shareddomain.MarkedTransaction, config *IsolatedTestConfig, ctx context.Context) error {
 	fmt.Println("\n4️⃣ Running simplified pipeline test...")
-
-	ctx, cancel := context.WithTimeout(context.Background(), config.TestDuration)
-	defer cancel()
+	//**여기도 삭제
+	// ctx, cancel := context.WithTimeout(context.Background(), config.TestDuration)
+	// defer cancel()
 
 	// 1. TxGenerator 시작 (Kafka로 자동 전송) - 먼저 시작
 	go func() {
