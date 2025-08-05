@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
@@ -20,21 +19,16 @@ import (
 // * 테스트용과 프로덕션용 모두 지원하는 기본 구현
 type SimpleEOAAnalyzer struct {
 	// Core domain components
-	//*gk
-	dualManager *domain.DualManager
-	//*gr
+	dualManager *DualManager
 
 	// WorkerPool integration
 	//내부 채널임
-	//*tj
-	//*wp
 	stopChannel  chan struct{}
 	stopOnce     sync.Once
 	shutdownOnce sync.Once
 	wg           sync.WaitGroup
 
 	// Transaction consumer (Kafka 기반)
-	//*bc
 	batchMode bool // 배치 모드 활성화 여부
 
 	// Configuration
@@ -43,7 +37,7 @@ type SimpleEOAAnalyzer struct {
 	// Statistics (thread-safe atomic counters)
 	stats SimpleAnalyzerStats
 
-	infra infra.EOAAnalyzerInfra
+	infra infra.TotalEOAAnalyzerInfra
 }
 
 // SimpleAnalyzerStats 간단한 분석기 통계
@@ -71,92 +65,15 @@ func NewTestingEOAAnalyzer(config *EOAAnalyzerConfig, ctx context.Context) (EOAA
 }
 
 // newSimpleAnalyzer 공통 분석기 생성 로직
-func newSimpleAnalyzer(config *EOAAnalyzerConfig, infraStructure infra.EOAAnalyzerInfra) (*SimpleEOAAnalyzer, error) {
-	// log.Printf("🚀 Initializing Simple EOA Analyzer: %s (Mode: %s)", config.Name, config.Mode)
-
-	// // CEX 저장소 초기화 - 설정에서 파일 경로 사용
-	// cexFilePath := config.CEXFilePath
-	// if cexFilePath == "" {
-	// 	// 기본 경로 사용 (후방 호환성)
-	// 	cexFilePath = "internal/ee/cex.txt"
-	// }
-	// cexRepo := infra.NewFileCEXRepository(cexFilePath)
-	// cexSet, err := cexRepo.LoadCEXSet()
-	// if err != nil {
-	// 	return nil, fmt.Errorf("failed to load CEX set from %s: %w", cexFilePath, err)
-	// }
-	// log.Printf("📦 Loaded %d CEX addresses", cexSet.Size())
-	// //******
-	// // 데이터 디렉토리 생성
-	// if err := os.MkdirAll(config.FileDBPath, 0755); err != nil {
-	// 	return nil, fmt.Errorf("failed to create data directory: %w", err)
-	// }
-	// // Deposit 저장소 초기화 - 모드에 따른 경로 설정
-	// var detectedDepositFilePath string
-	// //TODO 로직은 그럴듯 하지만, FileDBPath자체가 Isolated 폴더 내부라 실은 효용이 없음. 추후 isolated관련 feed_XX_XX.go수정 필요.
-	// //TODO 테스트 시에만 isolated되게 해야 함.
-	// if config.Mode == TestingMode {
-	// 	detectedDepositFilePath = config.FileDBPath + "/test_detected_deposits.csv"
-	// } else {
-	// 	detectedDepositFilePath = config.FileDBPath + "/production_detected_deposits.csv"
-	// }
-	// depositRepo := infra.NewFileDepositRepository(detectedDepositFilePath)
-	// //****
-	// // GroundKnowledge 생성
-	// groundKnowledge := domain.NewDomainKnowledge(cexSet, depositRepo)
-	// if err := groundKnowledge.Load(); err != nil {
-	// 	return nil, fmt.Errorf("failed to load ground knowledge: %w", err)
-	// }
-	// log.Printf("🧠 Ground knowledge loaded")
-	// //**********
-	// // Graph Repository 초기화
-	// graphRepo, err := infra.NewBadgerGraphRepository(config.GraphDBPath)
-	// if err != nil {
-	// 	return nil, fmt.Errorf("failed to create graph repository: %w", err)
-	// }
-	// log.Printf("🗂️  Graph repository at: %s", config.GraphDBPath)
-	// //*******
-	// DualManager 초기화
-	//TODO 여기도 infra기반 리팩 터링 후 수저앟기
-	//TODO config.PendingDBPath에 의존하지 말고 걍 infra의 pendingDB에 의존해야 함. 마지막에 하기
-	//TODO 이건 dualManger의 infra로직임. config대신 dualMangerInfra로 주기. 또한, SimpleAnalyzer의 모듈을 그럼 두 개로 구분해야함
-	//TODO 프로세서 인프라, 듀얼메니져 인프라로 구분해서 전달하기
-	dualManager, err := domain.NewDualManager(infraStructure.GroundKnowledge, infraStructure.GraphRepo, config.PendingDBPath)
+func newSimpleAnalyzer(config *EOAAnalyzerConfig, infraStructure infra.TotalEOAAnalyzerInfra) (*SimpleEOAAnalyzer, error) {
+	//전체 EOA인프라에서 꺼내 쓰는 형식
+	dualManagerInfra := infra.NewDualManagerInfra(infraStructure.GroundKnowledge, infraStructure.GraphRepo, infraStructure.PendingRelationRepo)
+	dualManager, err := NewDualManager(*dualManagerInfra)
 	if err != nil {
 		infraStructure.GraphRepo.Close()
 		return nil, fmt.Errorf("failed to create dual manager: %w", err)
 	}
 	log.Printf("🔄 DualManager with pending DB at: %s", config.PendingDBPath)
-
-	// // Transaction Consumer 초기화 - 모드에 따라 다른 토픽 사용
-	// kafkaBrokers := []string{"localhost:9092"}
-	// isTestMode := (config.Mode == TestingMode)
-	// groupID := fmt.Sprintf("ee-analyzer-%s", strings.ReplaceAll(config.Name, " ", "-"))
-
-	// // 배치 모드 Consumer 초기화 (고성능)
-	// batchSize := 100                      // 100개씩 배치 처리
-	// batchTimeout := 20 * time.Millisecond // 20ms 타임아웃
-
-	// var topic string
-	// if isTestMode {
-	// 	topic = "fed-tx" // 테스트용 토픽
-	// } else {
-	// 	topic = "ingested-transactions" // 프로덕션용 토픽
-	// }
-
-	// consumerConfig := kafka.KafkaBatchConfig{
-	// 	Brokers:      kafkaBrokers,
-	// 	Topic:        topic,
-	// 	GroupID:      groupID,
-	// 	BatchSize:    batchSize,
-	// 	BatchTimeout: batchTimeout,
-	// }
-
-	//batchConsumer := kafka.NewKafkaBatchConsumer[*shareddomain.MarkedTransaction](consumerConfig)
-
-	// 기존 단건 Consumer도 호환성을 위해 유지
-
-	// log.Printf("📡 Batch consumer initialized (test mode: %v, batch size: %d)", isTestMode, batchSize)
 
 	analyzer := &SimpleEOAAnalyzer{
 		infra:       infraStructure,
@@ -186,11 +103,6 @@ func (a *SimpleEOAAnalyzer) Start(ctx context.Context) error {
 	} else {
 		log.Printf("단건 컨슈머는 걍 지웠음.")
 	}
-
-	// 워커풀 시작
-	//**여기도 제거했음
-	//a.workerPool = workerpool.New(ctx, a.config.WorkerCount, a.txJobChannel)
-	//log.Printf("🔧 WorkerPool initialized with %d workers", a.config.WorkerCount)
 
 	// 통계 리포터 시작
 	a.wg.Add(1)

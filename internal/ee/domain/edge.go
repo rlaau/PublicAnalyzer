@@ -43,12 +43,12 @@ func (n *EOANode) UpdateLastSeen() {
 // EOAEdge represents a relationship edge between two EOA addresses
 // Connection is based on shared deposit address usage
 type EOAEdge struct {
-	AddressA      domain.Address   // First EOA address
-	AddressB      domain.Address   // Second EOA address  
-	DepositAddr   domain.Address   // The shared deposit address
-	Evidence      []EdgeInfo       // List of evidence supporting this connection
-	FirstSeen     time.Time        // When this relationship was first detected
-	LastConfirmed time.Time        // When this relationship was last confirmed
+	AddressA      domain.Address // First EOA address
+	AddressB      domain.Address // Second EOA address
+	DepositAddr   domain.Address // The shared deposit address
+	Evidence      []EdgeInfo     // List of evidence supporting this connection
+	FirstSeen     time.Time      // When this relationship was first detected
+	LastConfirmed time.Time      // When this relationship was last confirmed
 }
 
 // NewEOAEdge creates a new EOA relationship edge
@@ -83,7 +83,7 @@ func (e *EOAEdge) IsStale(windowThreshold time.Duration) bool {
 // EOASubgraph represents a subgraph result from graph database queries
 // This is what we get when we query for connected EOAs
 type EOASubgraph struct {
-	CenterAddress domain.Address  // The address we queried for
+	CenterAddress domain.Address   // The address we queried for
 	ConnectedEOAs []domain.Address // Directly connected EOAs
 	Nodes         []*EOANode       // All nodes in this subgraph
 	Edges         []*EOAEdge       // All edges in this subgraph
@@ -106,7 +106,7 @@ func NewEOASubgraph(centerAddr domain.Address, depth int) *EOASubgraph {
 // AddNode adds a node to the subgraph
 func (sg *EOASubgraph) AddNode(node *EOANode) {
 	sg.Nodes = append(sg.Nodes, node)
-	
+
 	// Add to connected EOAs if it's not the center address
 	if node.Address != sg.CenterAddress {
 		sg.ConnectedEOAs = append(sg.ConnectedEOAs, node.Address)
@@ -121,39 +121,11 @@ func (sg *EOASubgraph) AddEdge(edge *EOAEdge) {
 // GetStats returns statistics about this subgraph
 func (sg *EOASubgraph) GetStats() map[string]interface{} {
 	return map[string]interface{}{
-		"center_address":   sg.CenterAddress.String(),
-		"connected_count":  len(sg.ConnectedEOAs),
-		"total_nodes":      len(sg.Nodes),
-		"total_edges":      len(sg.Edges),
-		"query_depth":      sg.QueryDepth,
-		"created_at":       sg.CreatedAt,
+		"center_address":  sg.CenterAddress.String(),
+		"connected_count": len(sg.ConnectedEOAs),
+		"total_nodes":     len(sg.Nodes),
+		"total_edges":     len(sg.Edges),
+		"query_depth":     sg.QueryDepth,
+		"created_at":      sg.CreatedAt,
 	}
-}
-
-// GraphRepository defines the interface for graph database operations
-type GraphRepository interface {
-	// Node operations
-	SaveNode(node *EOANode) error
-	GetNode(addr domain.Address) (*EOANode, error)
-	UpdateNodeLastSeen(addr domain.Address) error
-	
-	// Edge operations  
-	SaveEdge(edge *EOAEdge) error
-	GetEdge(addrA, addrB domain.Address) (*EOAEdge, error)
-	UpdateEdgeEvidence(addrA, addrB domain.Address, txID domain.TxId, infoCode uint8) error
-	
-	// Graph traversal operations
-	GetConnectedEOAs(addr domain.Address, maxDepth int) (*EOASubgraph, error)
-	GetEOAsUsingDeposit(depositAddr domain.Address) ([]domain.Address, error)
-	FindShortestPath(addrA, addrB domain.Address, maxDepth int) ([]*EOAEdge, error)
-	
-	// Cleanup operations
-	DeleteStaleNodes(threshold time.Time) error
-	DeleteStaleEdges(threshold time.Time) error
-	
-	// Statistics
-	GetGraphStats() (map[string]interface{}, error)
-	
-	// Resource management
-	Close() error
 }

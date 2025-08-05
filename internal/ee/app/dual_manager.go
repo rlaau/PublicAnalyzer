@@ -1,14 +1,15 @@
-package domain
+package app
 
 import (
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
-	"github.com/dgraph-io/badger/v4"
+	localdomain "github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
+
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/monad"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/fp"
 )
 
 const (
@@ -22,7 +23,7 @@ const (
 type TimeBucket struct {
 	StartTime time.Time
 	EndTime   time.Time
-	ToUsers   map[string]time.Time // to_address -> first_active_time
+	ToUsers   map[domain.Address]time.Time // to_address -> first_active_time
 }
 
 // NewTimeBucket creates a new time bucket
@@ -30,14 +31,13 @@ func NewTimeBucket(startTime time.Time) *TimeBucket {
 	return &TimeBucket{
 		StartTime: startTime,
 		EndTime:   startTime.Add(SlideInterval),
-		ToUsers:   make(map[string]time.Time),
+		ToUsers:   make(map[domain.Address]time.Time),
 	}
 }
 
 // DualManager manages EOA relationships through sliding window analysis
 type DualManager struct {
-	groundKnowledge *DomainKnowledge
-	graphRepo       GraphRepository
+	infra infra.DualManagerInfra
 
 	// Sliding window management (순환 큐 구조)
 	firstActiveTimeBuckets []*TimeBucket // 21개 타임버킷으로 4개월 윈도우 관리
@@ -45,32 +45,20 @@ type DualManager struct {
 	rearIndex              int           // 가장 최신 버킷 인덱스 (추가 위치)
 	bucketCount            int           // 현재 버킷 개수 (0~21)
 
-	// Persistent KV storage for to->[]from mappings (대규모 데이터 처리용)
-	pendingRelationsDB *badger.DB // to_address -> []from_address 영구 저장
-
 	// Synchronization (최적화된 뮤텍스)
 	mutex        sync.RWMutex // 전체 구조체 보호용 (구조 변경 등)
 	bucketsMutex sync.RWMutex // TimeBucket 관련 작업 전용 (BadgerDB는 자체 동시성 보장)
 }
 
 // NewDualManager creates a new dual manager instance
-func NewDualManager(groundKnowledge *DomainKnowledge, graphRepo GraphRepository, pendingRelationsDBPath string) (*DualManager, error) {
-	// Open BadgerDB for pending relations
-	opts := badger.DefaultOptions(pendingRelationsDBPath)
-	opts.Logger = nil
-	pendingDB, err := badger.Open(opts)
-	if err != nil {
-		return nil, err
-	}
+func NewDualManager(managerInfra infra.DualManagerInfra) (*DualManager, error) {
 
 	dm := &DualManager{
-		groundKnowledge:        groundKnowledge,
-		graphRepo:              graphRepo,
+		infra:                  managerInfra,
 		firstActiveTimeBuckets: make([]*TimeBucket, MaxTimeBuckets),
 		frontIndex:             0, // 첫 번째 버킷이 들어갈 위치
 		rearIndex:              0, // 첫 번째 버킷이 들어갈 위치
 		bucketCount:            0, // 초기 버킷 개수
-		pendingRelationsDB:     pendingDB,
 	}
 
 	//TODO 첫 번째 트랜잭션의 시간을 기준으로 동적으로 첫 버킷을 생성하도록 변경
@@ -84,7 +72,7 @@ func NewDualManager(groundKnowledge *DomainKnowledge, graphRepo GraphRepository,
 
 // Close closes the dual manager and its resources
 func (dm *DualManager) Close() error {
-	return dm.pendingRelationsDB.Close()
+	return dm.infra.PendingRelationRepo.Close()
 }
 
 // CheckTransaction is the main entry point for transaction analysis
@@ -96,7 +84,7 @@ func (dm *DualManager) CheckTransaction(tx *domain.MarkedTransaction) (*domain.M
 	//todo 근데 이거 중복 체킹이긴 함. 프로덕션 후 문제 없으면 충분히 제거 가능
 	//todo ProcessSingle에서 미리 검사함. 애초에 카프카 큐에서 분리 시 신뢰도 가능하고
 	if tx.TxSyntax[0] != domain.EOAMark || tx.TxSyntax[1] != domain.EOAMark {
-		return nil, monad.ErrorSkipStep
+		return nil, fp.ErrorSkipStep
 	}
 	return tx, nil
 }
@@ -112,46 +100,46 @@ func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.Mark
 		fmt.Printf("🔀 DualManager: From=%s To=%s\n",
 			fromAddr.String()[:10]+"...", toAddr.String()[:10]+"...")
 		fmt.Printf("   From_CEX=%t, To_CEX=%t, From_Deposit=%t, To_Deposit=%t\n",
-			dm.groundKnowledge.IsCEXAddress(fromAddr),
-			dm.groundKnowledge.IsCEXAddress(toAddr),
-			dm.groundKnowledge.IsDepositAddress(fromAddr),
-			dm.groundKnowledge.IsDepositAddress(toAddr))
+			dm.infra.GroundKnowledge.IsCEXAddress(fromAddr),
+			dm.infra.GroundKnowledge.IsCEXAddress(toAddr),
+			dm.infra.GroundKnowledge.IsDepositAddress(fromAddr),
+			dm.infra.GroundKnowledge.IsDepositAddress(toAddr))
 	}
 
 	// Case 1: from이 CEX인 경우 - to는 "txFromCexAddress"로 특수 처리
-	if dm.groundKnowledge.IsCEXAddress(fromAddr) {
+	if dm.infra.GroundKnowledge.IsCEXAddress(fromAddr) {
 		if debugEnabled {
 			fmt.Printf("   → Case 1: CEX → Address (txFromCexAddress)\n")
 		}
 		err := dm.handleExceptionalAddress(toAddr, "txFromCexAddress")
-		return nil, monad.HandleErrOrNilToSkipStep(err)
+		return nil, fp.HandleErrOrNilToSkipStep(err)
 	}
 
 	// Case 2: to가 CEX인 경우 - 새로운 입금주소 탐지
-	if dm.groundKnowledge.IsCEXAddress(toAddr) {
+	if dm.infra.GroundKnowledge.IsCEXAddress(toAddr) {
 		if debugEnabled {
 			fmt.Printf("   → Case 2: Deposit Detection (Address → CEX)\n")
 		}
 		err := dm.handleDepositDetection(toAddr, fromAddr, tx)
-		return nil, monad.HandleErrOrNilToSkipStep(err)
+		return nil, fp.HandleErrOrNilToSkipStep(err)
 	}
 
 	// Case 3: from이 detectedDepositAddress인 경우 - to는 "txFromDepositAddress"로 특수 처리
-	if dm.groundKnowledge.IsDepositAddress(fromAddr) {
+	if dm.infra.GroundKnowledge.IsDepositAddress(fromAddr) {
 		if debugEnabled {
 			fmt.Printf("   → Case 3: Detected Deposit → Address (txFromDepositAddress)\n")
 		}
 		err := dm.handleExceptionalAddress(toAddr, "txFromDepositAddress")
-		return nil, monad.HandleErrOrNilToSkipStep(err)
+		return nil, fp.HandleErrOrNilToSkipStep(err)
 	}
 
 	// Case 4: to가 detectedDepositAddress인 경우 - from,to 듀얼을 그래프DB에 저장
-	if dm.groundKnowledge.IsDepositAddress(toAddr) {
+	if dm.infra.GroundKnowledge.IsDepositAddress(toAddr) {
 		if debugEnabled {
 			fmt.Printf("   → Case 4: Address → Detected Deposit (saveToGraphDB)\n")
 		}
 		err := dm.saveToGraphDB(fromAddr, toAddr, tx)
-		return nil, monad.HandleErrOrNilToSkipStep(err)
+		return nil, fp.HandleErrOrNilToSkipStep(err)
 	}
 
 	// Case 5: 일반 트랜잭션 - DualManager 윈도우 버퍼에 추가
@@ -162,7 +150,7 @@ func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.Mark
 }
 
 // handleExceptionalAddress processes exceptional addresses (to be implemented)
-func (dm *DualManager) handleExceptionalAddress(address domain.Address, addressType string) error {
+func (dm *DualManager) handleExceptionalAddress(_ domain.Address, _ string) error {
 	//TODO: 추후 구현할 특수 주소 처리 로직
 	return nil
 }
@@ -174,7 +162,7 @@ func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Addres
 	//fmt.Printf("💰 handleDepositDetection: %s → CEX %s\n",	depositAddr.String()[:10]+"...", cexAddr.String()[:10]+"...")
 
 	// 1. 새로운 입금주소를 detectedDepositAddress에 추가
-	if err := dm.groundKnowledge.DetectNewDepositAddress(depositAddr, cexAddr); err != nil {
+	if err := dm.infra.GroundKnowledge.DetectNewDepositAddress(depositAddr, cexAddr); err != nil {
 		fmt.Printf("   ❌ DetectNewDepositAddress failed: %v\n", err)
 		return err
 	}
@@ -183,12 +171,10 @@ func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Addres
 	// 2. DualManager의 pendingRelationsDB에서 depositAddr을 to로 하는 []from 값들 조회
 	// TODO pendingRelations에서 관리하는 타입을 to-> []fromInfo로 변경 요구
 	// TODO fromInfo는 [txTD,address]로 저장하기
-	depositAddrStr := depositAddr.String()
-	fromAddresses, err := dm.getPendingRelations(depositAddrStr)
+	fromAddresses, err := dm.infra.PendingRelationRepo.GetPendingRelations(depositAddr)
 	if err == nil && len(fromAddresses) > 0 {
 		// 3. [](to,from) 쌍들을 그래프DB에 저장
-		for _, fromAddrStr := range fromAddresses {
-			fromAddr, err := parseAddressFromString(fromAddrStr)
+		for _, fromAddr := range fromAddresses {
 			if err != nil {
 				continue
 			}
@@ -201,8 +187,8 @@ func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Addres
 		}
 
 		// 처리된 관계 제거
-		//TODO pendingRelations와 windowBucket은 항상 "holind한 toUser가 동일"해야 하므로, 펜딩에서 제거 시 윈도우에서도 제거 필요
-		if err := dm.deletePendingRelations(depositAddrStr); err != nil {
+		//TODO pendingRelations와 windowBucket은 항상 "holding한 toUser가 동일"해야 하므로, 펜딩에서 제거 시 윈도우에서도 제거 필요
+		if err := dm.infra.PendingRelationRepo.DeletePendingRelations(depositAddr); err != nil {
 			return err
 		}
 	}
@@ -218,33 +204,33 @@ func (dm *DualManager) saveToGraphDB(fromAddr, toAddr domain.Address, tx *domain
 // saveConnectionToGraphDB saves a connection between two EOAs to the graph database
 func (dm *DualManager) saveConnectionToGraphDB(fromAddr, toAddr domain.Address, txID domain.TxId) error {
 	// Create or update nodes
-	nodeFrom := NewEOANode(fromAddr)
-	nodeTo := NewEOANode(toAddr)
+	nodeFrom := localdomain.NewEOANode(fromAddr)
+	nodeTo := localdomain.NewEOANode(toAddr)
 
-	if err := dm.graphRepo.SaveNode(nodeFrom); err != nil {
+	if err := dm.infra.GraphRepo.SaveNode(nodeFrom); err != nil {
 		return err
 	}
-	if err := dm.graphRepo.SaveNode(nodeTo); err != nil {
+	if err := dm.infra.GraphRepo.SaveNode(nodeTo); err != nil {
 		return err
 	}
 
 	// Create or update edge
-	_, err := dm.graphRepo.GetEdge(fromAddr, toAddr)
+	_, err := dm.infra.GraphRepo.GetEdge(fromAddr, toAddr)
 	if err != nil {
 		// Create new edge
-		edge := NewEOAEdge(fromAddr, toAddr, toAddr, txID, SameDepositUsage) // toAddr is depositAddr
-		return dm.graphRepo.SaveEdge(edge)
+		edge := localdomain.NewEOAEdge(fromAddr, toAddr, toAddr, txID, localdomain.SameDepositUsage) // toAddr is depositAddr
+		return dm.infra.GraphRepo.SaveEdge(edge)
 	}
 
 	// Update existing edge with new evidence
-	return dm.graphRepo.UpdateEdgeEvidence(fromAddr, toAddr, txID, SameDepositUsage)
+	return dm.infra.GraphRepo.UpdateEdgeEvidence(fromAddr, toAddr, txID, localdomain.SameDepositUsage)
 }
 
 // AddToWindowBuffer adds transaction to the sliding window buffer
 func (dm *DualManager) AddToWindowBuffer(tx *domain.MarkedTransaction) (*domain.MarkedTransaction, error) {
 	txTime := tx.BlockTime
-	toAddrStr := tx.To.String()
-	fromAddrStr := tx.From.String()
+	toAddr := tx.To
+	fromAddr := tx.From
 
 	// 디버깅: 매 50 트랜잭션마다 시간 로깅 (10분×50=8.3시간마다)
 	static_counter++
@@ -254,16 +240,16 @@ func (dm *DualManager) AddToWindowBuffer(tx *domain.MarkedTransaction) (*domain.
 	}
 
 	// 1. Update firstActiveTimeBuckets (핵심 도메인 로직)
-	if err := dm.updateFirstActiveTimeBuckets(toAddrStr, txTime); err != nil {
+	if err := dm.updateFirstActiveTimeBuckets(toAddr, txTime); err != nil {
 		return nil, err
 	}
 
 	// 2. Add to pending relations in BadgerDB
-	if err := dm.addToPendingRelations(toAddrStr, fromAddrStr); err != nil {
+	if err := dm.infra.PendingRelationRepo.AddToPendingRelations(toAddr, fromAddr); err != nil {
 		return nil, err
 	}
 
-	return nil, monad.ErrorSkipStep
+	return nil, fp.ErrorSkipStep
 }
 
 // 디버깅용 전역 카운터
@@ -274,7 +260,7 @@ var static_counter int64
 // ! - 한 번 윈도우에 들어온 to user의 값은 갱신하지 않음
 // ! - 4개월 간 선택받지 못하면 자동으로 떨어져 나감
 // ! - 에이징의 대상은 "to user"(입금 주소 탐지를 위한 핵심 로직)
-func (dm *DualManager) updateFirstActiveTimeBuckets(toAddr string, txTime time.Time) error {
+func (dm *DualManager) updateFirstActiveTimeBuckets(toAddr domain.Address, txTime time.Time) error {
 	// 1. 적절한 타임버킷 찾기 또는 생성 (쓰기 락 필요)
 	dm.bucketsMutex.Lock()
 	bucketIndex := dm.findOrCreateTimeBucket(txTime)
@@ -368,13 +354,13 @@ func (dm *DualManager) addNewTimeBucket(txTime time.Time) int {
 		oldBucket := dm.firstActiveTimeBuckets[dm.frontIndex]
 
 		// 기존 버킷의 pendingRelations 정리
-		pendingBefore := dm.countPendingRelations()
+		pendingBefore := dm.infra.PendingRelationRepo.CountPendingRelations()
 		toUsersCount := len(oldBucket.ToUsers)
 		deletedRelations := 0
 
 		for toAddr := range oldBucket.ToUsers {
-			if err := dm.deletePendingRelations(toAddr); err != nil {
-				fmt.Printf("   ⚠️ Failed to delete pending relations for %s: %v\n", toAddr[:10]+"...", err)
+			if err := dm.infra.PendingRelationRepo.DeletePendingRelations(toAddr); err != nil {
+				fmt.Printf("   ⚠️ Failed to delete pending relations for %s: %v\n", toAddr.String()[:10]+"...", err)
 				continue
 			}
 			deletedRelations++
@@ -389,7 +375,7 @@ func (dm *DualManager) addNewTimeBucket(txTime time.Time) int {
 		dm.rearIndex = newBucketIndex
 		// bucketCount는 21 고정
 
-		pendingAfter := dm.countPendingRelations()
+		pendingAfter := dm.infra.PendingRelationRepo.CountPendingRelations()
 
 		fmt.Printf("🪣 BUCKET ROTATION[%d]: %s-%s → %s-%s (front:%d, rear:%d, count:%d)\n",
 			newBucketIndex,
@@ -418,7 +404,7 @@ func (dm *DualManager) calculateWeekStart(t time.Time) time.Time {
 // isToUserInWindow checks if to user already exists in the entire window
 // ! 성능 최적화: 최신 버킷(rearIndex)부터 역순으로 검색 - 캐시 효과 극대화
 // ! 도메인 로직: 최근에 등장한 유저가 다시 등장할 확률이 높음
-func (dm *DualManager) isToUserInWindow(toAddr string) bool {
+func (dm *DualManager) isToUserInWindow(toAddr domain.Address) bool {
 	if dm.bucketCount == 0 {
 		return false
 	}
@@ -447,94 +433,6 @@ func (dm *DualManager) countActiveBuckets() int {
 	return dm.bucketCount
 }
 
-// BadgerDB helper methods for pending relations management
-
-// getPendingRelations retrieves the list of from addresses for a given to address
-func (dm *DualManager) getPendingRelations(toAddr string) ([]string, error) {
-	var fromAddresses []string
-
-	err := dm.pendingRelationsDB.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte(toAddr))
-		if err != nil {
-			return err
-		}
-
-		return item.Value(func(val []byte) error {
-			return json.Unmarshal(val, &fromAddresses)
-		})
-	})
-
-	if err == badger.ErrKeyNotFound {
-		return []string{}, nil // Return empty slice if not found
-	}
-
-	return fromAddresses, err
-}
-
-// addToPendingRelations adds a from address to the list of a to address
-func (dm *DualManager) addToPendingRelations(toAddr, fromAddr string) error {
-	return dm.pendingRelationsDB.Update(func(txn *badger.Txn) error {
-		// Get existing relations
-		var fromAddresses []string
-		item, err := txn.Get([]byte(toAddr))
-		if err != nil && err != badger.ErrKeyNotFound {
-			return err
-		}
-
-		if err == nil {
-			err = item.Value(func(val []byte) error {
-				return json.Unmarshal(val, &fromAddresses)
-			})
-			if err != nil {
-				return err
-			}
-		}
-
-		// Check if from address already exists
-		for _, existing := range fromAddresses {
-			if existing == fromAddr {
-				return nil // Already exists
-			}
-		}
-
-		// Add new from address
-		fromAddresses = append(fromAddresses, fromAddr)
-
-		// Save updated list
-		data, err := json.Marshal(fromAddresses)
-		if err != nil {
-			return err
-		}
-
-		return txn.Set([]byte(toAddr), data)
-	})
-}
-
-// deletePendingRelations removes all pending relations for a to address
-func (dm *DualManager) deletePendingRelations(toAddr string) error {
-	return dm.pendingRelationsDB.Update(func(txn *badger.Txn) error {
-		return txn.Delete([]byte(toAddr))
-	})
-}
-
-// countPendingRelations counts the total number of pending relations
-// TODO 현재는 순회를 통해서 카운트함. 성능 개선 필요
-// ! 주요 성능 개선 필요 구간임!
-func (dm *DualManager) countPendingRelations() int {
-	count := 0
-	dm.pendingRelationsDB.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			count++
-		}
-		return nil
-	})
-	return count
-}
-
 // GetWindowStats returns statistics about the sliding window
 func (dm *DualManager) GetWindowStats() map[string]interface{} {
 	dm.mutex.RLock()
@@ -542,7 +440,7 @@ func (dm *DualManager) GetWindowStats() map[string]interface{} {
 
 	activeBuckets := dm.countActiveBuckets()
 	totalToUsers := 0
-	totalPendingRelations := dm.countPendingRelations()
+	totalPendingRelations := dm.infra.PendingRelationRepo.CountPendingRelations()
 
 	for _, bucket := range dm.firstActiveTimeBuckets {
 		if bucket != nil {

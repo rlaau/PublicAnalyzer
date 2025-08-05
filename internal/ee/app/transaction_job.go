@@ -7,7 +7,7 @@ import (
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/monad"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/fp"
 )
 
 // TransactionJob implements workerpool.Job interface for transaction processing
@@ -53,7 +53,7 @@ func (a *SimpleEOAAnalyzer) processSingleTransactionJob(tx *shareddomain.MarkedT
 
 	// DualManager를 통한 트랜잭션 처리
 	//* 모나드 처리로 로직 간명화
-	_, err := monad.NewMonadFlow[*domain.MarkedTransaction]().
+	_, err := fp.NewMonadFlow[*domain.MarkedTransaction]().
 		RegisterInput(tx).
 		Then(a.dualManager.CheckTransaction).
 		Then(a.dualManager.HandleAddress).

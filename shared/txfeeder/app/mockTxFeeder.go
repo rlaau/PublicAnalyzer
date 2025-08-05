@@ -14,7 +14,6 @@ import (
 	"time"
 
 	sharedDomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/dto"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/domain"
 )
@@ -171,7 +170,7 @@ func GetRawTxFeeder(config *domain.TxGeneratorConfig, cexSet *sharedDomain.CEXSe
 	// Kafka Producer 초기화 (기본값: 단건 모드)
 	kafkaConfig := kafka.KafkaBatchConfig{
 		Brokers: kafkaBrokers,
-		Topic:   dto.FedTxTopic}
+		Topic:   kafka.TestFedTxTopic}
 	kafkaProducer := kafka.NewKafkaProducer[*sharedDomain.MarkedTransaction](kafkaConfig)
 
 	return &TxFeeder{
@@ -216,7 +215,7 @@ func (g *TxFeeder) EnableBatchMode(batchSize int, batchTimeout time.Duration) er
 	// BatchProducer 초기화 (제너릭 타입 사용)
 	config := kafka.KafkaBatchConfig{
 		Brokers:      g.kafkaBrokers,
-		Topic:        dto.FedTxTopic,
+		Topic:        kafka.TestFedTxTopic,
 		GroupID:      "tx-feeder-batch-group",
 		BatchSize:    batchSize,
 		BatchTimeout: batchTimeout,
@@ -262,7 +261,7 @@ func (g *TxFeeder) Start(ctx context.Context) error {
 	}
 
 	// fed-tx 토픽 존재 확인 및 생성
-	if err := kafka.CreateTopicIfNotExists(g.kafkaBrokers, dto.FedTxTopic, 1, 1); err != nil {
+	if err := kafka.CreateTopicIfNotExists(g.kafkaBrokers, kafka.TestFedTxTopic, 1, 1); err != nil {
 		return fmt.Errorf("failed to ensure fed-tx topic: %w", err)
 	}
 
@@ -891,7 +890,7 @@ func (g *TxFeeder) CleanupKafkaTopic() error {
 
 	fmt.Println("🧹 Cleaning up fed-tx Kafka topic...")
 
-	if err := kafka.CleanupTopicComplete(g.kafkaBrokers, dto.FedTxTopic, 1, 1); err != nil {
+	if err := kafka.CleanupTopicComplete(g.kafkaBrokers, kafka.TestFedTxTopic, 1, 1); err != nil {
 		fmt.Printf("   ⚠️ Kafka topic cleanup warning: %v\n", err)
 		return err
 	}

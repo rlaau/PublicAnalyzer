@@ -1,12 +1,42 @@
 package domain
 
-import "encoding/hex"
+import (
+	"encoding/hex"
+	"fmt"
+	"strings"
+)
 
 // Address는 이더리움 주소를 나타내는 타입입니다.
 type Address [20]byte
 
+// ParseAddressFromString converts hex string to Address
+func ParseAddressFromString(hexStr string) (Address, error) {
+	var addr Address
+
+	// Remove 0x prefix if present
+	if strings.HasPrefix(hexStr, "0x") {
+		hexStr = hexStr[2:]
+	}
+
+	if len(hexStr) != 40 {
+		return addr, fmt.Errorf("invalid address length: %d", len(hexStr))
+	}
+
+	// Convert hex string to bytes
+	bytes, err := hex.DecodeString(hexStr)
+	if err != nil {
+		return addr, fmt.Errorf("invalid hex string: %w", err)
+	}
+
+	copy(addr[:], bytes)
+	return addr, nil
+}
+
 // ✅ 문자열 변환 (0x + hex encoding)
 func (a Address) String() string {
+	return "0x" + hex.EncodeToString(a[:])
+}
+func SerializeAddress(a Address) string {
 	return "0x" + hex.EncodeToString(a[:])
 }
 

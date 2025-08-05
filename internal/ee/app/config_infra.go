@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
@@ -16,7 +15,7 @@ import (
 )
 
 // TODO 이것도 추후 수정. 컨텍스트가 아오 너무 많자나
-func NewInfraByConfig(config *EOAAnalyzerConfig, ctx context.Context) infra.EOAAnalyzerInfra {
+func NewInfraByConfig(config *EOAAnalyzerConfig, ctx context.Context) infra.TotalEOAAnalyzerInfra {
 	log.Printf("EOA Analyzer의 Infra 세팅 중: %s (Mode: %s)", config.Name, config.Mode)
 	cexSet, err := loadCEXSet(config.CEXFilePath)
 	if err != nil {
@@ -28,7 +27,7 @@ func NewInfraByConfig(config *EOAAnalyzerConfig, ctx context.Context) infra.EOAA
 	if err != nil {
 		fmt.Printf("디포짓 로딩 실패. (파일 경로: %s)", config.FileDBPath)
 	}
-	groundKnowledge := domain.NewDomainKnowledge(cexSet, depositRepo)
+	groundKnowledge := infra.NewDomainKnowledge(cexSet, depositRepo)
 	if err := groundKnowledge.Load(); err != nil {
 		panic("그라운드 놀리지를 파일->(메모리,파일)로 로드하지 못함")
 	}
@@ -42,7 +41,11 @@ func NewInfraByConfig(config *EOAAnalyzerConfig, ctx context.Context) infra.EOAA
 	txJobChannel := make(chan workerpool.Job, config.ChannelBufferSize)
 	workerPool := workerpool.New(ctx, config.WorkerCount, txJobChannel)
 	log.Printf("🔧 WorkerPool initialized with %d workers", config.WorkerCount)
-	return *infra.NewEOAInfra(groundKnowledge, graphRepo, txJobChannel, workerPool, batchConsumer, ctx)
+	pendingDB, err := infra.NewBadgerPendingRelationRepo(config.PendingDBPath)
+	if err != nil {
+		panic("펜딜 레포지토리를 열지 못함.")
+	}
+	return *infra.NewEOAInfra(groundKnowledge, graphRepo, txJobChannel, workerPool, batchConsumer, pendingDB)
 
 }
 
@@ -56,9 +59,9 @@ func loadKafkaBatchConsumer(mode AnalyzerMode, name string) *kafka.KafkaBatchCon
 	batchTimeout := 20 * time.Millisecond // 20ms 타임아웃
 	var topic string
 	if isTestMode {
-		topic = "fed-tx" // 테스트용 토픽
+		topic = kafka.TestFedTxTopic // 테스트용 토픽
 	} else {
-		topic = "ingested-transactions" // 프로덕션용 토픽
+		topic = kafka.ProductionTxTopic // 프로덕션용 토픽
 	}
 
 	consumerConfig := kafka.KafkaBatchConfig{

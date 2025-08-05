@@ -13,7 +13,7 @@ type FedTxMessage struct {
 	Timestamp   time.Time                       `json:"timestamp"`
 }
 
-// IngestedTransactionMessage ingested-transactions 토픽용 프로덕션 메시지 구조체  
+// IngestedTransactionMessage ingested-transactions 토픽용 프로덕션 메시지 구조체
 // TxIngester → 각 Analyzer 모듈 통신용 (확장된 버전)
 type IngestedTransactionMessage struct {
 	MessageID    string                          `json:"message_id"`    // 메시지 고유 ID
@@ -43,13 +43,6 @@ type TransactionMetadata struct {
 
 // TestCleanupMessage 테스트 정리용 메시지
 type TestCleanupMessage struct {
-	Command   string    `json:"command"`   // "CLEANUP"
+	Command   string    `json:"command"` // "CLEANUP"
 	Timestamp time.Time `json:"timestamp"`
 }
-
-// KafkaTopics 카프카 토픽 상수
-const (
-	FedTxTopic              = "fed-tx"                // 테스트용 토픽
-	IngestedTransactionsTopic = "ingested-transactions" // 프로덕션용 토픽
-	TestControlTopic        = "test-control"          // 테스트 제어용 토픽
-)

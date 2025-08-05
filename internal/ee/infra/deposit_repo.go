@@ -15,6 +15,24 @@ import (
 	sharedDomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
 
+// DepositRepository defines the interface for deposit address persistence
+type DepositRepository interface {
+	// SaveDetectedDeposit saves a detected deposit address to persistent storage
+	SaveDetectedDeposit(deposit *domain.DetectedDepositAddress) error
+
+	// LoadDetectedDeposits loads all detected deposit addresses from storage
+	LoadDetectedDeposits() ([]*domain.DetectedDepositAddress, error)
+
+	// IsDepositAddress checks if an address is a known deposit address
+	IsDepositAddress(addr sharedDomain.Address) (bool, error)
+
+	// GetDepositInfo retrieves deposit address information
+	GetDepositInfo(addr sharedDomain.Address) (*domain.DetectedDepositAddress, error)
+
+	// UpdateTxCount updates the transaction count for a deposit address
+	UpdateTxCount(addr sharedDomain.Address, count int64) error
+}
+
 // FileDepositRepository implements DepositRepository using CSV file storage
 type FileDepositRepository struct {
 	filePath string

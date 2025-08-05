@@ -201,11 +201,7 @@ func createSimplifiedPipeline(config *IsolatedTestConfig, ctx context.Context) (
 // runSimplifiedPipelineTest 간소화된 파이프라인 테스트 실행
 func runSimplifiedPipelineTest(txFeeder *txFeeder.TxFeeder, analyzer app.EOAAnalyzer, _ chan *shareddomain.MarkedTransaction, config *IsolatedTestConfig, ctx context.Context) error {
 	fmt.Println("\n4️⃣ Running simplified pipeline test...")
-	//**여기도 삭제
-	// ctx, cancel := context.WithTimeout(context.Background(), config.TestDuration)
-	// defer cancel()
-
-	// 1. TxGenerator 시작 (Kafka로 자동 전송) - 먼저 시작
+	
 	go func() {
 		if err := txFeeder.Start(ctx); err != nil {
 			fmt.Printf("   ❌ TxGenerator failed to start: %v\n", err)

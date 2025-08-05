@@ -1,4 +1,4 @@
-package monad
+package fp
 
 type Monad[T any] struct {
 	Val T

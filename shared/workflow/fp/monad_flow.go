@@ -1,4 +1,4 @@
-package monad
+package fp
 
 import "errors"
 
@@ -66,17 +66,17 @@ func (f *MonadFlow[T]) Then(fn RawStep[T]) *MonadFlow[T] {
 	return f
 }
 
-// 실행 (결과도 Result[T])
+// 실행. 결과는 unwrap당하며, 스킵용 에러는 no-error로 처리
 func (f *MonadFlow[T]) Run() (T, error) {
-	//* Run시엔 애초에 최초 입력이 타당함을 강제함
-	//* Err입력이면 입력을 이전에 필터링 하고 이후 옳은 경우 모나드체인 실행하기를 강제.
+	// Run시엔 애초에 최초 입력이 타당함을 강제함
+	// Err입력이면 입력을 이전에 필터링 하고 이후 옳은 경우 모나드체인 실행하기를 강제.
 	out := Ok(f.input)
 	for _, fn := range f.steps {
 		out = fn(out)
 	}
 	result, err := out.Unwrap()
 	if err == ErrorSkipStep {
-		// * ErrSkipMonadStep은 모나드 흐름 제어용 얼리 리턴 신호일 뿐, 진짜 에러는 아님
+		//  ErrSkipMonadStep은 모나드 흐름 제어용 얼리 리턴 신호일 뿐, 진짜 에러는 아님
 		err = nil
 	}
 	return result, err

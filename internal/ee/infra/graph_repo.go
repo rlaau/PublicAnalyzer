@@ -12,6 +12,34 @@ import (
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
 
+// GraphRepository defines the interface for graph database operations
+type GraphRepository interface {
+	// Node operations
+	SaveNode(node *domain.EOANode) error
+	GetNode(addr shareddomain.Address) (*domain.EOANode, error)
+	UpdateNodeLastSeen(addr shareddomain.Address) error
+
+	// Edge operations
+	SaveEdge(edge *domain.EOAEdge) error
+	GetEdge(addrA, addrB shareddomain.Address) (*domain.EOAEdge, error)
+	UpdateEdgeEvidence(addrA, addrB shareddomain.Address, txID shareddomain.TxId, infoCode uint8) error
+
+	// Graph traversal operations
+	GetConnectedEOAs(addr shareddomain.Address, maxDepth int) (*domain.EOASubgraph, error)
+	GetEOAsUsingDeposit(depositAddr shareddomain.Address) ([]shareddomain.Address, error)
+	FindShortestPath(addrA, addrB shareddomain.Address, maxDepth int) ([]*domain.EOAEdge, error)
+
+	// Cleanup operations
+	DeleteStaleNodes(threshold time.Time) error
+	DeleteStaleEdges(threshold time.Time) error
+
+	// Statistics
+	GetGraphStats() (map[string]interface{}, error)
+
+	// Resource management
+	Close() error
+}
+
 // BadgerGraphRepository implements GraphRepository using BadgerDB
 type BadgerGraphRepository struct {
 	db *badger.DB
