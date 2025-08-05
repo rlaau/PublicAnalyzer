@@ -2,30 +2,7 @@ package app
 
 import (
 	"context"
-	"io"
-
-	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
-
-// EOAAnalyzer 인터페이스 - 테스트용과 프로덕션용 공통 인터페이스
-// ! 두 구현체는 데이터 저장 방식과 생명주기에서만 차이가 있음
-type EOAAnalyzer interface {
-	// 분석기 생명주기 관리
-	Start(ctx context.Context) error
-	Stop() error
-
-	// 트랜잭션 처리
-	ProcessTransaction(tx *shareddomain.MarkedTransaction) error
-	ProcessTransactions(txs []*shareddomain.MarkedTransaction) error
-
-	// 상태 조회
-	GetStatistics() map[string]interface{}
-	IsHealthy() bool
-	GetChannelStatus() (usage int, capacity int)
-
-	// 리소스 관리
-	io.Closer
-}
 
 // AnalyzerMode 분석기 모드 정의
 type AnalyzerMode string

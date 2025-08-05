@@ -134,7 +134,7 @@ func (gk *GroundKnowledge) GetDetectedDeposits() []*localdomain.DetectedDepositA
 }
 
 // GetStats returns statistics about the ground knowledge
-func (gk *GroundKnowledge) GetStats() map[string]interface{} {
+func (gk *GroundKnowledge) GetStats() map[string]any {
 	gk.mutex.RLock()
 	defer gk.mutex.RUnlock()
 

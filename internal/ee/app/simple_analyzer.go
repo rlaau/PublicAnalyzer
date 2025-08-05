@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strings"
@@ -14,6 +15,26 @@ import (
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 )
+
+// EOAAnalyzer 인터페이스 - 테스트용과 프로덕션용 공통 인터페이스
+// ! 두 구현체는 데이터 저장 방식과 생명주기에서만 차이가 있음
+type EOAAnalyzer interface {
+	// 분석기 생명주기 관리
+	Start(ctx context.Context) error
+	Stop() error
+
+	// 트랜잭션 처리
+	ProcessTransaction(tx *shareddomain.MarkedTransaction) error
+	ProcessTransactions(txs []*shareddomain.MarkedTransaction) error
+
+	// 상태 조회
+	GetStatistics() map[string]any
+	IsHealthy() bool
+	GetChannelStatus() (usage int, capacity int)
+
+	// 리소스 관리
+	io.Closer
+}
 
 // SimpleEOAAnalyzer 간단한 EOA 분석기 구현체
 // * 테스트용과 프로덕션용 모두 지원하는 기본 구현

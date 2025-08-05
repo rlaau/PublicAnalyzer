@@ -34,7 +34,7 @@ type GraphRepository interface {
 	DeleteStaleEdges(threshold time.Time) error
 
 	// Statistics
-	GetGraphStats() (map[string]interface{}, error)
+	GetGraphStats() (map[string]any, error)
 
 	// Resource management
 	Close() error
@@ -732,7 +732,7 @@ func (r *BadgerGraphRepository) DeleteStaleEdges(threshold time.Time) error {
 }
 
 // GetGraphStats returns statistics about the graph
-func (r *BadgerGraphRepository) GetGraphStats() (map[string]interface{}, error) {
+func (r *BadgerGraphRepository) GetGraphStats() (map[string]any, error) {
 	var nodeCount, totalConnections int
 
 	err := r.db.View(func(txn *badger.Txn) error {

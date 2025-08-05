@@ -19,6 +19,21 @@ const (
 	MaxTimeBuckets  = 21                      // 4개월 / 1주일 = 21개 버킷
 )
 
+// DualManager manages EOA relationships through sliding window analysis
+type DualManager struct {
+	infra infra.DualManagerInfra
+
+	// Sliding window management (순환 큐 구조)
+	firstActiveTimeBuckets []*TimeBucket // 21개 타임버킷으로 4개월 윈도우 관리
+	frontIndex             int           // 가장 오래된 버킷 인덱스 (제거 대상)
+	rearIndex              int           // 가장 최신 버킷 인덱스 (추가 위치)
+	bucketCount            int           // 현재 버킷 개수 (0~21)
+
+	// Synchronization (최적화된 뮤텍스)
+	mutex        sync.RWMutex // 전체 구조체 보호용 (구조 변경 등)
+	bucketsMutex sync.RWMutex // TimeBucket 관련 작업 전용 (BadgerDB는 자체 동시성 보장)
+}
+
 // TimeBucket represents a time bucket in the sliding window
 type TimeBucket struct {
 	StartTime time.Time
@@ -33,21 +48,6 @@ func NewTimeBucket(startTime time.Time) *TimeBucket {
 		EndTime:   startTime.Add(SlideInterval),
 		ToUsers:   make(map[domain.Address]time.Time),
 	}
-}
-
-// DualManager manages EOA relationships through sliding window analysis
-type DualManager struct {
-	infra infra.DualManagerInfra
-
-	// Sliding window management (순환 큐 구조)
-	firstActiveTimeBuckets []*TimeBucket // 21개 타임버킷으로 4개월 윈도우 관리
-	frontIndex             int           // 가장 오래된 버킷 인덱스 (제거 대상)
-	rearIndex              int           // 가장 최신 버킷 인덱스 (추가 위치)
-	bucketCount            int           // 현재 버킷 개수 (0~21)
-
-	// Synchronization (최적화된 뮤텍스)
-	mutex        sync.RWMutex // 전체 구조체 보호용 (구조 변경 등)
-	bucketsMutex sync.RWMutex // TimeBucket 관련 작업 전용 (BadgerDB는 자체 동시성 보장)
 }
 
 // NewDualManager creates a new dual manager instance
@@ -434,7 +434,7 @@ func (dm *DualManager) countActiveBuckets() int {
 }
 
 // GetWindowStats returns statistics about the sliding window
-func (dm *DualManager) GetWindowStats() map[string]interface{} {
+func (dm *DualManager) GetWindowStats() map[string]any {
 	dm.mutex.RLock()
 	defer dm.mutex.RUnlock()
 
@@ -448,7 +448,7 @@ func (dm *DualManager) GetWindowStats() map[string]interface{} {
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"active_buckets":       activeBuckets,
 		"total_to_users":       totalToUsers,
 		"pending_relations":    totalPendingRelations,

@@ -120,7 +120,7 @@ func (sg *EOASubgraph) AddEdge(edge *EOAEdge) {
 
 // GetStats returns statistics about this subgraph
 func (sg *EOASubgraph) GetStats() map[string]interface{} {
-	return map[string]interface{}{
+	return map[string]any{
 		"center_address":  sg.CenterAddress.String(),
 		"connected_count": len(sg.ConnectedEOAs),
 		"total_nodes":     len(sg.Nodes),

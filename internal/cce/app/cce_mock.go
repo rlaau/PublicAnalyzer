@@ -28,6 +28,7 @@ func NewMockCCEService() *MockCCEService {
 
 // RegisterContract registers a new contract creation
 // TODO 현재 RegisterContract는 creater는 잡지만, owner는 잡지 않음. 추가적인 로직 통해, creator와 owner를 모두 잡아야 함
+// TODO 당연하지만, 프로덕션 시엔 해당 데이터는 badger, 혹은 bolt에 쓰기. 벤치마크는 S_A_Benchmark보고 판단
 // Calculates contract address from creator+nonce and stores the mapping
 func (m *MockCCEService) RegisterContract(creator domain.Address, nonce uint64, blockTime time.Time) (domain.Address, error) {
 	m.mu.Lock()
