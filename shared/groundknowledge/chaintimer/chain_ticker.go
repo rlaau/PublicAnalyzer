@@ -9,38 +9,37 @@ import (
 const TickChannelBuffer int32 = 100
 
 // ChainTicker는 체인 시간 기반의 주기적 틱을 생성합니다
+// ChainTicker는 체인 시간 기반의 주기적 틱을 생성합니다
 type ChainTicker struct {
 	C        <-chan time.Time
 	c        chan time.Time
 	duration time.Duration
-	nextTick time.Time // lastTick 대신 nextTick 사용 (다음 틱 목표 시간)
-	timer    *ChainTimer
+	nextTick time.Time // 다음 틱 목표 시간
 	stopped  bool
 	mu       sync.Mutex
 }
 
-// NewChainTicker는 새로운 ChainTicker를 생성합니다
-// * Ticker는 큰 시간 점프에 대해서 "이때까지의 차이 동안 발생했을 틱"을 한번에 flush함.
-func (ct *ChainTimer) NewTicker(d time.Duration) *ChainTicker {
-	ct.mu.Lock()
-	defer ct.mu.Unlock()
+// NewTicker는 새로운 ChainTicker를 생성합니다
+func NewTicker(d time.Duration) *ChainTicker {
+	timer := GetChainTimer()
+	timer.mu.Lock()
+	defer timer.mu.Unlock()
 
-	c := make(chan time.Time, TickChannelBuffer)
+	c := make(chan time.Time, 1)
 	ticker := &ChainTicker{
 		C:        c,
 		c:        c,
 		duration: d,
-		nextTick: ct.currentTime.Add(d), // 첫 틱 목표 시간 설정
-		timer:    ct,
+		nextTick: timer.currentTime.Add(d), // 첫 틱 목표 시간 설정
 		stopped:  false,
 	}
 
-	ct.tickers = append(ct.tickers, ticker)
+	timer.tickers = append(timer.tickers, ticker)
 	return ticker
 }
 
 // update는 시간이 전진할 때 호출되어 필요한 만큼 틱을 생성합니다
-// * Ticker는 큰 시간 점프에 대해서 "이때까지의 차이 동안 발생했을 틱"을 한번에 flush함.
+// * 틱은 시간의 big jump시 "그 시간 간격동안 발생했어야 할 틱"을 한번에 전송함
 func (t *ChainTicker) update(newTime time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -51,23 +50,17 @@ func (t *ChainTicker) update(newTime time.Time) {
 
 	// 새 시간이 다음 틱 목표 시간을 지났거나 같으면 틱 발생
 	// 이산적 시간이므로 정확한 시간이 아닌 "목표 시간 도달" 시 틱
-	//반복적인 for루프에서 알 수 있듯, 이 절차는 큰 시간 점프에 대해서 듀레이션씩 계쏙 업뎃해가며 많은 수의 틱을 발생시킴
 	for !newTime.Before(t.nextTick) {
-		//tick하기로 설정되었던 시간
-		tickTime := t.nextTick.Add(t.duration)
 		// 현재 시간으로 틱 발생 (이산적 시간이므로)
 		select {
-		//tickTime을 flush함으로써, "받는 입장"에선 "정확한 시간에 틱을 받는"셈이 됨
-		case t.c <- tickTime:
+		//*티커는 티킹 시 "티킹 했어야 할 시간"을 전달함.
+		case t.c <- t.nextTick:
 		default:
 			// 채널이 가득 차면 스킵
 		}
-		t.nextTick = tickTime
 
 		// 다음 틱 목표 시간 설정
-		//처음에 값 기반 생성된 nextTick에 오직 듀레이션만을 더해서 시간 오차 증폭 막음.
-		// 그러므로 큰 시간 점프가 있었다면 그만큼 계속 티킹함.
-		// 값이 업데이트-> 그 직후 다시 for루프 조건검사를 만족의 반복.
+		t.nextTick = t.nextTick.Add(t.duration)
 	}
 }
 
@@ -81,11 +74,12 @@ func (t *ChainTicker) Stop() {
 		close(t.c)
 
 		// timer의 ticker 목록에서 제거
-		t.timer.mu.Lock()
-		defer t.timer.mu.Unlock()
-		for i, ticker := range t.timer.tickers {
+		timer := GetChainTimer()
+		timer.mu.Lock()
+		defer timer.mu.Unlock()
+		for i, ticker := range timer.tickers {
 			if ticker == t {
-				t.timer.tickers = append(t.timer.tickers[:i], t.timer.tickers[i+1:]...)
+				timer.tickers = append(timer.tickers[:i], timer.tickers[i+1:]...)
 				break
 			}
 		}

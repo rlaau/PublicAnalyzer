@@ -11,8 +11,10 @@ import (
 
 // KafkaBatchConsumer 배치 컨슈머 제너릭 구현체
 type KafkaBatchConsumer[T any] struct {
-	reader       *kafkaLib.Reader
-	batchSize    int
+	reader    *kafkaLib.Reader
+	batchSize int
+	//카프카의 타임아웃은 리얼타임 타임아웃 기반으로 해야 의미가 있음
+	//더이상 입력이 없는 상황에서도 리얼타임 듀레이션 기반으로 요청을 빼내는 것임
 	batchTimeout time.Duration
 }
 
