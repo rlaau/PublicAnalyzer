@@ -6,40 +6,10 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"sync"
 	"time"
 
 	kafkaLib "github.com/segmentio/kafka-go"
 )
-
-// 글로벌 Kafka 설정
-var (
-	globalBrokers   []string
-	brokersMutex    sync.RWMutex
-	brokersInitOnce sync.Once
-)
-
-// SetGlobalBrokers 글로벌 브로커 설정
-func SetGlobalBrokers(brokers []string) {
-	brokersMutex.Lock()
-	defer brokersMutex.Unlock()
-	globalBrokers = brokers
-	log.Printf("[Kafka] Global brokers set to: %v", brokers)
-}
-
-// GetGlobalBrokers 글로벌 브로커 반환 (기본값: localhost:9092)
-func GetGlobalBrokers() []string {
-	brokersInitOnce.Do(func() {
-		if len(globalBrokers) == 0 {
-			globalBrokers = []string{"localhost:9092"}
-			log.Printf("[Kafka] Using default brokers: %v", globalBrokers)
-		}
-	})
-
-	brokersMutex.RLock()
-	defer brokersMutex.RUnlock()
-	return globalBrokers
-}
 
 // KafkaProducer Producer 제너릭 구현체
 type KafkaProducer[T any] struct {
@@ -152,52 +122,6 @@ func (p *KafkaProducer[T]) Close() error {
 	return p.writer.Close()
 }
 
-// topicCache 토픽 존재 여부 캐시
-var topicCache = make(map[string]bool)
-
-// CreateTopicIfNotExists 토픽이 존재하지 않으면 생성 (캐싱 최적화)
-func CreateTopicIfNotExists(brokers []string, topic string, partitions int, replicationFactor int) error {
-	// 캐시 확인
-	if topicCache[topic] {
-		return nil
-	}
-
-	// broker 연결 (타임아웃 설정)
-	conn, err := kafkaLib.DialContext(context.Background(), "tcp", brokers[0])
-	if err != nil {
-		return fmt.Errorf("failed to connect to kafka: %w", err)
-	}
-	defer conn.Close()
-
-	// 토픽 존재 확인 (빠른 체크)
-	partitionResp, err := conn.ReadPartitions(topic)
-	if err == nil && len(partitionResp) > 0 {
-		topicCache[topic] = true // 캐시에 저장
-		return nil
-	}
-
-	// 토픽 생성
-	topicConfigs := []kafkaLib.TopicConfig{
-		{
-			Topic:             topic,
-			NumPartitions:     partitions,
-			ReplicationFactor: replicationFactor,
-		},
-	}
-
-	err = conn.CreateTopics(topicConfigs...)
-	if err != nil {
-		// 토픽이 이미 존재하는 경우의 에러는 무시
-		if err.Error() != "Topic already exists" {
-			return fmt.Errorf("failed to create topic '%s': %w", topic, err)
-		}
-	}
-
-	topicCache[topic] = true // 성공적으로 생성되었으므로 캐시에 저장
-	log.Printf("✅ Topic '%s' ensured with %d partitions", topic, partitions)
-	return nil
-}
-
 // EnsureKafkaConnection Kafka 연결 상태 확인
 func EnsureKafkaConnection(brokers []string) error {
 	for _, broker := range brokers {
@@ -253,35 +177,5 @@ func CleanupTopic(brokers []string, topic string) error {
 		}
 	}
 
-	return nil
-}
-
-// DeleteTopic 토픽 완전 삭제 (완전한 정리용)
-func DeleteTopic(brokers []string, topic string) error {
-	// broker 연결
-	conn, err := kafkaLib.DialContext(context.Background(), "tcp", brokers[0])
-	if err != nil {
-		return fmt.Errorf("failed to connect to kafka: %w", err)
-	}
-	defer conn.Close()
-
-	// 토픽 존재 확인
-	_, err = conn.ReadPartitions(topic)
-	if err != nil {
-		// 토픽이 존재하지 않으면 이미 삭제된 것으로 간주
-		log.Printf("⚠️ Topic '%s' does not exist, skipping deletion", topic)
-		return nil
-	}
-
-	// 토픽 삭제
-	err = conn.DeleteTopics(topic)
-	if err != nil {
-		return fmt.Errorf("failed to delete topic '%s': %w", topic, err)
-	}
-
-	// 캐시에서도 제거
-	delete(topicCache, topic)
-
-	log.Printf("✅ Topic '%s' completely deleted", topic)
 	return nil
 }

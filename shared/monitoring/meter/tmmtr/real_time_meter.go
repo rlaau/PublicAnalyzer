@@ -1,14 +1,9 @@
-package tm
+package tmmtr
 
 import (
 	"sync"
 	"time"
 )
-
-type TimeMeter interface {
-	SetStartTime(startTime time.Time)
-	GetSinceStartTime() time.Duration
-}
 
 // RealTimeMeter는 스레드 안전한 타임 미터입니다.
 type RealTimeMeter struct {

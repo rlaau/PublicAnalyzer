@@ -1,13 +1,15 @@
-package kfkmtr
+package kfkmntr
 
 import (
 	"log"
 	"sync/atomic"
 	"time"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring/meter/tps"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring/meter/tpsmtr"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring/monitor"
 )
+
+// * TPS는 리얼 타임 기반 시스템 상태를 측정하므로, time.Time을 사용한다.
 
 // KafkaStats Kafka 전용 통계 정보
 type KafkaStats struct {
@@ -30,8 +32,8 @@ type TpsStats struct {
 
 // KafkaMonitor Kafka Producer/Consumer TPS 모니터링
 type KafkaMonitor struct {
-	ProducerTPS tps.TPSMeter // Producer TPS 측정기
-	ConsumerTPS tps.TPSMeter // Consumer TPS 측정기
+	ProducerTPS tpsmtr.TPSMeter // Producer TPS 측정기
+	ConsumerTPS tpsmtr.TPSMeter // Consumer TPS 측정기
 
 	// TPS 리포팅 설정
 	tpsReportInterval time.Duration
@@ -46,8 +48,8 @@ type KafkaMonitor struct {
 // NewKafkaMonitor 새로운 Kafka 모니터 생성
 func NewKafkaMonitor() *KafkaMonitor {
 	return &KafkaMonitor{
-		ProducerTPS:  tps.NewSafeTPSMeter(),
-		ConsumerTPS:  tps.NewSafeTPSMeter(),
+		ProducerTPS:  tpsmtr.NewSafeTPSMeter(),
+		ConsumerTPS:  tpsmtr.NewSafeTPSMeter(),
 		reportStopCh: make(chan struct{}),
 	}
 }

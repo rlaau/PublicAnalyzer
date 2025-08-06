@@ -1,9 +1,8 @@
 package domain
 
 import (
-	"time"
-
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/ct"
 )
 
 // EdgeInfo represents evidence information for an EOA relationship
@@ -21,13 +20,13 @@ const (
 // EOANode represents an EOA address node in the relationship graph
 type EOANode struct {
 	Address   domain.Address
-	FirstSeen time.Time
-	LastSeen  time.Time
+	FirstSeen ct.ChainTime
+	LastSeen  ct.ChainTime
 }
 
 // NewEOANode creates a new EOA node
 func NewEOANode(addr domain.Address) *EOANode {
-	now := time.Now()
+	now := ct.Now()
 	return &EOANode{
 		Address:   addr,
 		FirstSeen: now,
@@ -37,7 +36,7 @@ func NewEOANode(addr domain.Address) *EOANode {
 
 // UpdateLastSeen updates the last seen timestamp
 func (n *EOANode) UpdateLastSeen() {
-	n.LastSeen = time.Now()
+	n.LastSeen = ct.Now()
 }
 
 // EOAEdge represents a relationship edge between two EOA addresses
@@ -47,13 +46,13 @@ type EOAEdge struct {
 	AddressB      domain.Address // Second EOA address
 	DepositAddr   domain.Address // The shared deposit address
 	Evidence      []EdgeInfo     // List of evidence supporting this connection
-	FirstSeen     time.Time      // When this relationship was first detected
-	LastConfirmed time.Time      // When this relationship was last confirmed
+	FirstSeen     ct.ChainTime   // When this relationship was first detected
+	LastConfirmed ct.ChainTime   // When this relationship was last confirmed
 }
 
 // NewEOAEdge creates a new EOA relationship edge
 func NewEOAEdge(addrA, addrB, depositAddr domain.Address, txID domain.TxId, infoCode uint8) *EOAEdge {
-	now := time.Now()
+	now := ct.Now()
 	return &EOAEdge{
 		AddressA:      addrA,
 		AddressB:      addrB,
@@ -67,7 +66,7 @@ func NewEOAEdge(addrA, addrB, depositAddr domain.Address, txID domain.TxId, info
 // AddEvidence adds new evidence to this edge
 func (e *EOAEdge) AddEvidence(txID domain.TxId, infoCode uint8) {
 	e.Evidence = append(e.Evidence, EdgeInfo{TxID: txID, InfoCode: infoCode})
-	e.LastConfirmed = time.Now()
+	e.LastConfirmed = ct.Now()
 }
 
 // EvidenceCount returns the number of supporting evidence entries
@@ -76,8 +75,8 @@ func (e *EOAEdge) EvidenceCount() int {
 }
 
 // IsStale checks if the edge is older than the window threshold
-func (e *EOAEdge) IsStale(windowThreshold time.Duration) bool {
-	return time.Since(e.LastConfirmed) > windowThreshold
+func (e *EOAEdge) IsStale(windowThreshold ct.ChainDuration) bool {
+	return ct.Since(e.LastConfirmed) > windowThreshold
 }
 
 // EOASubgraph represents a subgraph result from graph database queries
@@ -88,7 +87,7 @@ type EOASubgraph struct {
 	Nodes         []*EOANode       // All nodes in this subgraph
 	Edges         []*EOAEdge       // All edges in this subgraph
 	QueryDepth    int              // How many hops from center
-	CreatedAt     time.Time        // When this subgraph was created
+	CreatedAt     ct.ChainTime     // When this subgraph was created
 }
 
 // NewEOASubgraph creates a new EOA subgraph
@@ -99,7 +98,7 @@ func NewEOASubgraph(centerAddr domain.Address, depth int) *EOASubgraph {
 		Nodes:         make([]*EOANode, 0),
 		Edges:         make([]*EOAEdge, 0),
 		QueryDepth:    depth,
-		CreatedAt:     time.Now(),
+		CreatedAt:     ct.Now(),
 	}
 }
 

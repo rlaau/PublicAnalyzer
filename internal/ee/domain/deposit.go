@@ -2,15 +2,15 @@ package domain
 
 import (
 	"sync"
-	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/ct"
 )
 
 // DetectedDepositAddress represents a deposit address that has been identified
 type DetectedDepositAddress struct {
 	Address    domain.Address
-	DetectedAt time.Time
+	DetectedAt ct.ChainTime
 	CEXAddress domain.Address // The CEX address this deposit was detected from
 	TxCount    int64          // Number of transactions seen
 }
@@ -43,7 +43,7 @@ func (s *DetectedDepositSet) Add(addr domain.Address, cexAddr domain.Address) {
 	// Add new detected deposit address
 	s.addresses[addrStr] = &DetectedDepositAddress{
 		Address:    addr,
-		DetectedAt: time.Now(),
+		DetectedAt: ct.Now(),
 		CEXAddress: cexAddr,
 		TxCount:    1,
 	}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/txingester"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/ct"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 )
 
@@ -64,7 +65,8 @@ type TestingIngester struct {
 
 	// 큐 상태 추적을 위한 추가 필드들
 	//TODO 추후 얘내도 제거. 인제스터가 왜 큐 상태까지 보는것임. 백프레셔가 알아서 해라
-	estimatedQueueSize  float64   // 추정 큐 크기 (누적 계산)
+	estimatedQueueSize float64 // 추정 큐 크기 (누적 계산)
+	//얘는 벡프레셔의 "시간"이라서 실제 시간 사용
 	lastUpdateTime      time.Time // 마지막 업데이트 시간
 	smoothedProducerTPS float64   // 평활화된 Producer TPS
 	smoothedConsumerTPS float64   // 평활화된 Consumer TPS
@@ -74,7 +76,7 @@ type TestingIngester struct {
 }
 
 type IngestState struct {
-	LastTxTime time.Time // 마지막 처리한 Tx의 시간
+	LastTxTime ct.ChainTime // 마지막 처리한 Tx의 시간
 }
 
 // NewTestingIngester returns initialized TestingIngester (기본 모드)
@@ -84,7 +86,10 @@ func NewTestingIngester(infra txingester.Infrastructure) *TestingIngester {
 	}
 
 	return &TestingIngester{
-		state:             &IngestState{},
+		//TODO 추후 State가 "마지막 처리 시간을 로드 후 세이브"시켜야 함.
+		//TODO 이건 현재 테스팅 인제스터라서 걍 디폴트 값으로 해 둔거임.
+		//TODO 실전에서 이걸 세이브-로드하는 식으로 끝 값 기억후 그거 바탕 "타이머 이니셜라이즈"필요!!!
+		state:             &IngestState{LastTxTime: ct.DefaultChainTime},
 		minInterval:       1 * time.Second,
 		currentFileIndex:  0,
 		currentLineOffset: 0,
@@ -113,7 +118,10 @@ func NewTestingIngesterWithBatch(infra txingester.Infrastructure, batchSize int,
 		infra.TransactionSource = "/home/rlaaudgjs5638/chainAnalyzer/testdata"
 	}
 	return &TestingIngester{
-		state:             &IngestState{},
+		//TODO 추후 State가 "마지막 처리 시간을 로드 후 세이브"시켜야 함.
+		//TODO 이건 현재 테스팅 인제스터라서 걍 디폴트 값으로 해 둔거임.
+		//TODO 실전에서 이걸 세이브-로드하는 식으로 끝 값 기억후 그거 바탕 "타이머 이니셜라이즈"필요!!!
+		state:             &IngestState{LastTxTime: ct.DefaultChainTime},
 		minInterval:       1 * time.Second,
 		currentFileIndex:  0,
 		currentLineOffset: 0,
@@ -277,6 +285,8 @@ func (ti *TestingIngester) IngestTransaction(ctx context.Context) error {
 		var markedTxs []domain.MarkedTransaction
 
 		for _, raw := range rawTxs {
+			//* 인제스트 하면서 시간을 전파하는 대목
+			ct.AdvanceTo(ct.ParseEthTime(raw.BlockTime))
 			var markedTx domain.MarkedTransaction
 
 			if ti.CheckContractCreation(raw) {
@@ -285,7 +295,7 @@ func (ti *TestingIngester) IngestTransaction(ctx context.Context) error {
 				nonce, _ := strconv.ParseUint(raw.Nonce, 10, 64)
 
 				// CCE 모듈에 컨트렉트 등록하고 컨트렉트 주소 받기
-				contractAddr, err := ti.infraStructure.CCEService.RegisterContract(creator, nonce, raw.BlockTime)
+				contractAddr, err := ti.infraStructure.CCEService.RegisterContract(creator, nonce, ct.ParseEthTime(raw.BlockTime))
 				if err != nil {
 					log.Printf("Failed to register contract: %v", err)
 					continue
@@ -293,7 +303,7 @@ func (ti *TestingIngester) IngestTransaction(ctx context.Context) error {
 
 				// 컨트렉트 생성 트랜잭션을 마킹
 				markedTx = domain.MarkedTransaction{
-					BlockTime: raw.BlockTime,
+					BlockTime: ct.ParseEthTime(raw.BlockTime),
 					TxID:      ti.stringToTxId(raw.TxId),
 					From:      creator,
 					To:        contractAddr,
@@ -409,9 +419,12 @@ func (ti *TestingIngester) MarkTransaction(rawTx domain.RawTransaction) domain.M
 
 	// Parse nonce from rawTx (default to 0 if not available)
 	nonce, _ := strconv.ParseUint(rawTx.Nonce, 10, 64)
-
+	chainTime, err := ct.ParseRFC3339(rawTx.BlockTime)
+	if err != nil {
+		panic("현재 파싱 로직이 올바르지 않음. TestingIngester가 MarkTransaction과정에서 시간을 파싱하지 못함")
+	}
 	markedTx := domain.MarkedTransaction{
-		BlockTime: rawTx.BlockTime,
+		BlockTime: chainTime,
 		TxID:      ti.stringToTxId(rawTx.TxId),
 		From:      fromAddr,
 		To:        toAddr,
@@ -514,7 +527,7 @@ func (ti *TestingIngester) loadTestBatch(_ int, limit int) []domain.RawTransacti
 			txs = append(txs, domain.RawTransaction{
 				From:      from,
 				To:        to,
-				BlockTime: time.Now(), // 테스트용 현재 시간
+				BlockTime: time.Now().Format(time.RFC3339), // 테스트용 현재 시간
 				TxId:      fmt.Sprintf("test_tx_%d_%d", ti.currentFileIndex, ti.currentLineOffset+linesRead),
 			})
 			remainingToLoad--

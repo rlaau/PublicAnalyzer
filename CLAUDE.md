@@ -8,30 +8,63 @@ This is an Ethereum blockchain transaction analysis project (chainAnalyzer) writ
 
 ## Common Commands
 
-### Running the Project
+### Kafka Infrastructure Setup
 
 ```bash
-# Start Kafka infrastructure
+# Start Kafka and Zookeeper (required before running any services)
 docker-compose up -d
 
-# Build the project
+# Check Kafka health status
+docker-compose ps
+
+# View Kafka logs
+docker logs kafka
+
+# Test Kafka connectivity
+go run ./testcmd/kafka_auto_create.go
+```
+
+### Building and Running
+
+```bash
+# Build the main application
 go build -o chainanalyzer ./cmd/main.go
 
-# Run the project (currently contains TODOs)
+# Build specific test utilities
+go build -o kafka-test ./testcmd/kafka_auto_create.go
+
+# Run the main application (currently minimal - contains TODOs)
 ./chainanalyzer
 ```
 
 ### Testing
 
 ```bash
-# Run all tests
+# Run all tests (make sure Kafka is running first)
 go test -v ./...
 
 # Run tests for specific module
 go test -v ./internal/txingester/app/...
 
-# Run a specific test
+# Run the main integration test (requires Kafka)
 go test -v ./internal/txingester/app -run TestTestingIngester
+
+# Test individual components
+go test -v ./shared/kafka/...
+go test -v ./shared/groundknowledge/ct/...
+```
+
+### Module Dependencies
+
+```bash
+# Update Go modules
+go mod tidy
+
+# View module dependencies
+go mod graph
+
+# Download dependencies
+go mod download
 ```
 
 ### Development Environment Setup
@@ -44,6 +77,10 @@ swap=96GB
 ```
 
 ## Architecture
+
+### Main Concept
+This sysytem uses Domain-Driven and Event-Driven architecture to get simplexity and high performence.
+This sysyem runs on monolytic codebase.
 
 ### Module Structure
 
@@ -80,40 +117,66 @@ Each module in `/internal` follows this pattern:
 ### Shared Services
 
 Located in `/shared`:
-- `kafka/` - Kafka client implementation
-- `dto/` - Common data transfer objects
+- `kafka/` - Kafka client implementation with producer/consumer patterns
+- `dto/` - Common data transfer objects  
+- `domain/` - Core domain models (Address, Block, Contract, EOA, Transaction)
 - `alerting/` - Email alerting service
-- `monitoring/` - Profiling tools
-- `groundknowledge`-프로젝트에서 공유되는 지식을 관리함. (단일 진실 출처, 단일 시간 출처)
-- `workflow/` - 워커풀, 함수 파이프라이닝 패턴을 정의한 라이브러리. 로직을 구현하는 틀을 마련헀으므로, 로직 구현 시 해당 workflow에 맞춰 구현하면 좋을 거야.
-- `txfeeder` - 테스트 환경에서 "가상의 트랜잭션"을 생성 후 각 모듈에 주입해주는 역할을 해
+- `monitoring/` - Performance profiling and metrics collection
+  - `meter/` - Performance meters (count, time, TPS)
+  - `monitor/` - System monitors (channel, Kafka)
+- `groundknowledge/` - Shared project knowledge (single source of truth)
+  - `ct/` - ChainTimer for unified time source
+  - `ingestcontract/` - Contract ingestion utilities
+- `workflow/` - High-performance data processing patterns
+  - `workerpool/` - Worker pool implementation
+  - `fp/` - Functional programming utilities (map, monad patterns)
+- `txfeeder/` - Mock transaction generation for testing environments
 ## Important Notes
 
-- The project cannot store all blockchain data due to volume constraints
-- Analyzers use continuous learning and discard training data after use
-- Analysis results are stored hierarchically - some permanently, most temporarily
-- Follow Effective Go coding and naming conventions
-- The main entry point (`cmd/main.go`) is still under development with TODOs
+- **Kafka Dependency**: All tests and services require Kafka to be running (`docker-compose up -d`)
+- **Memory Requirements**: Project runs on WSL2 and requires significant memory allocation (24GB+)
+- **Data Constraints**: Cannot store all blockchain data due to volume constraints
+- **Learning Architecture**: Analyzers use continuous learning and discard training data after use
+- **Storage Hierarchy**: Analysis results stored hierarchically - some permanently, most temporarily
+- **Main Entry Point**: `cmd/main.go` is minimal and contains TODOs for future development
+- **Module Status**: Only `txingester` module is fully implemented; others are planned/in development
 
-## Test Data
+## Test Data and Development Files
 
-The `/testdata` directory contains Ethereum transaction CSV files (eth_tx_000000000000.csv through eth_tx_000000000046.csv) for testing the ingestion pipeline.
+- `/testdata/` - Ethereum transaction CSV files (eth_tx_000000000000.csv through eth_tx_000000000046.csv) for testing ingestion pipeline
+- `/testcmd/` - Utility commands for testing Kafka connectivity and setup
+- `docker-compose.yml` - Kafka and Zookeeper infrastructure setup
 
-### 주의 사항. 코딩 시 염두할 것.
-1. *_test.go파일은 go run하지 못하니, go test로 실행하든, 파일명을 바꾸든 해야 해.
-2. 임포트 사이클 오류를 조심해야 해.
-3. 클로드는 파일경로 참조를 많이 실수해. 파일 관련 오류가 있으면 파일경로 함수나 명령을 반드시 검토해.
-4. 너는 파일을 읽을 때 파싱을 잘못하는 경우가 많아. 파일 관련 로직을 쓰기 전, 파일 내부를 본 후 올바른 전처리, 파싱을 점검해.
-5. 퍼시스턴트 데이터를 관리할 땐, 해당 데이터가 로컬의 어디에 저장되어서 로드되는지 반드시 그 경로를 검토해. 모킹 데이터를 다룰 때도 마찬가지야.
-6. 공유 데이터 사용 시엔 @/groundknowledge, 병렬 워커풀 사용 시엔 @/workerpool폴더 탐조할 것.
+## Development Guidelines
 
-## annotaions
-1. effective go를 따라
-2. 다만, 주석은 
--1 "//TODO" <-나중에 할 것을 표시
--2 "//FIXME:"<- 추후 수정 표기
--3 "//!" <-아주 중요한 내용
--4 "//?" <-더 알아볼 내용들
--5 "//*" <-참고할 흥미로운 사실
--5 "//" <- 그냥 주석
-을 참고해서 써줘. 나머지 주석 스타일은 지양해줘. 이게 내 에디터에 잘 뜨거든.
+### Key Dependencies and External Services
+
+```go
+// Core dependencies in go.mod
+"github.com/segmentio/kafka-go"     // Kafka client
+"github.com/dgraph-io/badger/v4"    // Embedded database
+"cloud.google.com/go/bigquery"     // BigQuery integration
+```
+
+### Critical Development Considerations
+
+1. **Test Files**: `*_test.go` files cannot be run with `go run` - use `go test` or rename files
+2. **Import Cycles**: Avoid circular dependencies between modules - check import paths carefully
+3. **File Path Handling**: Always verify file paths and parsing logic before implementation
+4. **Persistent Data**: Check local storage paths for data persistence and mock data handling
+5. **Shared Resources**: 
+   - Use `/shared/groundknowledge/` for shared data access
+   - Use `/shared/workflow/workerpool/` for parallel processing patterns
+6. **Kafka Integration**: Ensure Kafka is running before executing any service or test
+
+### Code Style and Annotations
+
+Follow Effective Go conventions with these specific comment styles:
+- `//TODO` - Future implementation tasks
+- `//FIXME:` - Issues requiring future fixes
+- `//!` - Critical/important information
+- `//?` - Questions or areas needing investigation
+- `//*` - Interesting facts or references
+- `//` - Standard comments
+
+Avoid other comment styles for editor compatibility.

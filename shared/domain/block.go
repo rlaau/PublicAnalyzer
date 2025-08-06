@@ -1,6 +1,6 @@
 package domain
 
-import "time"
+import "github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/ct"
 
 type BlockNumber uint64
 
@@ -8,6 +8,6 @@ type BlockNumber uint64
 type Block struct {
 	Number       BlockNumber
 	Hash         string
-	Timestamp    time.Time
+	Timestamp    ct.ChainTime
 	Transactions []MarkedTransaction
 }

@@ -3,20 +3,20 @@ package app
 import (
 	"fmt"
 	"sync"
-	"time"
 
 	localdomain "github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/ct"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/fp"
 )
 
 const (
-	WindowSize      = 4 * 30 * 24 * time.Hour // 4개월 윈도우
-	SlideInterval   = 7 * 24 * time.Hour      // 1주일 슬라이드
-	TriggerInterval = 7 * 24 * time.Hour      // 1주일 트리거
-	MaxTimeBuckets  = 21                      // 4개월 / 1주일 = 21개 버킷
+	WindowSize      = 4 * 30 * 24 * ct.Hour // 4개월 윈도우
+	SlideInterval   = 7 * 24 * ct.Hour      // 1주일 슬라이드
+	TriggerInterval = 7 * 24 * ct.Hour      // 1주일 트리거
+	MaxTimeBuckets  = 21                    // 4개월 / 1주일 = 21개 버킷
 )
 
 // DualManager manages EOA relationships through sliding window analysis
@@ -36,17 +36,17 @@ type DualManager struct {
 
 // TimeBucket represents a time bucket in the sliding window
 type TimeBucket struct {
-	StartTime time.Time
-	EndTime   time.Time
-	ToUsers   map[domain.Address]time.Time // to_address -> first_active_time
+	StartTime ct.ChainTime
+	EndTime   ct.ChainTime
+	ToUsers   map[domain.Address]ct.ChainTime // to_address -> first_active_time
 }
 
 // NewTimeBucket creates a new time bucket
-func NewTimeBucket(startTime time.Time) *TimeBucket {
+func NewTimeBucket(startTime ct.ChainTime) *TimeBucket {
 	return &TimeBucket{
 		StartTime: startTime,
 		EndTime:   startTime.Add(SlideInterval),
-		ToUsers:   make(map[domain.Address]time.Time),
+		ToUsers:   make(map[domain.Address]ct.ChainTime),
 	}
 }
 
@@ -60,12 +60,6 @@ func NewDualManager(managerInfra infra.DualManagerInfra) (*DualManager, error) {
 		rearIndex:              0, // 첫 번째 버킷이 들어갈 위치
 		bucketCount:            0, // 초기 버킷 개수
 	}
-
-	//TODO 첫 번째 트랜잭션의 시간을 기준으로 동적으로 첫 버킷을 생성하도록 변경
-	//TODO 이렇게 하면 txGenerator의 시작 시간과 무관하게 첫 트랜잭션부터 1주일씩 버킷 생성됨
-	// Initialize first time bucket - 첫 트랜잭션이 올 때까지 대기
-	// now := time.Now()
-	// dm.firstActiveTimeBuckets[0] = NewTimeBucket(now)
 
 	return dm, nil
 }
@@ -260,7 +254,7 @@ var static_counter int64
 // ! - 한 번 윈도우에 들어온 to user의 값은 갱신하지 않음
 // ! - 4개월 간 선택받지 못하면 자동으로 떨어져 나감
 // ! - 에이징의 대상은 "to user"(입금 주소 탐지를 위한 핵심 로직)
-func (dm *DualManager) updateFirstActiveTimeBuckets(toAddr domain.Address, txTime time.Time) error {
+func (dm *DualManager) updateFirstActiveTimeBuckets(toAddr domain.Address, txTime ct.ChainTime) error {
 	// 1. 적절한 타임버킷 찾기 또는 생성 (쓰기 락 필요)
 	dm.bucketsMutex.Lock()
 	bucketIndex := dm.findOrCreateTimeBucket(txTime)
@@ -285,7 +279,7 @@ func (dm *DualManager) updateFirstActiveTimeBuckets(toAddr domain.Address, txTim
 }
 
 // findOrCreateTimeBucket finds appropriate bucket or creates new one with circular queue logic
-func (dm *DualManager) findOrCreateTimeBucket(txTime time.Time) int {
+func (dm *DualManager) findOrCreateTimeBucket(txTime ct.ChainTime) int {
 	// 첫 번째 트랜잭션인 경우 - 첫 트랜잭션 시간을 기준으로 첫 버킷 생성
 	if dm.bucketCount == 0 {
 		weekStart := dm.calculateWeekStart(txTime)
@@ -304,8 +298,11 @@ func (dm *DualManager) findOrCreateTimeBucket(txTime time.Time) int {
 	}
 
 	// 현재 활성 버킷들 중에서 txTime이 속할 버킷 찾기
+	//TODO 이 로직이 좀. 바보같은데? 왜 first버킷부터 그런 식으로 찾는거지??
+	//TODO 미리 인덱스-버킷을 만드는건 좋은데,퍼스트부터 할 필요는 전혀 없음. 최신부터 하면 1회만에 찾는데.
+	//TODO 거꾸로 하면 20회나 더해야함. 진짜 굳이 싶은 로직임.
 	for i := 0; i < dm.bucketCount; i++ {
-		bucketIndex := (dm.frontIndex + i) % MaxTimeBuckets
+		bucketIndex := (dm.rearIndex - i + MaxTimeBuckets) % MaxTimeBuckets
 		bucket := dm.firstActiveTimeBuckets[bucketIndex]
 
 		// 반닫힌 구간 [StartTime, EndTime): StartTime <= txTime < EndTime
@@ -315,6 +312,7 @@ func (dm *DualManager) findOrCreateTimeBucket(txTime time.Time) int {
 	}
 
 	// 디버깅: 새 버킷이 필요한 경우 현재 상황 로그
+	//이게 5인건 전혀 문제가 없음. 차피 맨 밑에서 add하므로, 여긴 걍 로그임
 	if dm.bucketCount < 5 { // 처음 몇 개만 로깅
 		fmt.Printf("🔍 No matching bucket found for txTime: %s (active buckets: %d)\n",
 			txTime.Format("2006-01-02 15:04:05"), dm.bucketCount)
@@ -332,7 +330,7 @@ func (dm *DualManager) findOrCreateTimeBucket(txTime time.Time) int {
 }
 
 // addNewTimeBucket adds a new time bucket using proper circular queue logic
-func (dm *DualManager) addNewTimeBucket(txTime time.Time) int {
+func (dm *DualManager) addNewTimeBucket(txTime ct.ChainTime) int {
 	weekStart := dm.calculateWeekStart(txTime)
 
 	if dm.bucketCount < MaxTimeBuckets {
@@ -353,11 +351,11 @@ func (dm *DualManager) addNewTimeBucket(txTime time.Time) int {
 		// 공간이 꽉 찬 경우 (21개): front 버킷을 제거하고 그 자리에 새 버킷 추가
 		oldBucket := dm.firstActiveTimeBuckets[dm.frontIndex]
 
-		// 기존 버킷의 pendingRelations 정리
+		// *기존 버킷의 pendingRelations 정리
+		// *타임 버킷과 팬딩 DB가 홀딩하는 유저는 항상 동기화됨.
 		pendingBefore := dm.infra.PendingRelationRepo.CountPendingRelations()
 		toUsersCount := len(oldBucket.ToUsers)
 		deletedRelations := 0
-
 		for toAddr := range oldBucket.ToUsers {
 			if err := dm.infra.PendingRelationRepo.DeletePendingRelations(toAddr); err != nil {
 				fmt.Printf("   ⚠️ Failed to delete pending relations for %s: %v\n", toAddr.String()[:10]+"...", err)
@@ -392,12 +390,12 @@ func (dm *DualManager) addNewTimeBucket(txTime time.Time) int {
 }
 
 // calculateWeekStart calculates the start of week for given time
-func (dm *DualManager) calculateWeekStart(t time.Time) time.Time {
+func (dm *DualManager) calculateWeekStart(t ct.ChainTime) ct.ChainTime {
 	// 주의 시작점을 일요일 00:00:00으로 계산
 	year, month, day := t.Date()
 	weekday := t.Weekday()
 	daysToSubtract := int(weekday)
-	weekStart := time.Date(year, month, day-daysToSubtract, 0, 0, 0, 0, t.Location())
+	weekStart := ct.ChainDate(year, month, day-daysToSubtract, 0, 0, 0, 0, t.Location())
 	return weekStart
 }
 

@@ -1,29 +1,38 @@
-package chaintimer
+package ct
 
 import (
 	"fmt"
 	"sync"
-	"time"
 )
 
 var (
 	instance         *ChainTimer
 	once             sync.Once
-	DefaultChainTime = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	DefaultChainTime = NewChainTime(2024, 1, 1, 0, 0, 0, 0)
 )
 
 // ChainTimer는 블록체인 TX 기반의 이산적 시간 업데이트를 위한 타이머입니다
 type ChainTimer struct {
 	mu          sync.RWMutex
-	currentTime time.Time
-	listeners   []chan time.Time
+	currentTime ChainTime
+	listeners   []chan ChainTime
 	tickers     []*ChainTicker
 	initialized bool
 }
 
+// Since는 특정 시점 이후 경과한 시간을 반환합니다
+func Since(t ChainTime) ChainDuration {
+	return Now().Sub(t)
+}
+
+// Until는 특정 시점까지 남은 시간을 반환합니다
+func Until(t ChainTime) ChainDuration {
+	return t.Sub(Now())
+}
+
 // AdvanceTo는 시간을 특정 시점으로 전진시킵니다
 // 새로운 시간이 현재 시간보다 이전이거나 같으면 무시됩니다
-func AdvanceTo(newTime time.Time) {
+func AdvanceTo(newTime ChainTime) {
 	timer := GetChainTimer()
 	timer.mu.Lock()
 	defer timer.mu.Unlock()
@@ -57,19 +66,19 @@ func AdvanceTo(newTime time.Time) {
 }
 
 // Subscribe는 시간 업데이트를 받을 채널을 등록합니다
-func Subscribe() <-chan time.Time {
+func Subscribe() <-chan ChainTime {
 	timer := GetChainTimer()
 	timer.mu.Lock()
 	defer timer.mu.Unlock()
 
 	// 고속 처리 환경에서 혹시 몰라서 안전 용도로 5의 용량 부여
-	ch := make(chan time.Time, 5)
+	ch := make(chan ChainTime, 5)
 	timer.listeners = append(timer.listeners, ch)
 	return ch
 }
 
 // Unsubscribe는 리스너를 제거합니다
-func Unsubscribe(ch <-chan time.Time) {
+func Unsubscribe(ch <-chan ChainTime) {
 	timer := GetChainTimer()
 	timer.mu.Lock()
 	defer timer.mu.Unlock()
@@ -83,22 +92,12 @@ func Unsubscribe(ch <-chan time.Time) {
 	}
 }
 
-// Since는 특정 시점 이후 경과한 시간을 반환합니다
-func Since(t time.Time) time.Duration {
-	return Now().Sub(t)
-}
-
-// Until는 특정 시점까지 남은 시간을 반환합니다
-func Until(t time.Time) time.Duration {
-	return t.Sub(Now())
-}
-
 // GetChainTimer는 ChainTimer의 싱글톤 인스턴스를 반환합니다
 // 초기화되지 않았다면 DefaultChainTime으로 자동 초기화됩니다
 func GetChainTimer() *ChainTimer {
 	once.Do(func() {
 		instance = &ChainTimer{
-			listeners: make([]chan time.Time, 0),
+			listeners: make([]chan ChainTime, 0),
 			tickers:   make([]*ChainTicker, 0),
 		}
 	})
@@ -118,7 +117,7 @@ func GetChainTimer() *ChainTimer {
 
 // Initialize는 싱글톤 ChainTimer를 초기화합니다
 // 이미 초기화되었다면 false를 반환합니다
-func Initialize(initialTime time.Time) bool {
+func Initialize(initialTime ChainTime) bool {
 	timer := GetChainTimer()
 	timer.mu.Lock()
 	defer timer.mu.Unlock()
@@ -140,7 +139,7 @@ func Reset() {
 }
 
 // Now는 현재 체인 시간을 반환합니다
-func Now() time.Time {
+func Now() ChainTime {
 	timer := GetChainTimer()
 	timer.mu.RLock()
 	defer timer.mu.RUnlock()

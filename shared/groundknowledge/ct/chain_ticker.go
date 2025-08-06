@@ -1,8 +1,7 @@
-package chaintimer
+package ct
 
 import (
 	"sync"
-	"time"
 )
 
 // Ticker는 "큰 시간 점프"시에, 그 시간 간격의 크기만큼 틱을 밀어넣음. 이때 채널 부하 발생 가능함.
@@ -11,21 +10,21 @@ const TickChannelBuffer int32 = 100
 // ChainTicker는 체인 시간 기반의 주기적 틱을 생성합니다
 // ChainTicker는 체인 시간 기반의 주기적 틱을 생성합니다
 type ChainTicker struct {
-	C        <-chan time.Time
-	c        chan time.Time
-	duration time.Duration
-	nextTick time.Time // 다음 틱 목표 시간
+	C        <-chan ChainTime
+	c        chan ChainTime
+	duration ChainDuration
+	nextTick ChainTime // 다음 틱 목표 시간
 	stopped  bool
 	mu       sync.Mutex
 }
 
 // NewTicker는 새로운 ChainTicker를 생성합니다
-func NewTicker(d time.Duration) *ChainTicker {
+func NewTicker(d ChainDuration) *ChainTicker {
 	timer := GetChainTimer()
 	timer.mu.Lock()
 	defer timer.mu.Unlock()
 
-	c := make(chan time.Time, 1)
+	c := make(chan ChainTime, TickChannelBuffer)
 	ticker := &ChainTicker{
 		C:        c,
 		c:        c,
@@ -40,7 +39,7 @@ func NewTicker(d time.Duration) *ChainTicker {
 
 // update는 시간이 전진할 때 호출되어 필요한 만큼 틱을 생성합니다
 // * 틱은 시간의 big jump시 "그 시간 간격동안 발생했어야 할 틱"을 한번에 전송함
-func (t *ChainTicker) update(newTime time.Time) {
+func (t *ChainTicker) update(newTime ChainTime) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
