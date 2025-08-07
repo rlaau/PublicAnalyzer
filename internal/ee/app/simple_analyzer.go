@@ -151,6 +151,9 @@ func (a *SimpleEOAAnalyzer) Stop() error {
 }
 
 // ProcessTransaction 트랜잭션 처리 (non-blocking)
+// TODO 현재 이 부분에서 스레드 간 성능 저하 발생함. 스레드 1개나 16개나 동일 성능 보임
+// TODO TxJob의 Do()가 서로 경합 발생. 패닉은 아니지만, 암묵적 성능 저하 발생중
+// TODO 문제에 대한 진단 및 추후 개선 방안은 /debug의 upgrade_solution.md에 자세히 적어놨음.
 func (a *SimpleEOAAnalyzer) ProcessTransaction(tx *shareddomain.MarkedTransaction) error {
 	job := NewTransactionJob(tx, a, 0) // workerID는 워커풀에서 자동 관리
 	select {
