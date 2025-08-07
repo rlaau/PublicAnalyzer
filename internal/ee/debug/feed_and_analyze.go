@@ -110,7 +110,8 @@ func setupIsolatedEviromentConfig() *IsolatedTestConfig {
 		TestDuration:      60 * time.Second, // 1분 테스트 (성능 검증용)
 		TotalTransactions: 2_000_000,        // 200만개로 충분한 순환 확인
 		GenerationRate:    50_000,           // 초당 5만개로 고속 진행
-		AnalysisWorkers:   8,                // 워커 8 유지
+		//TODO 현재 이새끼 오류있음 아오
+		AnalysisWorkers: 1, // 워커 8 유지
 	}
 
 	fmt.Printf("   ✅ Isolated directory: %s\n", config.IsolatedDir)
@@ -201,7 +202,7 @@ func createSimplifiedPipeline(config *IsolatedTestConfig, ctx context.Context) (
 // runSimplifiedPipelineTest 간소화된 파이프라인 테스트 실행
 func runSimplifiedPipelineTest(txFeeder *txFeeder.TxFeeder, analyzer app.EOAAnalyzer, _ chan *shareddomain.MarkedTransaction, config *IsolatedTestConfig, ctx context.Context) error {
 	fmt.Println("\n4️⃣ Running simplified pipeline test...")
-	
+
 	go func() {
 		if err := txFeeder.Start(ctx); err != nil {
 			fmt.Printf("   ❌ TxGenerator failed to start: %v\n", err)

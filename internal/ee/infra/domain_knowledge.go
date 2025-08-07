@@ -91,7 +91,7 @@ func (gk *GroundKnowledge) DetectNewDepositAddress(fromAddr, cexAddr domain.Addr
 	fmt.Printf("   💾 Added to in-memory set (size: %d)\n", gk.detectedDepositSet.Size())
 
 	// Persist new detection to storage
-	deposit := &localdomain.DetectedDepositAddress{
+	deposit := &localdomain.DetectedDepositWithEvidence{
 		Address:    fromAddr,
 		DetectedAt: ct.Now(),
 		CEXAddress: cexAddr,
@@ -110,7 +110,7 @@ func (gk *GroundKnowledge) DetectNewDepositAddress(fromAddr, cexAddr domain.Addr
 }
 
 // GetDepositInfo retrieves information about a deposit address
-func (gk *GroundKnowledge) GetDepositInfo(addr domain.Address) (*localdomain.DetectedDepositAddress, bool) {
+func (gk *GroundKnowledge) GetDepositInfo(addr domain.Address) (*localdomain.DetectedDepositWithEvidence, bool) {
 	gk.mutex.RLock()
 	defer gk.mutex.RUnlock()
 
@@ -126,7 +126,7 @@ func (gk *GroundKnowledge) GetCEXAddresses() []string {
 }
 
 // GetDetectedDeposits returns all detected deposit addresses
-func (gk *GroundKnowledge) GetDetectedDeposits() []*localdomain.DetectedDepositAddress {
+func (gk *GroundKnowledge) GetDetectedDeposits() []*localdomain.DetectedDepositWithEvidence {
 	gk.mutex.RLock()
 	defer gk.mutex.RUnlock()
 

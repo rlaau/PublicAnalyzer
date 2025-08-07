@@ -7,8 +7,8 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/ct"
 )
 
-// DetectedDepositAddress represents a deposit address that has been identified
-type DetectedDepositAddress struct {
+// DetectedDepositWithEvidence represents a deposit address that has been identified
+type DetectedDepositWithEvidence struct {
 	Address    domain.Address
 	DetectedAt ct.ChainTime
 	CEXAddress domain.Address // The CEX address this deposit was detected from
@@ -17,14 +17,14 @@ type DetectedDepositAddress struct {
 
 // DetectedDepositSet manages a collection of detected deposit addresses in memory
 type DetectedDepositSet struct {
-	addresses map[string]*DetectedDepositAddress
+	addresses map[string]*DetectedDepositWithEvidence
 	mutex     sync.RWMutex
 }
 
 // NewDetectedDepositSet creates a new detected deposit address set
 func NewDetectedDepositSet() *DetectedDepositSet {
 	return &DetectedDepositSet{
-		addresses: make(map[string]*DetectedDepositAddress),
+		addresses: make(map[string]*DetectedDepositWithEvidence),
 	}
 }
 
@@ -41,7 +41,7 @@ func (s *DetectedDepositSet) Add(addr domain.Address, cexAddr domain.Address) {
 	}
 
 	// Add new detected deposit address
-	s.addresses[addrStr] = &DetectedDepositAddress{
+	s.addresses[addrStr] = &DetectedDepositWithEvidence{
 		Address:    addr,
 		DetectedAt: ct.Now(),
 		CEXAddress: cexAddr,
@@ -50,7 +50,7 @@ func (s *DetectedDepositSet) Add(addr domain.Address, cexAddr domain.Address) {
 }
 
 // LoadFromPersisted loads detected deposits from persistent storage
-func (s *DetectedDepositSet) LoadFromPersisted(deposits []*DetectedDepositAddress) {
+func (s *DetectedDepositSet) LoadFromPersisted(deposits []*DetectedDepositWithEvidence) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -69,7 +69,7 @@ func (s *DetectedDepositSet) Contains(addr domain.Address) bool {
 }
 
 // Get retrieves a detected deposit address info
-func (s *DetectedDepositSet) Get(addr domain.Address) (*DetectedDepositAddress, bool) {
+func (s *DetectedDepositSet) Get(addr domain.Address) (*DetectedDepositWithEvidence, bool) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
@@ -86,11 +86,11 @@ func (s *DetectedDepositSet) Size() int {
 }
 
 // GetAll returns all detected deposit addresses
-func (s *DetectedDepositSet) GetAll() []*DetectedDepositAddress {
+func (s *DetectedDepositSet) GetAll() []*DetectedDepositWithEvidence {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
-	result := make([]*DetectedDepositAddress, 0, len(s.addresses))
+	result := make([]*DetectedDepositWithEvidence, 0, len(s.addresses))
 	for _, deposit := range s.addresses {
 		result = append(result, deposit)
 	}

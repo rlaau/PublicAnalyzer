@@ -209,13 +209,13 @@ func (a *SimpleEOAAnalyzer) batchConsumerWorker(ctx context.Context) {
 			}
 
 			// 배치 처리 (진정한 배칭!)
-			a.processBatch(messages)
+			a.processTransactionParrell(messages)
 		}
 	}
 }
 
-// processBatch 배치 메시지 처리 (고효율)
-func (a *SimpleEOAAnalyzer) processBatch(messages []kafka.Message[*shareddomain.MarkedTransaction]) {
+// processTransactionParrell 배치 메시지 처리 (고효율)
+func (a *SimpleEOAAnalyzer) processTransactionParrell(messages []kafka.Message[*shareddomain.MarkedTransaction]) {
 	batchSize := len(messages)
 	processedCount := atomic.LoadInt64(&a.stats.TotalProcessed)
 
@@ -243,8 +243,10 @@ func (a *SimpleEOAAnalyzer) processBatch(messages []kafka.Message[*shareddomain.
 		case a.infra.TxJobChannel <- job:
 			// 성공
 		default:
+			// 채널이 꽉 찬 경우 잠시 입력 멈추기
+			fmt.Printf("현재 EOA Analyzer의 워커풀 채널이 다 들어찼음. 0.1초간 입력을 블로킹함.")
+			time.Sleep(10 * time.Millisecond) // 너무 무거운 대기는 피하기
 			// 채널이 가득 찬 경우 드롭
-			atomic.AddInt64(&a.stats.DroppedTxs, 1)
 		}
 	}
 
@@ -401,11 +403,6 @@ func (a *SimpleEOAAnalyzer) shutdown() error {
 		log.Printf("🔧 WorkerPool shutdown completed")
 	}
 
-	// 새 트랜잭션 수신 중지 (한 번만)
-	a.shutdownOnce.Do(func() {
-		close(a.infra.TxJobChannel)
-	})
-
 	// 모든 워커 완료 대기
 	done := make(chan struct{})
 	go func() {
@@ -419,6 +416,10 @@ func (a *SimpleEOAAnalyzer) shutdown() error {
 	case <-time.After(10 * time.Second):
 		log.Printf("⚠️ Shutdown timeout")
 	}
+	// 활동이 종료된 채널을 닫기
+	a.shutdownOnce.Do(func() {
+		close(a.infra.TxJobChannel)
+	})
 
 	// 최종 통계 출력
 	if a.config.ResultReporting {

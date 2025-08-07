@@ -18,16 +18,16 @@ import (
 // DepositRepository defines the interface for deposit address persistence
 type DepositRepository interface {
 	// SaveDetectedDeposit saves a detected deposit address to persistent storage
-	SaveDetectedDeposit(deposit *domain.DetectedDepositAddress) error
+	SaveDetectedDeposit(deposit *domain.DetectedDepositWithEvidence) error
 
 	// LoadDetectedDeposits loads all detected deposit addresses from storage
-	LoadDetectedDeposits() ([]*domain.DetectedDepositAddress, error)
+	LoadDetectedDeposits() ([]*domain.DetectedDepositWithEvidence, error)
 
 	// IsDepositAddress checks if an address is a known deposit address
 	IsDepositAddress(addr sharedDomain.Address) (bool, error)
 
 	// GetDepositInfo retrieves deposit address information
-	GetDepositInfo(addr sharedDomain.Address) (*domain.DetectedDepositAddress, error)
+	GetDepositInfo(addr sharedDomain.Address) (*domain.DetectedDepositWithEvidence, error)
 
 	// UpdateTxCount updates the transaction count for a deposit address
 	UpdateTxCount(addr sharedDomain.Address, count int64) error
@@ -47,7 +47,12 @@ func NewFileDepositRepository(filePath string) *FileDepositRepository {
 }
 
 // SaveDetectedDeposit saves a detected deposit address to CSV file
-func (r *FileDepositRepository) SaveDetectedDeposit(deposit *domain.DetectedDepositAddress) error {
+// TODO 성능 면에서 큰 문제가 있는 로직. 현재는 CSV에서 항상 전체 탐색을 통해 Save하고 있음
+// TODO 차라리 현실에선 "디포짓 주소를 맵에 다 띄워두고 블룸필터 갈겨가면서"-> "존재 검증 후"-> "CSV나 벳져 추가"로만 바꿔도 좋을 듯
+// TODO 벳져 로직이 부담스럽다면 중복체킹이라도 최대한 막아서 CSV전체 탐색을 업애기. CSV다 읽어들여오는건 반드시 병목이 됨. map 혹은 블룸필터 필수 사용하기
+// TODO 이는 향후 큰 손실이 될 수 있다. 차라리 벳져라도 쓰는게 나을 것임
+// TODO 기능 자체는 정상 작동하지만, 고성능 환경을 원한다면 반드시 수정해야 할 대상.
+func (r *FileDepositRepository) SaveDetectedDeposit(deposit *domain.DetectedDepositWithEvidence) error {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
@@ -56,8 +61,8 @@ func (r *FileDepositRepository) SaveDetectedDeposit(deposit *domain.DetectedDepo
 		return fmt.Errorf("failed to ensure file exists: %w", err)
 	}
 
-	// Load existing deposits without lock to avoid deadlock
-	deposits, err := r.loadDetectedDepositsNoLock()
+	// Load existing depositInfos without lock to avoid deadlock
+	depositInfos, err := r.loadDetectedDepositsNoLock()
 	if err != nil {
 		return fmt.Errorf("failed to load deposits: %w", err)
 	}
@@ -69,7 +74,7 @@ func (r *FileDepositRepository) SaveDetectedDeposit(deposit *domain.DetectedDepo
 	//TODO Save호출하기 전 Set에서 한번 확인 후 제거함.
 	addrStr := deposit.Address.String()
 	found := false
-	for _, existing := range deposits {
+	for _, existing := range depositInfos {
 		if existing.Address.String() == addrStr {
 			// Update existing deposit
 			existing.TxCount = deposit.TxCount
@@ -80,7 +85,7 @@ func (r *FileDepositRepository) SaveDetectedDeposit(deposit *domain.DetectedDepo
 
 	if !found {
 		// Add new deposit
-		deposits = append(deposits, deposit)
+		depositInfos = append(depositInfos, deposit)
 	}
 
 	// Rewrite file with all deposits
@@ -89,7 +94,7 @@ func (r *FileDepositRepository) SaveDetectedDeposit(deposit *domain.DetectedDepo
 }
 
 // LoadDetectedDeposits loads all detected deposit addresses from CSV file
-func (r *FileDepositRepository) LoadDetectedDeposits() ([]*domain.DetectedDepositAddress, error) {
+func (r *FileDepositRepository) LoadDetectedDeposits() ([]*domain.DetectedDepositWithEvidence, error) {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 
@@ -97,10 +102,10 @@ func (r *FileDepositRepository) LoadDetectedDeposits() ([]*domain.DetectedDeposi
 }
 
 // loadDetectedDepositsNoLock loads deposits without taking mutex lock (for internal use)
-func (r *FileDepositRepository) loadDetectedDepositsNoLock() ([]*domain.DetectedDepositAddress, error) {
+func (r *FileDepositRepository) loadDetectedDepositsNoLock() ([]*domain.DetectedDepositWithEvidence, error) {
 	// Return empty slice if file doesn't exist
 	if _, err := os.Stat(r.filePath); os.IsNotExist(err) {
-		return []*domain.DetectedDepositAddress{}, nil
+		return []*domain.DetectedDepositWithEvidence{}, nil
 	}
 
 	file, err := os.Open(r.filePath)
@@ -117,7 +122,7 @@ func (r *FileDepositRepository) loadDetectedDepositsNoLock() ([]*domain.Detected
 		return nil, fmt.Errorf("failed to read CSV records: %w", err)
 	}
 
-	var deposits []*domain.DetectedDepositAddress
+	var deposits []*domain.DetectedDepositWithEvidence
 
 	for i, record := range records {
 		// Skip header if present
@@ -159,7 +164,7 @@ func (r *FileDepositRepository) IsDepositAddress(addr sharedDomain.Address) (boo
 }
 
 // GetDepositInfo retrieves deposit address information
-func (r *FileDepositRepository) GetDepositInfo(addr sharedDomain.Address) (*domain.DetectedDepositAddress, error) {
+func (r *FileDepositRepository) GetDepositInfo(addr sharedDomain.Address) (*domain.DetectedDepositWithEvidence, error) {
 	deposits, err := r.LoadDetectedDeposits()
 	if err != nil {
 		return nil, err
@@ -232,7 +237,7 @@ func (r *FileDepositRepository) ensureFileExists() error {
 }
 
 // rewriteFile rewrites the entire file with given deposits
-func (r *FileDepositRepository) rewriteFile(deposits []*domain.DetectedDepositAddress) error {
+func (r *FileDepositRepository) rewriteFile(deposits []*domain.DetectedDepositWithEvidence) error {
 	// Create temporary file
 	tmpPath := r.filePath + ".tmp"
 	tmpFile, err := os.Create(tmpPath)
@@ -266,7 +271,7 @@ func (r *FileDepositRepository) rewriteFile(deposits []*domain.DetectedDepositAd
 	// Atomic replace
 	return os.Rename(tmpPath, r.filePath)
 }
-func (r *FileDepositRepository) appendDepositToFile(deposit *domain.DetectedDepositAddress) error {
+func (r *FileDepositRepository) appendDepositToFile(deposit *domain.DetectedDepositWithEvidence) error {
 	// Check if file exists and whether it's empty (헤더가 필요할 수 있음)
 	needHeader := false
 	if _, err := os.Stat(r.filePath); errors.Is(err, os.ErrNotExist) {
@@ -314,7 +319,7 @@ func (r *FileDepositRepository) appendDepositToFile(deposit *domain.DetectedDepo
 }
 
 // parseDepositRecord parses a CSV record into DetectedDepositAddress
-func (r *FileDepositRepository) parseDepositRecord(record []string) (*domain.DetectedDepositAddress, error) {
+func (r *FileDepositRepository) parseDepositRecord(record []string) (*domain.DetectedDepositWithEvidence, error) {
 	if len(record) < 4 {
 		return nil, fmt.Errorf("invalid record length: %d", len(record))
 	}
@@ -343,7 +348,7 @@ func (r *FileDepositRepository) parseDepositRecord(record []string) (*domain.Det
 		return nil, fmt.Errorf("failed to parse tx count: %w", err)
 	}
 
-	return &domain.DetectedDepositAddress{
+	return &domain.DetectedDepositWithEvidence{
 		Address:    addr,
 		DetectedAt: detectedAt,
 		CEXAddress: cexAddr,

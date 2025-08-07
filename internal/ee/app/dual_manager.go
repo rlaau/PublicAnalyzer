@@ -150,8 +150,6 @@ func (dm *DualManager) handleExceptionalAddress(_ domain.Address, _ string) erro
 }
 
 // handleDepositDetection handles detection of new deposit addresses
-// ! 성능 관련 로직이 (케스케이딩 버킷) 수정이 필요한 함수
-// TODO 성능 관련 로직 수정 필요!!
 func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Address, tx *domain.MarkedTransaction) error {
 	//fmt.Printf("💰 handleDepositDetection: %s → CEX %s\n",	depositAddr.String()[:10]+"...", cexAddr.String()[:10]+"...")
 
@@ -169,11 +167,10 @@ func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Addres
 	if err == nil && len(fromAddresses) > 0 {
 		// 3. [](to,from) 쌍들을 그래프DB에 저장
 		for _, fromAddr := range fromAddresses {
-			if err != nil {
-				continue
-			}
 
 			//TODO 이 구문 수정 필요. 여기의 txID는 cex,deposit의 관계지, deposit->eoa의 txId가 아님
+			//TODO그러니까, 여기서 "가장 중요한 값인" "depsot,eoa"의 관계 자체는 잘 저장이 됨. 근데 얘내를 증명하느 "TxID"가 deposit-cex의 것임.
+			//TODO 그러니까, "애초부타 pendingDB가 txID를 함꼐 저장하게 해서" fromInfo 방식 타입으로 불러온 후 제대로된 txID저장 필요
 			//TODO 추후 pendingRelationsDB에서 fromInfo를 [txTD, address]로 저장하게 한 후, 그거스이 txID쓰기
 			if err := dm.saveConnectionToGraphDB(fromAddr, depositAddr, tx.TxID); err != nil {
 				return err

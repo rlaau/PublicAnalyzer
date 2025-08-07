@@ -28,7 +28,7 @@ func New(ctx context.Context, numWorkers int, jobChan <-chan Job) *Pool {
 		cancel:  cancel,
 	}
 
-	for i := 0; i < numWorkers; i++ {
+	for i := range numWorkers {
 		p.wg.Add(1)
 		go p.worker(i)
 	}

@@ -38,7 +38,9 @@ func NewInfraByConfig(config *EOAAnalyzerConfig, ctx context.Context) infra.Tota
 	}
 	log.Printf("🗂️  Graph repository at: %s", config.GraphDBPath)
 	batchConsumer := loadKafkaBatchConsumer(config.Mode, config.Name)
+	//* 워커 풀에 쓸 채널 생성
 	txJobChannel := make(chan workerpool.Job, config.ChannelBufferSize)
+	//* 워커풀 생성 및 채널 등록
 	workerPool := workerpool.New(ctx, config.WorkerCount, txJobChannel)
 	log.Printf("🔧 WorkerPool initialized with %d workers", config.WorkerCount)
 	pendingDB, err := infra.NewBadgerPendingRelationRepo(config.PendingDBPath)
