@@ -14,7 +14,7 @@ import (
 	"time"
 
 	sharedDomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/ct"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/domain"
 )
@@ -629,9 +629,9 @@ func (g *TxFeeder) createMarkedTransaction(from, to sharedDomain.Address) shared
 	//* 이 시점에서 "발생한 시간+지연 시간"이 "시스템 시간"으로 편입됨.
 	delay := 0 * time.Second
 	//*시스템에 도달 한 것을 시뮬레이션 시킴. 이 시점에서 "txFeeder" txIngester처럼 "시간 전파"도 일으켜야 함
-	chainTime := ct.ChainTime(g.state.CurrentTime.Add(delay))
+	chainTime := chaintimer.ChainTime(g.state.CurrentTime.Add(delay))
 	//* 시간 전파 로직
-	ct.AdvanceTo(chainTime)
+	chaintimer.AdvanceTo(chainTime)
 	return sharedDomain.MarkedTransaction{
 		// 여기선 발생 즉시 주입되므로 지연 시간이 0이라서 currentTime==chainTime
 		BlockTime: chainTime,

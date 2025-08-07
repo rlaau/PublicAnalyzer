@@ -14,7 +14,7 @@ import (
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/txingester"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/ct"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 )
 
@@ -76,7 +76,7 @@ type TestingIngester struct {
 }
 
 type IngestState struct {
-	LastTxTime ct.ChainTime // 마지막 처리한 Tx의 시간
+	LastTxTime chaintimer.ChainTime // 마지막 처리한 Tx의 시간
 }
 
 // NewTestingIngester returns initialized TestingIngester (기본 모드)
@@ -89,7 +89,7 @@ func NewTestingIngester(infra txingester.Infrastructure) *TestingIngester {
 		//TODO 추후 State가 "마지막 처리 시간을 로드 후 세이브"시켜야 함.
 		//TODO 이건 현재 테스팅 인제스터라서 걍 디폴트 값으로 해 둔거임.
 		//TODO 실전에서 이걸 세이브-로드하는 식으로 끝 값 기억후 그거 바탕 "타이머 이니셜라이즈"필요!!!
-		state:             &IngestState{LastTxTime: ct.DefaultChainTime},
+		state:             &IngestState{LastTxTime: chaintimer.DefaultChainTime},
 		minInterval:       1 * time.Second,
 		currentFileIndex:  0,
 		currentLineOffset: 0,
@@ -121,7 +121,7 @@ func NewTestingIngesterWithBatch(infra txingester.Infrastructure, batchSize int,
 		//TODO 추후 State가 "마지막 처리 시간을 로드 후 세이브"시켜야 함.
 		//TODO 이건 현재 테스팅 인제스터라서 걍 디폴트 값으로 해 둔거임.
 		//TODO 실전에서 이걸 세이브-로드하는 식으로 끝 값 기억후 그거 바탕 "타이머 이니셜라이즈"필요!!!
-		state:             &IngestState{LastTxTime: ct.DefaultChainTime},
+		state:             &IngestState{LastTxTime: chaintimer.DefaultChainTime},
 		minInterval:       1 * time.Second,
 		currentFileIndex:  0,
 		currentLineOffset: 0,
@@ -286,7 +286,7 @@ func (ti *TestingIngester) IngestTransaction(ctx context.Context) error {
 
 		for _, raw := range rawTxs {
 			//* 인제스트 하면서 시간을 전파하는 대목
-			ct.AdvanceTo(ct.ParseEthTime(raw.BlockTime))
+			chaintimer.AdvanceTo(chaintimer.ParseEthTime(raw.BlockTime))
 			var markedTx domain.MarkedTransaction
 
 			if ti.CheckContractCreation(raw) {
@@ -295,7 +295,7 @@ func (ti *TestingIngester) IngestTransaction(ctx context.Context) error {
 				nonce, _ := strconv.ParseUint(raw.Nonce, 10, 64)
 
 				// CCE 모듈에 컨트렉트 등록하고 컨트렉트 주소 받기
-				contractAddr, err := ti.infraStructure.CCEService.RegisterContract(creator, nonce, ct.ParseEthTime(raw.BlockTime))
+				contractAddr, err := ti.infraStructure.CCEService.RegisterContract(creator, nonce, chaintimer.ParseEthTime(raw.BlockTime))
 				if err != nil {
 					log.Printf("Failed to register contract: %v", err)
 					continue
@@ -303,7 +303,7 @@ func (ti *TestingIngester) IngestTransaction(ctx context.Context) error {
 
 				// 컨트렉트 생성 트랜잭션을 마킹
 				markedTx = domain.MarkedTransaction{
-					BlockTime: ct.ParseEthTime(raw.BlockTime),
+					BlockTime: chaintimer.ParseEthTime(raw.BlockTime),
 					TxID:      ti.stringToTxId(raw.TxId),
 					From:      creator,
 					To:        contractAddr,
@@ -419,7 +419,7 @@ func (ti *TestingIngester) MarkTransaction(rawTx domain.RawTransaction) domain.M
 
 	// Parse nonce from rawTx (default to 0 if not available)
 	nonce, _ := strconv.ParseUint(rawTx.Nonce, 10, 64)
-	chainTime, err := ct.ParseRFC3339(rawTx.BlockTime)
+	chainTime, err := chaintimer.ParseRFC3339(rawTx.BlockTime)
 	if err != nil {
 		panic("현재 파싱 로직이 올바르지 않음. TestingIngester가 MarkTransaction과정에서 시간을 파싱하지 못함")
 	}

@@ -4,7 +4,7 @@ import (
 	"encoding/hex"
 	"math/big"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/ct"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
 )
 
 type RawTransaction struct {
@@ -17,7 +17,7 @@ type RawTransaction struct {
 
 // 트랜잭션 구조체
 type MarkedTransaction struct {
-	BlockTime ct.ChainTime
+	BlockTime chaintimer.ChainTime
 	TxID      TxId
 	TxSyntax  [2]ContractBoolMark //해당 tx가 C2C, C2C, C2D, D2C, D2D 중 어떤 형태인지 표기
 	Nonce     uint64

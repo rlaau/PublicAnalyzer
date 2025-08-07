@@ -28,6 +28,7 @@ type CountingBackpressure interface {
 	GetNextSignal() SpeedSignal
 
 	// Push 방식 (옵션): 여전히 채널 기반도 지원
+	// 혹시라도 비동기 백프레싱이 필요하려나 싶어서 코드를 남겨뒀는데, 굳이 사용을 추천하진 않음.
 	RegisterBackpressureChannel(c chan SpeedSignal)
 
 	// 모니터링 제어

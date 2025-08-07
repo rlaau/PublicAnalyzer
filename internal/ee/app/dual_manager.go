@@ -8,15 +8,15 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/ct"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/fp"
 )
 
 const (
-	WindowSize      = 4 * 30 * 24 * ct.Hour // 4개월 윈도우
-	SlideInterval   = 7 * 24 * ct.Hour      // 1주일 슬라이드
-	TriggerInterval = 7 * 24 * ct.Hour      // 1주일 트리거
-	MaxTimeBuckets  = 21                    // 4개월 / 1주일 = 21개 버킷
+	WindowSize      = 4 * 30 * 24 * chaintimer.Hour // 4개월 윈도우
+	SlideInterval   = 7 * 24 * chaintimer.Hour      // 1주일 슬라이드
+	TriggerInterval = 7 * 24 * chaintimer.Hour      // 1주일 트리거
+	MaxTimeBuckets  = 21                            // 4개월 / 1주일 = 21개 버킷
 )
 
 // DualManager manages EOA relationships through sliding window analysis
@@ -36,17 +36,17 @@ type DualManager struct {
 
 // TimeBucket represents a time bucket in the sliding window
 type TimeBucket struct {
-	StartTime ct.ChainTime
-	EndTime   ct.ChainTime
-	ToUsers   map[domain.Address]ct.ChainTime // to_address -> first_active_time
+	StartTime chaintimer.ChainTime
+	EndTime   chaintimer.ChainTime
+	ToUsers   map[domain.Address]chaintimer.ChainTime // to_address -> first_active_time
 }
 
 // NewTimeBucket creates a new time bucket
-func NewTimeBucket(startTime ct.ChainTime) *TimeBucket {
+func NewTimeBucket(startTime chaintimer.ChainTime) *TimeBucket {
 	return &TimeBucket{
 		StartTime: startTime,
 		EndTime:   startTime.Add(SlideInterval),
-		ToUsers:   make(map[domain.Address]ct.ChainTime),
+		ToUsers:   make(map[domain.Address]chaintimer.ChainTime),
 	}
 }
 
@@ -251,7 +251,7 @@ var static_counter int64
 // ! - 한 번 윈도우에 들어온 to user의 값은 갱신하지 않음
 // ! - 4개월 간 선택받지 못하면 자동으로 떨어져 나감
 // ! - 에이징의 대상은 "to user"(입금 주소 탐지를 위한 핵심 로직)
-func (dm *DualManager) updateFirstActiveTimeBuckets(toAddr domain.Address, txTime ct.ChainTime) error {
+func (dm *DualManager) updateFirstActiveTimeBuckets(toAddr domain.Address, txTime chaintimer.ChainTime) error {
 	// 1. 적절한 타임버킷 찾기 또는 생성 (쓰기 락 필요)
 	dm.bucketsMutex.Lock()
 	bucketIndex := dm.findOrCreateTimeBucket(txTime)
@@ -276,7 +276,7 @@ func (dm *DualManager) updateFirstActiveTimeBuckets(toAddr domain.Address, txTim
 }
 
 // findOrCreateTimeBucket finds appropriate bucket or creates new one with circular queue logic
-func (dm *DualManager) findOrCreateTimeBucket(txTime ct.ChainTime) int {
+func (dm *DualManager) findOrCreateTimeBucket(txTime chaintimer.ChainTime) int {
 	// 첫 번째 트랜잭션인 경우 - 첫 트랜잭션 시간을 기준으로 첫 버킷 생성
 	if dm.bucketCount == 0 {
 		weekStart := dm.calculateWeekStart(txTime)
@@ -327,7 +327,7 @@ func (dm *DualManager) findOrCreateTimeBucket(txTime ct.ChainTime) int {
 }
 
 // addNewTimeBucket adds a new time bucket using proper circular queue logic
-func (dm *DualManager) addNewTimeBucket(txTime ct.ChainTime) int {
+func (dm *DualManager) addNewTimeBucket(txTime chaintimer.ChainTime) int {
 	weekStart := dm.calculateWeekStart(txTime)
 
 	if dm.bucketCount < MaxTimeBuckets {
@@ -387,12 +387,12 @@ func (dm *DualManager) addNewTimeBucket(txTime ct.ChainTime) int {
 }
 
 // calculateWeekStart calculates the start of week for given time
-func (dm *DualManager) calculateWeekStart(t ct.ChainTime) ct.ChainTime {
+func (dm *DualManager) calculateWeekStart(t chaintimer.ChainTime) chaintimer.ChainTime {
 	// 주의 시작점을 일요일 00:00:00으로 계산
 	year, month, day := t.Date()
 	weekday := t.Weekday()
 	daysToSubtract := int(weekday)
-	weekStart := ct.ChainDate(year, month, day-daysToSubtract, 0, 0, 0, 0, t.Location())
+	weekStart := chaintimer.ChainDate(year, month, day-daysToSubtract, 0, 0, 0, 0, t.Location())
 	return weekStart
 }
 

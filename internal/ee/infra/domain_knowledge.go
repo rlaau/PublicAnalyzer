@@ -6,7 +6,7 @@ import (
 
 	localdomain "github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/ct"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
 )
 
 // TODO: 추후 에 도메인 놀리지는 그라운드 놀리지에 편입 후 제거!
@@ -93,7 +93,7 @@ func (gk *GroundKnowledge) DetectNewDepositAddress(fromAddr, cexAddr domain.Addr
 	// Persist new detection to storage
 	deposit := &localdomain.DetectedDepositWithEvidence{
 		Address:    fromAddr,
-		DetectedAt: ct.Now(),
+		DetectedAt: chaintimer.Now(),
 		CEXAddress: cexAddr,
 		TxCount:    1,
 	}

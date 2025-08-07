@@ -12,7 +12,7 @@ import (
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/domain"
 	sharedDomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/ct"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
 )
 
 // DepositRepository defines the interface for deposit address persistence
@@ -259,7 +259,7 @@ func (r *FileDepositRepository) rewriteFile(deposits []*domain.DetectedDepositWi
 	for _, deposit := range deposits {
 		record := []string{
 			deposit.Address.String(),
-			deposit.DetectedAt.Format(ct.EhtTimeFormat),
+			deposit.DetectedAt.Format(chaintimer.EhtTimeFormat),
 			deposit.CEXAddress.String(),
 			strconv.FormatInt(deposit.TxCount, 10),
 		}
@@ -307,7 +307,7 @@ func (r *FileDepositRepository) appendDepositToFile(deposit *domain.DetectedDepo
 	// Write one record
 	record := []string{
 		deposit.Address.String(),
-		deposit.DetectedAt.Format(ct.EhtTimeFormat),
+		deposit.DetectedAt.Format(chaintimer.EhtTimeFormat),
 		deposit.CEXAddress.String(),
 		strconv.FormatInt(deposit.TxCount, 10),
 	}
@@ -331,7 +331,7 @@ func (r *FileDepositRepository) parseDepositRecord(record []string) (*domain.Det
 	}
 
 	// Parse detected time
-	detectedAt, err := ct.Parse(ct.EhtTimeFormat, record[1])
+	detectedAt, err := chaintimer.Parse(chaintimer.EhtTimeFormat, record[1])
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse detected time: %w", err)
 	}

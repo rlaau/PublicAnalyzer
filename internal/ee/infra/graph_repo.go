@@ -9,7 +9,7 @@ import (
 	"github.com/dgraph-io/badger/v4"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/ct"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
 )
 
 // GraphRepository defines the interface for graph database operations
@@ -30,8 +30,8 @@ type GraphRepository interface {
 	FindShortestPath(addrA, addrB shareddomain.Address, maxDepth int) ([]*domain.EOAEdge, error)
 
 	// Cleanup operations
-	DeleteStaleNodes(threshold ct.ChainTime) error
-	DeleteStaleEdges(threshold ct.ChainTime) error
+	DeleteStaleNodes(threshold chaintimer.ChainTime) error
+	DeleteStaleEdges(threshold chaintimer.ChainTime) error
 
 	// Statistics
 	GetGraphStats() (map[string]any, error)
@@ -202,8 +202,8 @@ func (r *BadgerGraphRepository) GetNode(addr shareddomain.Address) (*domain.EOAN
 
 	return &domain.EOANode{
 		Address:   addr,
-		FirstSeen: ct.Unix(nodeData.FirstSeen, 0),
-		LastSeen:  ct.Unix(nodeData.LastSeen, 0),
+		FirstSeen: chaintimer.Unix(nodeData.FirstSeen, 0),
+		LastSeen:  chaintimer.Unix(nodeData.LastSeen, 0),
 	}, nil
 }
 
@@ -226,7 +226,7 @@ func (r *BadgerGraphRepository) UpdateNodeLastSeen(addr shareddomain.Address) er
 		}
 		//*조금 불안정하긴 함. 99%정확도는 보장하지만, 1%의 손실은 가능
 		//* tx를 바로 분석하는게 아니라, 시간을 체인 시스템 시간으로부터 로드함
-		nodeData.LastSeen = ct.Now().Unix()
+		nodeData.LastSeen = chaintimer.Now().Unix()
 
 		data, err := json.Marshal(nodeData)
 		if err != nil {
@@ -254,7 +254,7 @@ func (r *BadgerGraphRepository) SaveEdge(edge *domain.EOAEdge) error {
 }
 
 // addConnectionToAdjacency adds a connection to a node's adjacency list
-func (r *BadgerGraphRepository) addConnectionToAdjacency(txn *badger.Txn, fromAddr, toAddr, depositAddr shareddomain.Address, evidence []domain.EdgeInfo, totalVolume string, firstSeen, lastConfirmed ct.ChainTime) error {
+func (r *BadgerGraphRepository) addConnectionToAdjacency(txn *badger.Txn, fromAddr, toAddr, depositAddr shareddomain.Address, evidence []domain.EdgeInfo, totalVolume string, firstSeen, lastConfirmed chaintimer.ChainTime) error {
 	key := adjacencyKey(fromAddr)
 
 	var adjData AdjacencyData
@@ -373,8 +373,8 @@ func (r *BadgerGraphRepository) GetEdge(addrA, addrB shareddomain.Address) (*dom
 				AddressB:      addrB,
 				DepositAddr:   depositAddr,
 				Evidence:      evidence,
-				FirstSeen:     ct.Unix(conn.FirstSeen, 0),
-				LastConfirmed: ct.Unix(conn.LastConfirmed, 0),
+				FirstSeen:     chaintimer.Unix(conn.FirstSeen, 0),
+				LastConfirmed: chaintimer.Unix(conn.LastConfirmed, 0),
 			}, nil
 		}
 	}
@@ -415,7 +415,7 @@ func (r *BadgerGraphRepository) updateConnectionEvidence(txn *badger.Txn, fromAd
 	for i := range adjData.Connections {
 		if adjData.Connections[i].ConnectedAddr == toAddr.String() {
 			adjData.Connections[i].TxCount++
-			adjData.Connections[i].LastConfirmed = ct.Now().Unix()
+			adjData.Connections[i].LastConfirmed = chaintimer.Now().Unix()
 			// TODO: Update total volume if transaction value is available
 			break
 		}
@@ -527,8 +527,8 @@ func (r *BadgerGraphRepository) getAdjacencyList(txn *badger.Txn, addr shareddom
 			AddressB:      connectedAddr,
 			DepositAddr:   depositAddr,
 			Evidence:      evidence,
-			FirstSeen:     ct.Unix(conn.FirstSeen, 0),
-			LastConfirmed: ct.Unix(conn.LastConfirmed, 0),
+			FirstSeen:     chaintimer.Unix(conn.FirstSeen, 0),
+			LastConfirmed: chaintimer.Unix(conn.LastConfirmed, 0),
 		})
 	}
 
@@ -554,8 +554,8 @@ func (r *BadgerGraphRepository) getNodeFromTxn(txn *badger.Txn, addr shareddomai
 
 	return &domain.EOANode{
 		Address:   addr,
-		FirstSeen: ct.Unix(nodeData.FirstSeen, 0),
-		LastSeen:  ct.Unix(nodeData.LastSeen, 0),
+		FirstSeen: chaintimer.Unix(nodeData.FirstSeen, 0),
+		LastSeen:  chaintimer.Unix(nodeData.LastSeen, 0),
 	}, nil
 }
 
@@ -616,7 +616,7 @@ func (r *BadgerGraphRepository) FindShortestPath(addrA, addrB shareddomain.Addre
 }
 
 // DeleteStaleNodes removes nodes older than threshold
-func (r *BadgerGraphRepository) DeleteStaleNodes(threshold ct.ChainTime) error {
+func (r *BadgerGraphRepository) DeleteStaleNodes(threshold chaintimer.ChainTime) error {
 	thresholdUnix := threshold.Unix()
 
 	return r.db.Update(func(txn *badger.Txn) error {
@@ -669,7 +669,7 @@ func (r *BadgerGraphRepository) DeleteStaleNodes(threshold ct.ChainTime) error {
 }
 
 // DeleteStaleEdges removes edges older than threshold from adjacency lists
-func (r *BadgerGraphRepository) DeleteStaleEdges(threshold ct.ChainTime) error {
+func (r *BadgerGraphRepository) DeleteStaleEdges(threshold chaintimer.ChainTime) error {
 	thresholdUnix := threshold.Unix()
 
 	return r.db.Update(func(txn *badger.Txn) error {

@@ -1,4 +1,4 @@
-package ct_test
+package chaintimer_test
 
 import (
 	"fmt"
@@ -6,47 +6,47 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/ct" // 실제 모듈 경로로 변경 필요
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer" // 실제 모듈 경로로 변경 필요
 )
 
 // TestChainTimerBasic 기본 기능 테스트
 func TestChainTimerBasic(t *testing.T) {
-	defer ct.Reset()
-	startTime := ct.NewChainTime(2024, 1, 1, 0, 0, 0, 0)
+	defer chaintimer.Reset()
+	startTime := chaintimer.NewChainTime(2024, 1, 1, 0, 0, 0, 0)
 	// 초기 시간 확인
-	if !ct.Now().Equal(startTime) {
-		t.Errorf("Expected initial time %v, got %v", startTime, ct.Now())
+	if !chaintimer.Now().Equal(startTime) {
+		t.Errorf("Expected initial time %v, got %v", startTime, chaintimer.Now())
 	}
 
 	// 시간 전진
-	newTime := startTime.Add(10 * ct.Second)
-	ct.AdvanceTo(newTime)
+	newTime := startTime.Add(10 * chaintimer.Second)
+	chaintimer.AdvanceTo(newTime)
 
-	if !ct.Now().Equal(newTime) {
-		t.Errorf("Expected time %v after advance, got %v", newTime, ct.Now())
+	if !chaintimer.Now().Equal(newTime) {
+		t.Errorf("Expected time %v after advance, got %v", newTime, chaintimer.Now())
 	}
 
 	// 같은 시간으로 업데이트 (무시되어야 함)
-	ct.AdvanceTo(newTime)
-	if !ct.Now().Equal(newTime) {
-		t.Errorf("Time should remain %v, got %v", newTime, ct.Now())
+	chaintimer.AdvanceTo(newTime)
+	if !chaintimer.Now().Equal(newTime) {
+		t.Errorf("Time should remain %v, got %v", newTime, chaintimer.Now())
 	}
 
 	// 과거 시간으로 업데이트 (무시되어야 함)
-	pastTime := startTime.Add(5 * ct.Second)
-	ct.AdvanceTo(pastTime)
-	if !ct.Now().Equal(newTime) {
-		t.Errorf("Time should remain %v after past update, got %v", newTime, ct.Now())
+	pastTime := startTime.Add(5 * chaintimer.Second)
+	chaintimer.AdvanceTo(pastTime)
+	if !chaintimer.Now().Equal(newTime) {
+		t.Errorf("Time should remain %v after past update, got %v", newTime, chaintimer.Now())
 	}
 }
 
 // TestChainTimerSimulation 실시간 시뮬레이션 테스트
 func TestChainTimerSimulation(t *testing.T) {
-	defer ct.Reset()
+	defer chaintimer.Reset()
 
 	fmt.Println("=== ChainTimer Simulation Test ===")
 
-	startTime := ct.NewChainTime(2024, 1, 1, 0, 0, 0, 0)
+	startTime := chaintimer.NewChainTime(2024, 1, 1, 0, 0, 0, 0)
 
 	// 테스트 시작 시간
 	testStart := time.Now()
@@ -55,8 +55,8 @@ func TestChainTimerSimulation(t *testing.T) {
 	go func() {
 		for i := 1; i <= 10; i++ {
 			time.Sleep(500 * time.Millisecond) // 0.5초 대기
-			newTime := startTime.Add(ct.ChainDuration(i) * ct.Second)
-			ct.AdvanceTo(newTime)
+			newTime := startTime.Add(chaintimer.ChainDuration(i) * chaintimer.Second)
+			chaintimer.AdvanceTo(newTime)
 			fmt.Printf("[%.1fs] Chain time advanced to: %v\n",
 				time.Since(testStart).Seconds(),
 				newTime.Format("15:04:05"))
@@ -64,7 +64,7 @@ func TestChainTimerSimulation(t *testing.T) {
 	}()
 
 	// 시간 업데이트 구독
-	updates := ct.Subscribe()
+	updates := chaintimer.Subscribe()
 	updateCount := 0
 
 	go func() {
@@ -81,8 +81,8 @@ func TestChainTimerSimulation(t *testing.T) {
 	time.Sleep(5500 * time.Millisecond)
 
 	// 최종 시간 확인
-	finalTime := ct.Now()
-	expectedFinal := startTime.Add(10 * ct.Second)
+	finalTime := chaintimer.Now()
+	expectedFinal := startTime.Add(10 * chaintimer.Second)
 	if !finalTime.Equal(expectedFinal) {
 		t.Errorf("Expected final time %v, got %v", expectedFinal, finalTime)
 	}
@@ -93,15 +93,15 @@ func TestChainTimerSimulation(t *testing.T) {
 
 // TestChainTicker 티커 테스트
 func TestChainTicker(t *testing.T) {
-	defer ct.Reset()
+	defer chaintimer.Reset()
 
 	fmt.Println("\n=== ChainTicker Test ===")
 
-	startTime := ct.NewChainTime(2024, 1, 1, 0, 0, 0, 0)
-	ct.Initialize(startTime)
+	startTime := chaintimer.NewChainTime(2024, 1, 1, 0, 0, 0, 0)
+	chaintimer.Initialize(startTime)
 
 	// 3초 간격 티커 생성
-	ticker := ct.NewTicker(3 * ct.Second)
+	ticker := chaintimer.NewTicker(3 * chaintimer.Second)
 	defer ticker.Stop()
 
 	tickCount := 0
@@ -119,22 +119,22 @@ func TestChainTicker(t *testing.T) {
 
 	// 시뮬레이션: 이산적 시간 업데이트
 	testCases := []struct {
-		advance ct.ChainDuration
+		advance chaintimer.ChainDuration
 		sleep   time.Duration
 		desc    string
 	}{
-		{2 * ct.Second, 200 * time.Millisecond, "Before first tick"},
-		{2 * ct.Second, 200 * time.Millisecond, "Trigger first tick (4s total)"},
-		{1 * ct.Second, 200 * time.Millisecond, "Before second tick (5s total)"},
-		{2 * ct.Second, 200 * time.Millisecond, "Trigger second tick (7s total)"},
-		{5 * ct.Second, 200 * time.Millisecond, "Big jump - trigger third tick (12s total)"},
+		{2 * chaintimer.Second, 200 * time.Millisecond, "Before first tick"},
+		{2 * chaintimer.Second, 200 * time.Millisecond, "Trigger first tick (4s total)"},
+		{1 * chaintimer.Second, 200 * time.Millisecond, "Before second tick (5s total)"},
+		{2 * chaintimer.Second, 200 * time.Millisecond, "Trigger second tick (7s total)"},
+		{5 * chaintimer.Second, 200 * time.Millisecond, "Big jump - trigger third tick (12s total)"},
 	}
 
 	currentTime := startTime
 	for _, tc := range testCases {
 		time.Sleep(tc.sleep)
 		currentTime = currentTime.Add(tc.advance)
-		ct.AdvanceTo(currentTime)
+		chaintimer.AdvanceTo(currentTime)
 		fmt.Printf("Advanced to %v - %s\n", currentTime.Format("15:04:05"), tc.desc)
 	}
 
@@ -153,18 +153,18 @@ func TestChainTicker(t *testing.T) {
 
 // TestChainTimeout 타임아웃 테스트
 func TestChainTimeout(t *testing.T) {
-	defer ct.Reset()
+	defer chaintimer.Reset()
 
 	fmt.Println("\n=== ChainTimeout Test ===")
 
-	startTime := ct.NewChainTime(2024, 1, 1, 0, 0, 0, 0)
-	ct.Initialize(startTime)
+	startTime := chaintimer.NewChainTime(2024, 1, 1, 0, 0, 0, 0)
+	chaintimer.Initialize(startTime)
 	// 5초 타임아웃 설정
-	timeout := ct.NewTimeout(5 * ct.Second)
+	timeout := chaintimer.NewTimeout(5 * chaintimer.Second)
 
 	// 타임아웃 수신 대기
 	var timeoutReceived bool
-	var timeoutTime ct.ChainTime
+	var timeoutTime chaintimer.ChainTime
 
 	go func() {
 		for t := range timeout.C {
@@ -177,17 +177,17 @@ func TestChainTimeout(t *testing.T) {
 	}()
 
 	// 시뮬레이션: 단계적 시간 전진
-	steps := []ct.ChainDuration{
-		2 * ct.Second, // 2초
-		2 * ct.Second, // 4초
-		2 * ct.Second, // 6초 - 타임아웃 발생 예상
+	steps := []chaintimer.ChainDuration{
+		2 * chaintimer.Second, // 2초
+		2 * chaintimer.Second, // 4초
+		2 * chaintimer.Second, // 6초 - 타임아웃 발생 예상
 	}
 
 	currentTime := startTime
 	for i, step := range steps {
 		time.Sleep(300 * time.Millisecond)
 		currentTime = currentTime.Add(step)
-		ct.AdvanceTo(currentTime)
+		chaintimer.AdvanceTo(currentTime)
 		fmt.Printf("Step %d: Advanced to %v\n", i+1, currentTime.Format("15:04:05"))
 	}
 
@@ -197,24 +197,24 @@ func TestChainTimeout(t *testing.T) {
 		t.Error("Timeout should have been triggered")
 	}
 
-	if !timeoutTime.Equal(startTime.Add(5 * ct.Second)) {
+	if !timeoutTime.Equal(startTime.Add(5 * chaintimer.Second)) {
 		t.Errorf("Timeout triggered at wrong time: %v", timeoutTime)
 	}
 }
 
 // TestChainAfter After 메서드 테스트
 func TestChainAfter(t *testing.T) {
-	defer ct.Reset()
+	defer chaintimer.Reset()
 
 	fmt.Println("\n=== ChainAfter Test ===")
 
-	startTime := ct.NewChainTime(2024, 1, 1, 0, 0, 0, 0)
-	ct.Initialize(startTime)
+	startTime := chaintimer.NewChainTime(2024, 1, 1, 0, 0, 0, 0)
+	chaintimer.Initialize(startTime)
 
 	// 여러 After 채널 생성
-	after3s := ct.After(3 * ct.Second)
-	after5s := ct.After(5 * ct.Second)
-	after7s := ct.After(7 * ct.Second)
+	after3s := chaintimer.After(3 * chaintimer.Second)
+	after5s := chaintimer.After(5 * chaintimer.Second)
+	after7s := chaintimer.After(7 * chaintimer.Second)
 
 	received := make(map[string]bool)
 	mu := sync.Mutex{}
@@ -246,8 +246,8 @@ func TestChainAfter(t *testing.T) {
 
 	// 큰 점프로 한 번에 시간 전진
 	time.Sleep(500 * time.Millisecond)
-	ct.AdvanceTo(startTime.Add(6 * ct.Second))
-	fmt.Printf("Jumped to %v\n", startTime.Add(6*ct.Second).Format("15:04:05"))
+	chaintimer.AdvanceTo(startTime.Add(6 * chaintimer.Second))
+	fmt.Printf("Jumped to %v\n", startTime.Add(6*chaintimer.Second).Format("15:04:05"))
 
 	time.Sleep(500 * time.Millisecond)
 
@@ -261,8 +261,8 @@ func TestChainAfter(t *testing.T) {
 	mu.Unlock()
 
 	// 7초 지점으로 전진
-	ct.AdvanceTo(startTime.Add(8 * ct.Second))
-	fmt.Printf("Advanced to %v\n", startTime.Add(8*ct.Second).Format("15:04:05"))
+	chaintimer.AdvanceTo(startTime.Add(8 * chaintimer.Second))
+	fmt.Printf("Advanced to %v\n", startTime.Add(8*chaintimer.Second).Format("15:04:05"))
 
 	time.Sleep(500 * time.Millisecond)
 
@@ -275,21 +275,21 @@ func TestChainAfter(t *testing.T) {
 
 // TestComplexSimulation 복잡한 시뮬레이션 테스트
 func TestComplexSimulation(t *testing.T) {
-	defer ct.Reset()
+	defer chaintimer.Reset()
 
 	fmt.Println("\n=== Complex Simulation Test ===")
 	fmt.Println("Simulating blockchain with irregular block times")
 
-	startTime := ct.NewChainTime(2024, 1, 1, 0, 0, 0, 0)
+	startTime := chaintimer.NewChainTime(2024, 1, 1, 0, 0, 0, 0)
 
-	ct.Initialize(startTime)
+	chaintimer.Initialize(startTime)
 
 	// 2초 간격 티커
-	ticker := ct.NewTicker(2 * ct.Second)
+	ticker := chaintimer.NewTicker(2 * chaintimer.Second)
 	defer ticker.Stop()
 
 	// 5초 타임아웃
-	timeout := ct.After(5 * ct.Second)
+	timeout := chaintimer.After(5 * chaintimer.Second)
 
 	// 통계 수집
 	stats := struct {
@@ -333,8 +333,8 @@ func TestComplexSimulation(t *testing.T) {
 	currentTime := startTime
 	for i, block := range blockTimes {
 		time.Sleep(block.delay)
-		currentTime = currentTime.Add(ct.ChainDuration(block.advance))
-		ct.AdvanceTo(currentTime)
+		currentTime = currentTime.Add(chaintimer.ChainDuration(block.advance))
+		chaintimer.AdvanceTo(currentTime)
 
 		stats.mu.Lock()
 		stats.updates++
@@ -352,7 +352,7 @@ func TestComplexSimulation(t *testing.T) {
 	fmt.Printf("Total blocks: %d\n", stats.updates)
 	fmt.Printf("Total ticks: %d\n", stats.ticks)
 	fmt.Printf("Timeout triggered: %v\n", stats.timeout)
-	fmt.Printf("Final chain time: %v\n", ct.Now().Format("15:04:05"))
+	fmt.Printf("Final chain time: %v\n", chaintimer.Now().Format("15:04:05"))
 
 	// 예상값 검증
 	if stats.ticks < 3 {
@@ -366,16 +366,16 @@ func TestComplexSimulation(t *testing.T) {
 
 // BenchmarkChainTimer 성능 벤치마크
 func BenchmarkChainTimer(b *testing.B) {
-	defer ct.Reset()
+	defer chaintimer.Reset()
 
-	ticker := ct.NewTicker(ct.Second)
+	ticker := chaintimer.NewTicker(chaintimer.Second)
 	defer ticker.Stop()
 
-	currentTime := ct.ChainTime(time.Now())
+	currentTime := chaintimer.ChainTime(time.Now())
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		currentTime = currentTime.Add(ct.Millisecond)
-		ct.AdvanceTo(currentTime)
+		currentTime = currentTime.Add(chaintimer.Millisecond)
+		chaintimer.AdvanceTo(currentTime)
 	}
 }
