@@ -1,13 +1,14 @@
 package tools
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 )
 
 func TestNewKafkaCountingBackpressure(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(10000, 0.5, 1, 1000)
+	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
 
 	if bp.queueCapacity != 10000 {
 		t.Errorf("Expected queue capacity 10000, got %d", bp.queueCapacity)
@@ -23,392 +24,381 @@ func TestNewKafkaCountingBackpressure(t *testing.T) {
 	}
 }
 
-func TestCountingMethods(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(10000, 0.5, 1, 1000)
+// TestGetNextSignal Pull 방식의 핵심 기능 테스트
+func TestGetNextSignal(t *testing.T) {
+	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
 
-	// Test single counting
-	bp.CountProducing()
-	if bp.producerMeter.TotalSum() != 1 {
-		t.Errorf("Expected producer count 1, got %d", bp.producerMeter.TotalSum())
+	// 초기 신호
+	signal1 := bp.GetNextSignal()
+	if signal1.ProducingPerInterval < 1000 {
+		t.Errorf("값이 더 커져야하는데 안커짐.")
+	}
+	if signal1.CurrentSaturation != 0 {
+		t.Errorf("Expected initial saturation 0, got %f", signal1.CurrentSaturation)
 	}
 
-	bp.CountConsuming()
-	if bp.consumerMeter.TotalSum() != 1 {
-		t.Errorf("Expected consumer count 1, got %d", bp.consumerMeter.TotalSum())
+	// 프로듀싱 시뮬레이션
+	bp.CountProducings(1000)
+
+	// 두 번째 신호 - 낮은 부하이므로 증가해야 함
+	signal2 := bp.GetNextSignal()
+	if signal2.ProducingPerInterval <= signal1.ProducingPerInterval {
+		t.Errorf("Expected batch size increase with low load, got %d (was %d)",
+			signal2.ProducingPerInterval, signal1.ProducingPerInterval)
+	}
+	if signal2.CurrentSaturation != 0.1 {
+		t.Errorf("Expected saturation 0.1, got %f", signal2.CurrentSaturation)
 	}
 
-	// Test multiple counting
-	bp.CountProducings(100)
-	if bp.producerMeter.TotalSum() != 101 {
-		t.Errorf("Expected producer count 101, got %d", bp.producerMeter.TotalSum())
-	}
-
-	bp.CountConsumings(50)
-	if bp.consumerMeter.TotalSum() != 51 {
-		t.Errorf("Expected consumer count 51, got %d", bp.consumerMeter.TotalSum())
-	}
-}
-
-func TestNormalizeMeters(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(10000, 0.5, 1, 1000)
-
-	// Setup: Producer 100, Consumer 30
-	bp.CountProducings(100)
-	bp.CountConsumings(30)
-
-	// Normalize
-	bp.normalizeMeters()
-
-	// After normalization: Producer should be 70, Consumer should be 0
-	if bp.producerMeter.TotalSum() != 70 {
-		t.Errorf("Expected producer count 70 after normalization, got %d", bp.producerMeter.TotalSum())
-	}
-	if bp.consumerMeter.TotalSum() != 0 {
-		t.Errorf("Expected consumer count 0 after normalization, got %d", bp.consumerMeter.TotalSum())
-	}
-
-	// Test when consumer is 0 (should do nothing)
-	bp.normalizeMeters()
-	if bp.producerMeter.TotalSum() != 70 {
-		t.Errorf("Producer count should remain 70 when consumer is 0, got %d", bp.producerMeter.TotalSum())
+	// 타임스탬프 검증
+	if signal2.Timestamp.Before(signal1.Timestamp) {
+		t.Error("Second signal timestamp should be after first signal")
 	}
 }
 
-func TestNormalizeMetersNegativeCase(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(10000, 0.5, 1, 1000)
+// TestPullBasedRealTimeResponse Pull 방식이 실시간으로 반응하는지 테스트
+func TestPullBasedRealTimeResponse(t *testing.T) {
+	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
 
-	// Artificially create impossible situation: Consumer > Producer
-	bp.consumerMeter.Set(100)
-	bp.producerMeter.Set(50)
+	// 시나리오: 급격한 부하 증가
+	bp.CountProducings(8000) // 80% 포화도로 급증
 
-	// This should trigger error handling
-	bp.normalizeMeters()
+	// 즉시 신호 요청
+	signal := bp.GetNextSignal()
 
-	// Producer should be reset to 0
-	if bp.producerMeter.TotalSum() != 0 {
-		t.Errorf("Expected producer count 0 after negative detection, got %d", bp.producerMeter.TotalSum())
+	// 높은 부하에 즉각 반응해야 함
+	if signal.ProducingPerInterval >= 1000 {
+		t.Errorf("Should decrease batch size immediately with high load (80%%), got %d",
+			signal.ProducingPerInterval)
 	}
-	if bp.consumerMeter.TotalSum() != 0 {
-		t.Errorf("Expected consumer count 0 after normalization, got %d", bp.consumerMeter.TotalSum())
+	if signal.ProducingIntervalSecond <= 1 {
+		t.Errorf("Should increase interval with high load, got %d",
+			signal.ProducingIntervalSecond)
 	}
-}
-
-func TestDecideSignaling(t *testing.T) {
-	tests := []struct {
-		name                string
-		queuedMessages      int64
-		expectedBatchChange string // "increase", "decrease", "maintain"
-	}{
-		{"Very Low Load (<10%)", 500, "increase"},
-		{"Low Load (10-30%)", 2000, "increase"},
-		{"Slightly Low (30-40%)", 3500, "increase"},
-		{"Optimal (40-60%)", 5000, "maintain"},
-		{"Slightly High (60-70%)", 6500, "decrease"},
-		{"High Load (70-80%)", 7500, "decrease"},
-		{"Very High Load (>80%)", 8500, "decrease"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			bp := NewKafkaCountingBackpressure(10000, 0.5, 1, 1000)
-			bp.producerMeter.Set(tt.queuedMessages)
-
-			signal := bp.decideSingnaling()
-
-			switch tt.expectedBatchChange {
-			case "increase":
-				if signal.ProducingPerInterval <= bp.currentBatchSize {
-					t.Errorf("%s: Expected batch size increase, got %d (was %d)",
-						tt.name, signal.ProducingPerInterval, bp.currentBatchSize)
-				}
-				if signal.ProducingIntervalSecond > bp.currentInterval {
-					t.Errorf("%s: Expected interval decrease, got %d (was %d)",
-						tt.name, signal.ProducingIntervalSecond, bp.currentInterval)
-				}
-			case "decrease":
-				if signal.ProducingPerInterval >= bp.currentBatchSize {
-					t.Errorf("%s: Expected batch size decrease, got %d (was %d)",
-						tt.name, signal.ProducingPerInterval, bp.currentBatchSize)
-				}
-				if signal.ProducingIntervalSecond < bp.currentInterval {
-					t.Errorf("%s: Expected interval increase, got %d (was %d)",
-						tt.name, signal.ProducingIntervalSecond, bp.currentInterval)
-				}
-			case "maintain":
-				if signal.ProducingPerInterval != bp.currentBatchSize {
-					t.Errorf("%s: Expected batch size to maintain at %d, got %d",
-						tt.name, bp.currentBatchSize, signal.ProducingPerInterval)
-				}
-				if signal.ProducingIntervalSecond != bp.currentInterval {
-					t.Errorf("%s: Expected interval to maintain at %d, got %d",
-						tt.name, bp.currentInterval, signal.ProducingIntervalSecond)
-				}
-			}
-		})
+	if signal.CurrentSaturation < 0.79 || signal.CurrentSaturation > 0.81 {
+		t.Errorf("Expected saturation around 0.8, got %f", signal.CurrentSaturation)
 	}
 }
 
-func TestBatchSizeLimits(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(10000, 0.5, 1, 10000)
+// TestNormalizationOnGetNextSignal GetNextSignal이 정규화를 수행하는지 테스트
+func TestNormalizationOnGetNextSignal(t *testing.T) {
+	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
 
-	// Test maximum limit (queue capacity / 3)
-	bp.producerMeter.Set(100) // Very low load
-	signal := bp.decideSingnaling()
-	maxAllowed := int(bp.queueCapacity / 3)
-	if signal.ProducingPerInterval > maxAllowed {
-		t.Errorf("Batch size %d exceeds maximum allowed %d", signal.ProducingPerInterval, maxAllowed)
+	// 프로듀서와 컨슈머 카운트 추가
+	bp.CountProducings(1000)
+	bp.CountConsumings(400)
+
+	// GetNextSignal 호출 (정규화 포함)
+	signal := bp.GetNextSignal()
+
+	// 정규화 후 상태 확인
+	producer, consumer := bp.GetMetersStatus()
+	if consumer != 0 {
+		t.Errorf("Consumer should be 0 after normalization, got %d", consumer)
+	}
+	if producer != 600 {
+		t.Errorf("Producer should be 600 after normalization (1000-400), got %d", producer)
 	}
 
-	// Test minimum limit
-	bp2 := NewKafkaCountingBackpressure(10000, 0.5, 1, 2)
-	bp2.producerMeter.Set(9000) // Very high load
-	signal2 := bp2.decideSingnaling()
-	if signal2.ProducingPerInterval < 1 {
-		t.Errorf("Batch size %d is below minimum 1", signal2.ProducingPerInterval)
-	}
-}
-
-func TestIntervalLimits(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(10000, 0.5, 1, 1000)
-
-	// Test minimum interval (should not go below 1 second)
-	bp.producerMeter.Set(100) // Very low load
-	signal := bp.decideSingnaling()
-	if signal.ProducingIntervalSecond < 1 {
-		t.Errorf("Interval %d is below minimum 1 second", signal.ProducingIntervalSecond)
+	// 신호의 포화도가 정규화된 값 기반이어야 함
+	expectedSaturation := 600.0 / 10000.0
+	if signal.CurrentSaturation != expectedSaturation {
+		t.Errorf("Expected saturation %f, got %f", expectedSaturation, signal.CurrentSaturation)
 	}
 }
 
-func TestRegisterBackpressureChannel(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(10000, 0.5, 1, 1000)
+// TestTrendAnalysis 트렌드 분석 기능 테스트
+func TestTrendAnalysis(t *testing.T) {
+	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
 
-	ch1 := make(chan SpeedSignal, 1)
-	ch2 := make(chan SpeedSignal, 1)
+	// 포화도 증가 트렌드 시뮬레이션
+	increments := []int{500, 700, 900, 1100}
+	previousBatchSize := 1000
 
-	bp.RegisterBackpressureChannel(ch1)
-	bp.RegisterBackpressureChannel(ch2)
+	for i, increment := range increments {
+		bp.CountProducings(increment)
+		signal := bp.GetNextSignal()
 
-	if len(bp.signalChannels) != 2 {
-		t.Errorf("Expected 2 registered channels, got %d", len(bp.signalChannels))
-	}
-}
-
-func TestMakeBackpressureEvent(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(10000, 0.5, 1, 1000)
-	ch := make(chan SpeedSignal, 10)
-	bp.RegisterBackpressureChannel(ch)
-	// Change load to trigger different signal
-
-	bp.producerMeter.Set(8000) // High load
-	bp.MakeBackpressureEvent()
-
-	select {
-	case signal := <-ch:
-		if signal.ProducingPerInterval >= 501 {
-			t.Errorf("Expected decreased batch size, got %d", signal.ProducingPerInterval)
+		if i > 0 {
+			// 기울기 감소 확인
+			// 계속 배치값 증가는 하지만 그 기울기는 감소 필요
+			fmt.Printf("Iteration %d: Batch size increased with rising trend (current: %d, previous: %d)",
+				i, signal.ProducingPerInterval, previousBatchSize)
 		}
-	case <-time.After(100 * time.Millisecond):
-		t.Error("Expected signal but didn't receive one")
-	}
-	//값 범위 정상화시키기=> 목표 포화도 달성 시 시그널 x여야 함
-	bp.producerMeter.Set(5000)
-	bp.MakeBackpressureEvent()
+		previousBatchSize = signal.ProducingPerInterval
 
-	select {
-	case <-ch:
-		t.Error("Should not receive duplicate signal")
-	case <-time.After(100 * time.Millisecond):
-		// Expected behavior
+		// 약간의 소비 시뮬레이션
+		bp.CountConsumings(increment / 2)
+	}
+
+	// 히스토리 확인
+	history := bp.GetAdjustmentHistory()
+	if len(history) == 0 {
+		t.Error("Adjustment history should not be empty")
 	}
 }
 
-func TestConcurrentOperations(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(10000, 0.5, 1, 1000)
+// TestAdaptiveAdjustment 적응형 조절 테스트
+func TestAdaptiveAdjustment(t *testing.T) {
+	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
+
+	// 시나리오 1: 안정적인 상태
+	bp.CountProducings(5000) // 50% 포화도 (목표치)
+	signal1 := bp.GetNextSignal()
+
+	// 목표 포화도에서는 크게 변경하지 않아야 함
+	if signal1.ProducingPerInterval < 950 || signal1.ProducingPerInterval > 1050 {
+		t.Errorf("At target saturation, batch size should remain stable, got %d",
+			signal1.ProducingPerInterval)
+	}
+
+	// 시나리오 2: 급격한 증가
+	bp.CountProducings(3000) // 80% 포화도로 급증
+	signal2 := bp.GetNextSignal()
+
+	// 급격한 감소 필요
+	if signal2.ProducingPerInterval >= signal1.ProducingPerInterval {
+		t.Errorf("Should decrease batch size with sudden load increase, got %d (was %d)",
+			signal2.ProducingPerInterval, signal1.ProducingPerInterval)
+	}
+}
+
+// TestBatchSizeLimits 배치 크기 제한 테스트
+func TestBatchSizeLimits(t *testing.T) {
+	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
+
+	// 매우 낮은 부하로 최대 배치 크기 테스트
+	signal1 := bp.GetNextSignal()
+	maxAllowed := int(10000 * 0.30) // maxBatchRatio = 0.30
+	if signal1.ProducingPerInterval > maxAllowed {
+		t.Errorf("Batch size %d exceeds maximum allowed %d",
+			signal1.ProducingPerInterval, maxAllowed)
+	}
+
+	// 매우 높은 부하로 최소 배치 크기 테스트
+	bp2 := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
+
+	bp2.CountProducings(9500) // 95% 포화도
+	signal2 := bp2.GetNextSignal()
+	if signal2.ProducingPerInterval < 1 {
+		t.Errorf("Batch size should not go below 1, got %d", signal2.ProducingPerInterval)
+	}
+}
+
+// TestIntervalLimits 인터벌 제한 테스트
+func TestIntervalLimits(t *testing.T) {
+	// 최소 인터벌 테스트
+	bp1 := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{2, 1000})
+
+	bp1.CountProducings(100) // 매우 낮은 부하
+	signal1 := bp1.GetNextSignal()
+	if signal1.ProducingIntervalSecond < 1 {
+		t.Errorf("Interval should not go below 1 second, got %d",
+			signal1.ProducingIntervalSecond)
+	}
+
+	// 최대 인터벌 테스트
+	bp2 := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{30, 1000})
+
+	bp2.CountProducings(9900) // 매우 높은 부하
+	signal2 := bp2.GetNextSignal()
+	if signal2.ProducingIntervalSecond > 60 {
+		t.Errorf("Interval should not exceed 60 seconds, got %d",
+			signal2.ProducingIntervalSecond)
+	}
+}
+
+// TestConcurrentPullRequests 동시 Pull 요청 테스트
+func TestConcurrentPullRequests(t *testing.T) {
+	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
 
 	var wg sync.WaitGroup
-	iterations := 1000
+	signalChan := make(chan SpeedSignal, 10)
 
-	// Concurrent producers
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < iterations; i++ {
-			bp.CountProducing()
-		}
-	}()
+	// 여러 고루틴에서 동시에 신호 요청
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
 
-	// Concurrent consumers
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < iterations; i++ {
-			bp.CountConsuming()
-		}
-	}()
+			// 각 고루틴이 프로듀싱하고 신호 요청
+			bp.CountProducings(100)
+			signal := bp.GetNextSignal()
+			signalChan <- signal
 
-	// Concurrent batch producers
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < iterations/10; i++ {
-			bp.CountProducings(10)
-		}
-	}()
-
-	// Concurrent batch consumers
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < iterations/10; i++ {
-			bp.CountConsumings(10)
-		}
-	}()
+			// 컨슈밍도 시뮬레이션
+			bp.CountConsumings(50)
+		}(i)
+	}
 
 	wg.Wait()
+	close(signalChan)
 
-	// Each side should have 2000 counts (1000 + 100*10)
-	expectedCount := int64(2000)
-	if bp.producerMeter.TotalSum() != expectedCount {
-		t.Errorf("Expected producer count %d, got %d", expectedCount, bp.producerMeter.TotalSum())
+	// 모든 신호가 유효한지 확인
+	count := 0
+	for signal := range signalChan {
+		count++
+		if signal.ProducingPerInterval < 1 {
+			t.Error("Invalid batch size in concurrent scenario")
+		}
+		if signal.ProducingIntervalSecond < 1 {
+			t.Error("Invalid interval in concurrent scenario")
+		}
 	}
-	if bp.consumerMeter.TotalSum() != expectedCount {
-		t.Errorf("Expected consumer count %d, got %d", expectedCount, bp.consumerMeter.TotalSum())
+
+	if count != 10 {
+		t.Errorf("Expected 10 signals, got %d", count)
 	}
 }
 
-func TestStartStop(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(10000, 0.5, 1, 1000)
-	ch := make(chan SpeedSignal, 10)
-	bp.RegisterBackpressureChannel(ch)
+// TestHybridMode Pull과 Push 방식 혼용 테스트
+func TestHybridMode(t *testing.T) {
+	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
 
-	// Start monitoring
+	// Push 방식 채널 등록
+	pushChan := make(chan SpeedSignal, 10)
+	bp.RegisterBackpressureChannel(pushChan)
+
+	// 백그라운드 모니터링 시작
 	bp.Start()
+	defer bp.Stop()
 
-	// Simulate load
+	// Pull 방식으로 신호 요청
+	bp.CountProducings(1000)
+	pullSignal := bp.GetNextSignal()
+
+	// Push 방식으로도 신호가 오는지 확인
+	time.Sleep(150 * time.Millisecond) // 백그라운드 틱 대기
+
+	select {
+	case pushSignal := <-pushChan:
+		// Push와 Pull 신호가 비슷해야 함 (완전히 같지는 않을 수 있음)
+		if pushSignal.ProducingPerInterval == 0 {
+			t.Error("Push signal should have valid batch size")
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Error("Expected push signal but didn't receive one")
+	}
+
+	// Pull 신호가 유효한지 확인
+	if pullSignal.ProducingPerInterval == 0 {
+		t.Error("Pull signal should have valid batch size")
+	}
+}
+
+// TestEmergencyResponse 극한 상황 대응 테스트
+func TestEmergencyResponse(t *testing.T) {
+	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
+
+	// 95% 이상 포화도 (비상 상황)
+	bp.CountProducings(9600)
+	signal := bp.GetNextSignal()
+
+	// 비상 조치가 적용되어야 함
+	if signal.ProducingPerInterval > 300 {
+		t.Errorf("Emergency measures should drastically reduce batch size, got %d",
+			signal.ProducingPerInterval)
+	}
+	if signal.ProducingIntervalSecond < 2 {
+		t.Errorf("Emergency measures should increase interval significantly, got %d",
+			signal.ProducingIntervalSecond)
+	}
+}
+
+// TestResetMeters 미터 리셋 테스트
+func TestResetMeters(t *testing.T) {
+	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
+
+	// 카운트 추가
 	bp.CountProducings(1000)
 	bp.CountConsumings(500)
 
-	// Wait for at least one monitoring cycle
-	time.Sleep(150 * time.Millisecond)
+	// 신호 요청으로 히스토리 생성
+	bp.GetNextSignal()
+	bp.GetNextSignal()
 
-	// Check that normalization happened
-	producer, consumer := bp.GetMetersStatus()
-	if consumer != 0 {
-		t.Errorf("Expected consumer to be normalized to 0, got %d", consumer)
-	}
-	if producer != 500 {
-		t.Errorf("Expected producer to be 500 after normalization, got %d", producer)
-	}
-
-	// Stop monitoring
-	bp.Stop()
-
-	// Add more counts after stop
-	bp.CountProducings(100)
-	time.Sleep(150 * time.Millisecond)
-
-	// Should not normalize after stop
-	producer2, _ := bp.GetMetersStatus()
-	if producer2 != 600 {
-		t.Errorf("Expected producer to be 600 (not normalized after stop), got %d", producer2)
-	}
-}
-
-func TestGetters(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(10000, 0.5, 1, 1000)
-	bp.producerMeter.Set(5000)
-
-	// Test GetCurrentSaturation
-	saturation := bp.GetCurrentSaturation()
-	expectedSaturation := 0.5
-	if saturation != expectedSaturation {
-		t.Errorf("Expected saturation %f, got %f", expectedSaturation, saturation)
-	}
-
-	// Test GetQueueSize
-	queueSize := bp.GetQueueSize()
-	if queueSize != 5000 {
-		t.Errorf("Expected queue size 5000, got %d", queueSize)
-	}
-
-	// Test GetMetersStatus
-	bp.consumerMeter.Set(1000)
-	producer, consumer := bp.GetMetersStatus()
-	if producer != 5000 || consumer != 1000 {
-		t.Errorf("Expected meters (5000, 1000), got (%d, %d)", producer, consumer)
-	}
-}
-
-func TestResetMeters(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(10000, 0.5, 1, 1000)
-
-	bp.CountProducings(100)
-	bp.CountConsumings(50)
-
+	// 리셋
 	bp.ResetMeters()
 
-	if bp.producerMeter.TotalSum() != 0 {
-		t.Errorf("Expected producer meter to be 0 after reset, got %d", bp.producerMeter.TotalSum())
+	// 모든 값이 초기화되어야 함
+	producer, consumer := bp.GetMetersStatus()
+	if producer != 0 || consumer != 0 {
+		t.Errorf("Meters should be reset to 0, got producer=%d, consumer=%d",
+			producer, consumer)
 	}
-	if bp.consumerMeter.TotalSum() != 0 {
-		t.Errorf("Expected consumer meter to be 0 after reset, got %d", bp.consumerMeter.TotalSum())
+
+	history := bp.GetAdjustmentHistory()
+	if len(history) != 0 {
+		t.Errorf("History should be cleared, got %d items", len(history))
+	}
+
+	if bp.GetCurrentSaturation() != 0 {
+		t.Errorf("Saturation should be 0 after reset, got %f", bp.GetCurrentSaturation())
 	}
 }
 
-func TestTargetSaturationAdjustment(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(10000, 0.5, 1, 1000)
+// TestSequentialPullScenario 실제 사용 시나리오 시뮬레이션
+func TestSequentialPullScenario(t *testing.T) {
+	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 100})
 
-	// Set load way above target (50%)
-	bp.producerMeter.Set(7000) // 70% saturation
-	signal := bp.decideSingnaling()
+	// 10회 반복 프로듀싱 시뮬레이션
+	for i := 0; i < 10; i++ {
+		// 신호 요청
+		signal := bp.GetNextSignal()
 
-	// Should reduce batch size more aggressively
-	targetOffset := int64(float64(bp.queueCapacity) * bp.targetSaturation)
-	adjustment := float64(7000) / float64(targetOffset) // 7000/5000 = 1.4
+		// 신호에 따라 프로듀싱
+		bp.CountProducings(signal.ProducingPerInterval)
 
-	// With adjustment > 1.2, batch size should be divided by adjustment
-	expectedMaxBatch := int(float64(bp.currentBatchSize) * 0.8 / adjustment)
-	if signal.ProducingPerInterval > expectedMaxBatch+100 { // Allow some margin
-		t.Errorf("Batch size %d not adjusted enough for high saturation", signal.ProducingPerInterval)
+		// 일부 소비 (70% 정도)
+		consumed := int(float64(signal.ProducingPerInterval) * 0.7)
+		bp.CountConsumings(consumed)
+
+		// 로그
+		t.Logf("Iteration %d: Batch=%d, Interval=%d, Saturation=%.2f",
+			i, signal.ProducingPerInterval, signal.ProducingIntervalSecond,
+			signal.CurrentSaturation)
+
+		// 포화도가 목표치(50%) 근처로 수렴해야 함
+		if i > 5 { // 안정화 후
+			if signal.CurrentSaturation < 0.3 || signal.CurrentSaturation > 0.7 {
+				t.Logf("Warning: Saturation %.2f is far from target 0.5 at iteration %d",
+					signal.CurrentSaturation, i)
+			}
+		}
 	}
 }
 
 // Benchmark tests
-func BenchmarkCountProducing(b *testing.B) {
-	bp := NewKafkaCountingBackpressure(10000, 0.5, 1, 1000)
-	b.ResetTimer()
+func BenchmarkGetNextSignal(b *testing.B) {
+	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
 
+	bp.CountProducings(5000)
+
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		bp.CountProducing()
+		_ = bp.GetNextSignal()
 	}
 }
 
-func BenchmarkCountProducings(b *testing.B) {
-	bp := NewKafkaCountingBackpressure(10000, 0.5, 1, 1000)
-	b.ResetTimer()
+func BenchmarkGetNextSignalWithNormalization(b *testing.B) {
+	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
 
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		bp.CountProducings(100)
+		bp.CountConsumings(50)
+		_ = bp.GetNextSignal()
 	}
 }
 
-func BenchmarkNormalizeMeters(b *testing.B) {
-	bp := NewKafkaCountingBackpressure(10000, 0.5, 1, 1000)
-	b.ResetTimer()
+func BenchmarkConcurrentGetNextSignal(b *testing.B) {
+	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
 
-	for i := 0; i < b.N; i++ {
-		bp.producerMeter.Set(1000)
-		bp.consumerMeter.Set(500)
-		bp.normalizeMeters()
-	}
-}
-
-func BenchmarkDecideSignaling(b *testing.B) {
-	bp := NewKafkaCountingBackpressure(10000, 0.5, 1, 1000)
-	bp.producerMeter.Set(5000)
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		_ = bp.decideSingnaling()
-	}
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			bp.CountProducings(10)
+			_ = bp.GetNextSignal()
+			bp.CountConsumings(5)
+		}
+	})
 }

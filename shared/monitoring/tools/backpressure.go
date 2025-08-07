@@ -11,67 +11,106 @@ import (
 type SpeedSignal struct {
 	ProducingIntervalSecond int
 	ProducingPerInterval    int
+	Timestamp               time.Time // 신호 생성 시간
+	CurrentSaturation       float64   // 현재 포화도
 }
 
+// CountingBackpressure 백프레셔 인터페이스
 type CountingBackpressure interface {
+	// 카운팅 메서드
 	CountConsuming()
 	CountConsumings(i int)
 	CountProducing()
 	CountProducings(i int)
+
+	// Pull 방식: 클라이언트가 필요할 때 호출
+	// 걍 얘가 젤 나음.
+	GetNextSignal() SpeedSignal
+
+	// Push 방식 (옵션): 여전히 채널 기반도 지원
 	RegisterBackpressureChannel(c chan SpeedSignal)
-	MakeBackpressureEvent()
+
+	// 모니터링 제어
 	Start()
 	Stop()
+
+	// 디버깅용
+	GetCurrentSaturation() float64
+	GetQueueSize() int64
+	GetMetersStatus() (producer int64, consumer int64)
 }
 
 type KafkaCountingBackpressure struct {
-	// 미터기들 - 프로듀서와 컨슈머만 사용
+	// 미터기들
 	producerMeter *cntmtr.IntCountMeter
 	consumerMeter *cntmtr.IntCountMeter
 
-	// 백프레셔가 받는 요구사항
-	queueCapacity    int64   // 큐의 전체 용량
-	targetSaturation float64 // 목표 포화도 (0.0 ~ 1.0)
-	// 백프레셔가 요구사항 달성 위해 리턴시키는 값
-	currentInterval  int // 현재 인터벌 (초)
-	currentBatchSize int // 현재 배치 크기
+	// 백프레셔 설정
+	queueCapacity    int64
+	targetSaturation float64
 
-	// 채널 관리
+	// 현재 상태 (Pull 방식에서는 캐싱용)
+	currentInterval  int
+	currentBatchSize int
+	lastSignalTime   time.Time
+	signalMu         sync.RWMutex
+
+	// Push 방식용 채널 (옵션)
 	signalChannels []chan SpeedSignal
 	channelsMu     sync.RWMutex
 
-	// 제어 관련
-	//여기서 time은 시스템의 초당 처리량 관련이기에 진짜 time을 사용
-	ticker   *time.Ticker
-	stopChan chan struct{}
-	stopOnce sync.Once // Stop 멱등성 보장
-	running  bool
-	runMu    sync.RWMutex
+	// 정규화용 타이머
+	normalizeTicker *time.Ticker
+	stopChan        chan struct{}
+	stopOnce        sync.Once
+	running         bool
+	runMu           sync.RWMutex
+
 	// 속도 조절 상수
 	strongIncreaseRate float64
 	weakIncreaseRate   float64
 	weakDecreaseRate   float64
 	strongDecreaseRate float64
-	// 배치 크기 제한
-	maxBatchRatio float64 // 큐 용량 대비 최대 배치 크기 비율
+	maxBatchRatio      float64
+
+	// 적응형 조절을 위한 히스토리
+	lastSaturation    float64
+	saturationTrend   float64   // 포화도 변화 추세
+	adjustmentHistory []float64 // 최근 조정 비율 히스토리
+	historyMu         sync.RWMutex
+}
+
+// 클라이언트가 달성하길 원하는 채널 스펙
+type RequestedQueueSpec struct {
+	QueueCapacity    int64
+	TargetSaturation float64
+}
+
+// 클라이언트가 처음으로 프로듀싱할 스펙
+// 이거에다 가중치 곱하는 식으로 백프레셔는 점진적 최적화 달성
+type SeedProducingConfig struct {
+	SeedInterval  int
+	SeedBatchSize int
 }
 
 // NewKafkaCountingBackpressure 새로운 백프레셔 인스턴스 생성
-func NewKafkaCountingBackpressure(queueCapacity int64, targetSaturation float64, seedInterval int, seedBatchSize int) *KafkaCountingBackpressure {
+func NewKafkaCountingBackpressure(requestedQueueSpec RequestedQueueSpec, seedProducingConfig SeedProducingConfig) *KafkaCountingBackpressure {
 	return &KafkaCountingBackpressure{
 		producerMeter:      cntmtr.NewIntCountMeter(),
 		consumerMeter:      cntmtr.NewIntCountMeter(),
-		queueCapacity:      queueCapacity,
-		targetSaturation:   targetSaturation,
-		currentInterval:    seedInterval,
-		currentBatchSize:   seedBatchSize,
+		queueCapacity:      requestedQueueSpec.QueueCapacity,
+		targetSaturation:   requestedQueueSpec.TargetSaturation,
+		currentInterval:    seedProducingConfig.SeedInterval,
+		currentBatchSize:   seedProducingConfig.SeedBatchSize,
+		lastSignalTime:     time.Now(),
 		signalChannels:     make([]chan SpeedSignal, 0),
 		stopChan:           make(chan struct{}),
 		strongIncreaseRate: 1.5,
 		weakIncreaseRate:   1.2,
 		weakDecreaseRate:   0.8,
 		strongDecreaseRate: 0.5,
-		maxBatchRatio:      0.33, // 큐 용량의 33%
+		maxBatchRatio:      0.30,
+		adjustmentHistory:  make([]float64, 0, 10),
 		running:            false,
 	}
 }
@@ -100,20 +139,249 @@ func (k *KafkaCountingBackpressure) CountProducings(i int) {
 	}
 }
 
-// RegisterBackpressureChannel 신호를 받을 채널 등록
+// GetNextSignal Pull 방식: 클라이언트가 호출하면 즉시 현재 상태 기반으로 신호 생성
+func (k *KafkaCountingBackpressure) GetNextSignal() SpeedSignal {
+	// 먼저 정규화
+	k.normalizeMeters()
+
+	// 현재 상태 기반으로 신호 계산
+	signal := k.calculateSignal()
+
+	// 상태 업데이트
+	k.signalMu.Lock()
+	k.currentInterval = signal.ProducingIntervalSecond
+	k.currentBatchSize = signal.ProducingPerInterval
+	k.lastSignalTime = signal.Timestamp
+	k.signalMu.Unlock()
+
+	// 트렌드 업데이트
+	k.updateTrend(signal.CurrentSaturation)
+
+	return signal
+}
+
+// calculateSignal 현재 상태를 기반으로 신호 계산
+func (k *KafkaCountingBackpressure) calculateSignal() SpeedSignal {
+	queuedMessages := k.producerMeter.TotalSum()
+	saturation := float64(queuedMessages) / float64(k.queueCapacity)
+
+	if k.queueCapacity == 0 {
+		return SpeedSignal{
+			ProducingIntervalSecond: 1,
+			ProducingPerInterval:    1,
+			Timestamp:               time.Now(),
+			CurrentSaturation:       0,
+		}
+	}
+
+	k.signalMu.RLock()
+	newInterval := k.currentInterval
+	newBatchSize := k.currentBatchSize
+	k.signalMu.RUnlock()
+
+	// 트렌드 기반 조정 팩터 계산
+	trendFactor := k.calculateTrendFactor()
+
+	// 포화도에 따른 속도 조절 (트렌드 반영)
+	switch {
+	case saturation < 0.1:
+		// 매우 낮은 부하 - 강한 속도 증가
+		newBatchSize = int(float64(newBatchSize) * k.strongIncreaseRate * trendFactor)
+		newInterval = int(float64(newInterval) * 0.2)
+
+	case saturation < 0.3:
+		// 낮은 부하 - 약한 속도 증가
+		newBatchSize = int(float64(newBatchSize) * k.weakIncreaseRate * trendFactor)
+		newInterval = int(float64(newInterval) * 0.4)
+
+	case saturation < 0.4:
+		// 약간 낮은 부하 - 미세 증가
+		newBatchSize = int(float64(newBatchSize) * 1.1 * trendFactor)
+		newInterval = int(float64(newInterval) * 0.8)
+
+	case saturation < 0.6:
+		// 적정 부하 - 미세 조정만
+		// 목표 포화도와의 차이에 따라 미세 조정
+		deviation := saturation - k.targetSaturation
+		if deviation > 0.05 {
+			newBatchSize = int(float64(newBatchSize) * 0.95)
+		} else if deviation < -0.05 {
+			newBatchSize = int(float64(newBatchSize) * 1.05)
+		}
+
+	case saturation < 0.7:
+		// 약간 높은 부하 - 미세 감소
+		newBatchSize = int(float64(newBatchSize) * 0.9 / trendFactor)
+		newInterval = int(float64(newInterval) * 1.5)
+
+	case saturation < 0.8:
+		// 높은 부하 - 약한 속도 감소
+		newBatchSize = int(float64(newBatchSize) * k.weakDecreaseRate / trendFactor)
+		newInterval = int(float64(newInterval) * 2.0)
+
+	default: // saturation >= 0.8
+		// 매우 높은 부하 - 강한 속도 감소
+		newBatchSize = int(float64(newBatchSize) * k.strongDecreaseRate / trendFactor)
+		newInterval = int(float64(newInterval) * 4.0)
+
+		// 극도로 높은 포화도에서는 비상 조치
+		if saturation > 0.95 {
+			newBatchSize = int(float64(newBatchSize) * 0.3)
+			newInterval = int(float64(newInterval) * 8.0)
+		}
+	}
+
+	// 배치 크기 제한
+	maxBatch := int(float64(k.queueCapacity) * k.maxBatchRatio)
+	if newBatchSize < 1 {
+		newBatchSize = 1
+	} else if newBatchSize > maxBatch {
+		newBatchSize = maxBatch
+	}
+
+	// 인터벌 제한
+	if newInterval < 1 {
+		newInterval = 1
+	} else if newInterval > 60 {
+		newInterval = 60
+	}
+
+	// 조정 히스토리 기록
+	k.recordAdjustment(float64(newBatchSize) / float64(k.currentBatchSize))
+
+	return SpeedSignal{
+		ProducingIntervalSecond: newInterval,
+		ProducingPerInterval:    newBatchSize,
+		Timestamp:               time.Now(),
+		CurrentSaturation:       saturation,
+	}
+}
+
+// calculateTrendFactor 포화도 변화 추세를 기반으로 조정 팩터 계산
+func (k *KafkaCountingBackpressure) calculateTrendFactor() float64 {
+	k.historyMu.RLock()
+	trend := k.saturationTrend
+	k.historyMu.RUnlock()
+
+	// 트렌드가 급격히 증가하면 더 강한 감소
+	// 트렌드가 급격히 감소하면 더 강한 증가
+	if trend > 0.1 { // 포화도가 빠르게 증가 중
+		return 0.8 // 증가를 억제
+	} else if trend < -0.1 { // 포화도가 빠르게 감소 중
+		return 1.2 // 증가를 장려
+	}
+	return 1.0 // 중립
+}
+
+// updateTrend 포화도 변화 추세 업데이트
+func (k *KafkaCountingBackpressure) updateTrend(currentSaturation float64) {
+	k.historyMu.Lock()
+	defer k.historyMu.Unlock()
+
+	// 추세 계산 (지수 이동 평균)
+	alpha := 0.3 // 스무딩 팩터
+	trend := currentSaturation - k.lastSaturation
+	k.saturationTrend = alpha*trend + (1-alpha)*k.saturationTrend
+	k.lastSaturation = currentSaturation
+}
+
+// recordAdjustment 조정 비율 기록
+func (k *KafkaCountingBackpressure) recordAdjustment(ratio float64) {
+	k.historyMu.Lock()
+	defer k.historyMu.Unlock()
+
+	k.adjustmentHistory = append(k.adjustmentHistory, ratio)
+	if len(k.adjustmentHistory) > 10 {
+		k.adjustmentHistory = k.adjustmentHistory[1:]
+	}
+}
+
+// normalizeMeters 컨슈머 값을 빼서 미터기 정규화
+func (k *KafkaCountingBackpressure) normalizeMeters() {
+	consumed := k.consumerMeter.TotalSum()
+
+	if consumed == 0 {
+		return
+	}
+
+	k.consumerMeter.Set(0)
+	k.producerMeter.Decreases(uint(consumed))
+
+	if k.producerMeter.TotalSum() < 0 {
+		log.Printf("WARNING: Producer meter became negative after normalization: %d",
+			k.producerMeter.TotalSum())
+		k.producerMeter.Set(0)
+	}
+}
+
+// RegisterBackpressureChannel Push 방식용 채널 등록 (옵션)
 func (k *KafkaCountingBackpressure) RegisterBackpressureChannel(c chan SpeedSignal) {
 	k.channelsMu.Lock()
 	defer k.channelsMu.Unlock()
 	k.signalChannels = append(k.signalChannels, c)
 }
 
-// Start 백프레셔 모니터링 시작
+// Start 백그라운드 정규화 시작 (옵션)
 func (k *KafkaCountingBackpressure) Start() {
-	k.ticker = time.NewTicker(100 * time.Millisecond) // 0.1초마다 체크
-	go k.monitorLoop()
+	k.runMu.Lock()
+	defer k.runMu.Unlock()
+
+	if k.running {
+		log.Println("KafkaCountingBackpressure: already running")
+		return
+	}
+
+	// 정규화만 주기적으로 수행
+	k.normalizeTicker = time.NewTicker(100 * time.Millisecond)
+	k.running = true
+	go k.backgroundLoop()
 }
 
-// Stop 백프레셔 모니터링 중지 (멱등성 보장)
+// backgroundLoop 백그라운드 작업 (정규화 및 옵션 푸시)
+func (k *KafkaCountingBackpressure) backgroundLoop() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("KafkaCountingBackpressure: recovered from panic: %v", r)
+		}
+	}()
+
+	for {
+		select {
+		case <-k.normalizeTicker.C:
+			k.normalizeMeters()
+
+			// Push 방식 채널이 등록되어 있으면 신호 전송
+			k.channelsMu.RLock()
+			hasChannels := len(k.signalChannels) > 0
+			k.channelsMu.RUnlock()
+
+			if hasChannels {
+				signal := k.calculateSignal()
+				k.broadcastSignal(signal)
+			}
+
+		case <-k.stopChan:
+			return
+		}
+	}
+}
+
+// broadcastSignal 등록된 채널에 신호 전송
+func (k *KafkaCountingBackpressure) broadcastSignal(signal SpeedSignal) {
+	k.channelsMu.RLock()
+	channels := k.signalChannels
+	k.channelsMu.RUnlock()
+
+	for _, ch := range channels {
+		select {
+		case ch <- signal:
+		default:
+			// 논블로킹
+		}
+	}
+}
+
+// Stop 백그라운드 작업 중지
 func (k *KafkaCountingBackpressure) Stop() {
 	k.stopOnce.Do(func() {
 		k.runMu.Lock()
@@ -124,170 +392,49 @@ func (k *KafkaCountingBackpressure) Stop() {
 		}
 
 		close(k.stopChan)
-		if k.ticker != nil {
-			k.ticker.Stop()
+		if k.normalizeTicker != nil {
+			k.normalizeTicker.Stop()
 		}
 		k.running = false
 	})
 }
 
-// monitorLoop 주기적으로 큐 상태를 모니터링하고 조정
-func (k *KafkaCountingBackpressure) monitorLoop() {
-	for {
-		select {
-		case <-k.ticker.C:
-			k.normalizeMeters()
-			k.MakeBackpressureEvent()
-		case <-k.stopChan:
-			return
-		}
-	}
-}
-
-// normalizeMeters 컨슈머 값을 빼서 미터기 정규화
-func (k *KafkaCountingBackpressure) normalizeMeters() {
-	consumed := k.consumerMeter.TotalSum()
-	// 컨슈머 값이 0이면 정규화할 필요 없음
-	if consumed == 0 {
-		return
-	}
-
-	// 컨슈머 값만큼 양쪽에서 빼기
-	// 걍 컨슈머는 consumed-consumed므로 0으로 설정
-	k.consumerMeter.Set(0)
-	k.producerMeter.Decreases(uint(consumed))
-
-	// 프로듀서가 음수가 되면 오류 - 이론상 불가능
-	if k.producerMeter.TotalSum() < 0 {
-		log.Printf("ERROR: Producer meter became negative after normalization! Producer: %d, Consumer: %d",
-			k.producerMeter.TotalSum(), consumed)
-		// 음수 방지를 위해 0으로 설정
-		k.producerMeter.Set(0)
-	}
-}
-
-// MakeBackpressureEvent 백프레셔 이벤트 생성 및 전송
-func (k *KafkaCountingBackpressure) MakeBackpressureEvent() {
-	signal := k.decideSingnaling()
-
-	// 신호가 변경되었을 때만 전송
-	if signal.ProducingIntervalSecond != k.currentInterval ||
-		signal.ProducingPerInterval != k.currentBatchSize {
-		k.currentInterval = signal.ProducingIntervalSecond
-		k.currentBatchSize = signal.ProducingPerInterval
-
-		k.channelsMu.RLock()
-		channels := k.signalChannels
-		k.channelsMu.RUnlock()
-
-		// 모든 등록된 채널에 신호 전송 (논블로킹)
-		for _, ch := range channels {
-			select {
-			case ch <- signal:
-			default:
-				// 채널이 가득 찬 경우 스킵
-			}
-		}
-	}
-}
-
-// decideSingnaling 현재 큐 상태를 기반으로 적절한 속도 결정
-func (k *KafkaCountingBackpressure) decideSingnaling() SpeedSignal {
-	// 프로듀서 미터가 곧 큐에 쌓인 메시지 수 (오프셋)
-	queuedMessages := k.producerMeter.TotalSum()
-	saturation := float64(queuedMessages) / float64(k.queueCapacity)
-
-	newInterval := k.currentInterval
-	newBatchSize := k.currentBatchSize
-
-	// 포화도에 따른 속도 조절
-	switch {
-	case saturation < 0.1:
-		// 매우 낮은 부하 - 강한 속도 증가
-		newBatchSize = int(float64(k.currentBatchSize) * k.strongIncreaseRate)
-		newInterval = int(float64(k.currentInterval) * 0.5)
-
-	case saturation >= 0.1 && saturation < 0.3:
-		// 낮은 부하 - 약한 속도 증가
-		newBatchSize = int(float64(k.currentBatchSize) * k.weakIncreaseRate)
-		newInterval = int(float64(k.currentInterval) * 0.8)
-	case saturation >= 0.3 && saturation < 0.4:
-		// 약간 낮은 부하 - 미세 증가
-		newBatchSize = int(float64(k.currentBatchSize) * 1.1)
-		newInterval = int(float64(k.currentInterval) * 0.9)
-	case saturation >= 0.4 && saturation < 0.6:
-		// 적정 부하 - 속도 유지
-		// 목표 포화도 범위 내에 있으므로 변경 없음
-
-	case saturation >= 0.6 && saturation < 0.7:
-		// 약간 높은 부하 - 미세 감소
-		newBatchSize = int(float64(k.currentBatchSize) * 0.9)
-		newInterval = int(float64(k.currentInterval) * 1.1)
-
-	case saturation >= 0.7 && saturation < 0.8:
-		// 높은 부하 - 약한 속도 감소
-		newBatchSize = int(float64(k.currentBatchSize) * k.weakDecreaseRate)
-		newInterval = int(float64(k.currentInterval) * 1.5)
-
-	case saturation >= 0.8:
-		// 매우 높은 부하 - 강한 속도 감소
-		newBatchSize = int(float64(k.currentBatchSize) * k.strongDecreaseRate)
-		newInterval = int(float64(k.currentInterval) * 2.0)
-	}
-
-	// 목표 포화도에 더 가까워지도록 미세 조정
-	targetOffset := int64(float64(k.queueCapacity) * k.targetSaturation)
-	if queuedMessages > targetOffset {
-		// 목표보다 높으면 추가 감속
-		adjustment := float64(queuedMessages) / float64(targetOffset)
-		if adjustment > 1.2 {
-			newBatchSize = int(float64(newBatchSize) / adjustment)
-		}
-	}
-	// 배치 크기 제한 (최소 1, 최대 큐 용량의 33%)
-	maxBatch := int(float64(k.queueCapacity) * k.maxBatchRatio)
-	if newBatchSize < 1 {
-		newBatchSize = 1
-	} else if newBatchSize > maxBatch {
-		newBatchSize = maxBatch
-	}
-	// 배치 인터벌 제한
-	// 아무리 배치를 빨리 한다 해도 1초보다 잦게는 하지 않음.
-	if newInterval < 1 {
-		newInterval = 1
-	}
-
-	return SpeedSignal{
-		ProducingIntervalSecond: newInterval,
-		ProducingPerInterval:    newBatchSize,
-	}
-}
-
-// GetCurrentSaturation 현재 큐 포화도 반환 (디버깅용)
+// GetCurrentSaturation 현재 큐 포화도 반환
 func (k *KafkaCountingBackpressure) GetCurrentSaturation() float64 {
-	queuedMessages := k.producerMeter.TotalSum()
-	return float64(queuedMessages) / float64(k.queueCapacity)
+	if k.queueCapacity == 0 {
+		return 0
+	}
+	return float64(k.producerMeter.TotalSum()) / float64(k.queueCapacity)
 }
 
-// GetQueueSize 현재 큐 크기 반환 (디버깅용)
+// GetQueueSize 현재 큐 크기 반환
 func (k *KafkaCountingBackpressure) GetQueueSize() int64 {
 	return k.producerMeter.TotalSum()
 }
 
-// GetMetersStatus 미터기 상태 반환 (디버깅용)
+// GetMetersStatus 미터기 상태 반환
 func (k *KafkaCountingBackpressure) GetMetersStatus() (producer int64, consumer int64) {
 	return k.producerMeter.TotalSum(), k.consumerMeter.TotalSum()
 }
 
-// ResetMeters 모든 미터기 리셋 (테스트용)
+// GetAdjustmentHistory 최근 조정 히스토리 반환 (디버깅용)
+func (k *KafkaCountingBackpressure) GetAdjustmentHistory() []float64 {
+	k.historyMu.RLock()
+	defer k.historyMu.RUnlock()
+
+	history := make([]float64, len(k.adjustmentHistory))
+	copy(history, k.adjustmentHistory)
+	return history
+}
+
+// ResetMeters 모든 미터기 리셋
 func (k *KafkaCountingBackpressure) ResetMeters() {
 	k.producerMeter.Reset()
 	k.consumerMeter.Reset()
-}
 
-// IsRunning 모니터링 실행 중인지 확인
-func (k *KafkaCountingBackpressure) IsRunning() bool {
-	k.runMu.RLock()
-	defer k.runMu.RUnlock()
-	return k.running
+	k.historyMu.Lock()
+	k.lastSaturation = 0
+	k.saturationTrend = 0
+	k.adjustmentHistory = k.adjustmentHistory[:0]
+	k.historyMu.Unlock()
 }
