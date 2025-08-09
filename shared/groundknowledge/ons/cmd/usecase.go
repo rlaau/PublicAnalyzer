@@ -8,14 +8,14 @@ import (
 )
 
 const (
-	ModuleID      = ons.ModuleName("leys")
-	NewModuleName = ons.ModuleName("user")
+	ModuleID      = ons.ModuleName("ex_leys")
+	NewModuleName = ons.ModuleName("ex_user")
 
 	// 구조체 ID들
-	UserLLStructID   = ons.OwnerName("UserL")
-	ProfileStructID  = ons.OwnerName("Profile")
-	SettingsStructID = ons.OwnerName("Settings")
-	UserStructName   = ons.OwnerName("User")
+	UserLLStructID   = ons.OwnerName("ex_UserLL")
+	ProfileStructID  = ons.OwnerName("ex_Profile")
+	SettingsStructID = ons.OwnerName("ex_Settings")
+	UserStructName   = ons.OwnerName("ex_User")
 )
 
 var (
@@ -27,7 +27,7 @@ var (
 
 func init() {
 	//0. 새 모듈 등록
-	ons.RegisterModule(NewModuleName, "신규 모듈")
+	ons.RegisterModule(NewModuleName, "신규 모듈~~~")
 
 	ons.RegisterRelation(NewModuleName, UserStructName)
 	ons.RegisterOwner(UserStructName, "신규 구조체")
@@ -36,13 +36,11 @@ func init() {
 
 	// 2. 모듈-구조체 관계 등록
 	ons.RegisterRelation(ModuleID, UserLLStructID)
-	ons.RegisterRelation(ModuleID, ProfileStructID)
 	ons.RegisterRelation(ModuleID, SettingsStructID)
 
 	// 3. 구조체 등록 (SystemID는 Initialize 후에 할당됨)
-	ons.RegisterOwner(UserLLStructID, "사용자 기본 정보")
-	ons.RegisterOwner(ProfileStructID, "사용자 프로필")
-	ons.RegisterOwner(SettingsStructID, "ssss")
+	ons.RegisterOwner(UserLLStructID, "사용자의!!,,@@ 기본 정보")
+	ons.RegisterOwner(SettingsStructID, "ssㄴㄴ")
 
 }
 
@@ -64,8 +62,8 @@ func main() {
 
 	// 이제 SystemID 사용 가능
 
-	// 1. 구조체ID로 시스템ID 얻기 (핵심 기능!)
 	userSysID, err := ons.GetSystemIdByOwnerName("User")
+	println("(얘는 없어야 하는 것)")
 	if err != nil {
 		log.Printf("Error: %v", err)
 	} else {
@@ -80,7 +78,7 @@ func main() {
 
 	// 3. 모듈의 모든 구조체 조회
 	userStructs := ons.GetOwnersOfModule(ModuleID)
-	fmt.Printf("\nuser 모듈의 구조체들(없는게 정상임): %v\n", userStructs)
+	fmt.Printf("\nuser 모듈의 구조체들: %v\n", userStructs)
 
 	// 4. 각 구조체의 SystemID 확인
 	fmt.Println("\n모든 구조체의 SystemID:")
