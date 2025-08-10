@@ -4,12 +4,21 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring/tools"
 )
+
+const filePath string = "./test_storage"
+
+// 경로 생성 쪽: OS 독립 & 안전
+func ReturnIsolatedStorage(i int) string {
+	return filepath.Join(filePath, strconv.Itoa(i))
+}
 
 // ExampleMessage 예시 메시지 타입
 type ExampleMessage struct {
@@ -25,7 +34,7 @@ func bufferedModeExample() {
 	log.Println("=== BUFFERED MODE EXAMPLE ===")
 
 	// 백프레셔 생성
-	backpressure := tools.NewKafkaCountingBackpressure(
+	backpressure := tools.LoadKafkaCountingBackpressure(
 		tools.RequestedQueueSpec{
 			QueueCapacity:    10000,
 			TargetSaturation: 0.5,
@@ -34,6 +43,7 @@ func bufferedModeExample() {
 			SeedInterval:  1,
 			SeedBatchSize: 100,
 		},
+		ReturnIsolatedStorage(1),
 	)
 
 	// Buffered 모드 프로듀서 생성
@@ -58,7 +68,15 @@ func bufferedModeExample() {
 	defer producer.Stop()
 
 	// 컨슈머 시뮬레이션 (별도 고루틴) - 실제 Kafka 컨슈머
-	go runRealConsumer(backpressure, "buffered-topic", 15*time.Second)
+	config := kafka.KafkaBatchConfig{
+		Brokers:      []string{"localhost:9092"},
+		Topic:        "direct-topic",
+		GroupID:      fmt.Sprintf("consumer-group-%s-%d", "direct-topic", time.Now().Unix()),
+		BatchSize:    50,
+		BatchTimeout: 500 * time.Millisecond,
+	}
+	// 컨슈머 시뮬레이션 - 실제 Kafka 컨슈머
+	go runRealConsumer(backpressure, config, 15*time.Second)
 
 	// 메시지 생성 및 버퍼에 추가
 	for i := 0; i < 1000; i++ {
@@ -95,7 +113,7 @@ func directModeExample() {
 	log.Println("=== DIRECT MODE EXAMPLE ===")
 
 	// 백프레셔 생성
-	backpressure := tools.NewKafkaCountingBackpressure(
+	backpressure := tools.LoadKafkaCountingBackpressure(
 		tools.RequestedQueueSpec{
 			QueueCapacity:    5000,
 			TargetSaturation: 0.4,
@@ -104,6 +122,7 @@ func directModeExample() {
 			SeedInterval:  2,
 			SeedBatchSize: 50,
 		},
+		ReturnIsolatedStorage(2),
 	)
 
 	// Direct 모드 프로듀서 생성
@@ -126,9 +145,15 @@ func directModeExample() {
 		log.Fatalf("Failed to start producer: %v", err)
 	}
 	defer producer.Stop()
-
+	config := kafka.KafkaBatchConfig{
+		Brokers:      []string{"localhost:9092"},
+		Topic:        "direct-topic",
+		GroupID:      fmt.Sprintf("consumer-group-%s-%d", "direct-topic", time.Now().Unix()),
+		BatchSize:    50,
+		BatchTimeout: 500 * time.Millisecond,
+	}
 	// 컨슈머 시뮬레이션 - 실제 Kafka 컨슈머
-	go runRealConsumer(backpressure, "direct-topic", 15*time.Second)
+	go runRealConsumer(backpressure, config, 15*time.Second)
 
 	// 메시지 생성 및 채널로 전송
 	for i := 0; i < 500; i++ {
@@ -165,7 +190,7 @@ func unifiedPublishExample() {
 	log.Println("=== UNIFIED PUBLISH EXAMPLE ===")
 
 	// 백프레셔 생성
-	backpressure := tools.NewKafkaCountingBackpressure(
+	backpressure := tools.LoadKafkaCountingBackpressure(
 		tools.RequestedQueueSpec{
 			QueueCapacity:    8000,
 			TargetSaturation: 0.45,
@@ -174,6 +199,7 @@ func unifiedPublishExample() {
 			SeedInterval:  1,
 			SeedBatchSize: 75,
 		},
+		ReturnIsolatedStorage(3),
 	)
 
 	// 두 개의 프로듀서 생성 (하나는 Buffered, 하나는 Direct)
@@ -208,8 +234,24 @@ func unifiedPublishExample() {
 	defer directProducer.Stop()
 
 	// 실제 컨슈머 2개 실행 (각 프로듀서 토픽에 대해)
-	go runRealConsumer(backpressure, "unified-topic-buffered", 10*time.Second)
-	go runRealConsumer(backpressure, "unified-topic-direct", 10*time.Second)
+	config := kafka.KafkaBatchConfig{
+		Brokers:      []string{"localhost:9092"},
+		Topic:        "unified-topic-buffered",
+		GroupID:      fmt.Sprintf("consumer-group-%s-%d", "unified-topic-buffered", time.Now().Unix()),
+		BatchSize:    50,
+		BatchTimeout: 500 * time.Millisecond,
+	}
+	// 컨슈머 시뮬레이션 - 실제 Kafka 컨슈머
+	go runRealConsumer(backpressure, config, 15*time.Second)
+	config2 := kafka.KafkaBatchConfig{
+		Brokers:      []string{"localhost:9092"},
+		Topic:        "unified-topic-direct",
+		GroupID:      fmt.Sprintf("consumer-group-%s-%d", "unified-topic-direct", time.Now().Unix()),
+		BatchSize:    50,
+		BatchTimeout: 500 * time.Millisecond,
+	}
+	// 컨슈머 시뮬레이션 - 실제 Kafka 컨슈머
+	go runRealConsumer(backpressure, config2, 15*time.Second)
 
 	// 동일한 Publish 메서드 사용 (모드에 따라 다르게 동작)
 	for i := 0; i < 200; i++ {
@@ -256,7 +298,7 @@ func performanceComparisonExample() {
 	}
 
 	// Buffered 모드 테스트
-	bufferedBackpressure := tools.NewKafkaCountingBackpressure(backpressureConfig, seedConfig)
+	bufferedBackpressure := tools.LoadKafkaCountingBackpressure(backpressureConfig, seedConfig, ReturnIsolatedStorage(4))
 	bufferedProducer := kafka.NewKafkaBatchProducerWithBackpressure[ExampleMessage](
 		kafka.BackpressureProducerConfig{
 			Brokers:          []string{"localhost:9092"},
@@ -270,7 +312,7 @@ func performanceComparisonExample() {
 	)
 
 	// Direct 모드 테스트
-	directBackpressure := tools.NewKafkaCountingBackpressure(backpressureConfig, seedConfig)
+	directBackpressure := tools.LoadKafkaCountingBackpressure(backpressureConfig, seedConfig, ReturnIsolatedStorage(5))
 	directProducer := kafka.NewKafkaBatchProducerWithBackpressure[ExampleMessage](
 		kafka.BackpressureProducerConfig{
 			Brokers:           []string{"localhost:9092"},
@@ -292,17 +334,29 @@ func performanceComparisonExample() {
 	// 실제 컨슈머 시작
 	var consumerWg sync.WaitGroup
 	consumerWg.Add(2)
-
+	config := kafka.KafkaBatchConfig{
+		Brokers:      []string{"localhost:9092"},
+		Topic:        "perf-buffered",
+		GroupID:      fmt.Sprintf("consumer-group-%s-%d", "perf-buffered", time.Now().Unix()),
+		BatchSize:    50,
+		BatchTimeout: 500 * time.Millisecond,
+	}
 	// Buffered 토픽 컨슈머
 	go func() {
 		defer consumerWg.Done()
-		runRealConsumer(bufferedBackpressure, "perf-buffered", 20*time.Second)
+		runRealConsumer(bufferedBackpressure, config, 20*time.Second)
 	}()
-
+	config2 := kafka.KafkaBatchConfig{
+		Brokers:      []string{"localhost:9092"},
+		Topic:        "perf-direct",
+		GroupID:      fmt.Sprintf("consumer-group-%s-%d", "perf-direct", time.Now().Unix()),
+		BatchSize:    50,
+		BatchTimeout: 500 * time.Millisecond,
+	}
 	// Direct 토픽 컨슈머
 	go func() {
 		defer consumerWg.Done()
-		runRealConsumer(directBackpressure, "perf-direct", 20*time.Second)
+		runRealConsumer(directBackpressure, config2, 20*time.Second)
 	}()
 
 	// 동시에 대량 메시지 생성
@@ -366,87 +420,21 @@ func performanceComparisonExample() {
 		directProducer.GetDirectChannelSize())
 }
 
-// ========================================
-// 헬퍼 함수
-// ========================================
-func simulateConsumer(backpressure tools.CountingBackpressure, mode string) {
-	// 실제 Kafka 컨슈머 생성
-	config := kafka.KafkaBatchConfig{
-		Brokers:      []string{"localhost:9092"},
-		Topic:        mode + "-topic", // mode에 따른 토픽 이름
-		GroupID:      "test-consumer-group-" + mode,
-		BatchSize:    100,
-		BatchTimeout: 1 * time.Second,
-	}
-
-	consumer := kafka.NewKafkaBatchConsumer[ExampleMessage](config)
-	defer consumer.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	log.Printf("[%s] Real consumer started for topic: %s", mode, config.Topic)
-
-	consumedCount := 0
-	for {
-		select {
-		case <-ctx.Done():
-			log.Printf("[%s] Consumer stopped. Total consumed: %d", mode, consumedCount)
-			return
-		default:
-			// 실제로 Kafka에서 메시지 읽기
-			messages, err := consumer.ReadMessagesBatch(ctx)
-			if err != nil {
-				if err == context.DeadlineExceeded || err == context.Canceled {
-					continue
-				}
-				log.Printf("[%s] Consumer error: %v", mode, err)
-				continue
-			}
-
-			if len(messages) > 0 {
-				// 백프레셔에 실제 소비량 알림
-				backpressure.CountConsumings(len(messages))
-				consumedCount += len(messages)
-
-				// 로그 출력 (처음과 마지막 메시지만)
-				if len(messages) > 0 {
-					log.Printf("[%s] Consumed %d real messages (first: %s, last: %s)",
-						mode, len(messages),
-						messages[0].Value.ID,
-						messages[len(messages)-1].Value.ID)
-				}
-			}
-		}
-	}
-}
-
 // 실제 컨슈머 헬퍼 (컨텍스트 포함)
-func runRealConsumer(backpressure tools.CountingBackpressure, topic string, duration time.Duration) {
-	config := kafka.KafkaBatchConfig{
-		Brokers:      []string{"localhost:9092"},
-		Topic:        topic,
-		GroupID:      fmt.Sprintf("consumer-group-%s-%d", topic, time.Now().Unix()),
-		BatchSize:    50,
-		BatchTimeout: 500 * time.Millisecond,
-	}
+func runRealConsumer(backpressure tools.CountingBackpressure, config kafka.KafkaBatchConfig, duration time.Duration) {
 
-	consumer := kafka.NewKafkaBatchConsumer[ExampleMessage](config)
+	consumer := kafka.NewKafkaBatchConsumerWithBackpressure[ExampleMessage](config, backpressure)
 	defer consumer.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), duration)
 	defer cancel()
 
-	log.Printf("Real consumer started for topic: %s", topic)
-
-	totalConsumed := 0
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("Consumer for %s stopped. Total consumed: %d", topic, totalConsumed)
 			return
 		default:
-			messages, err := consumer.ReadMessagesBatch(ctx)
+			_, err := consumer.ReadMessagesBatch(ctx)
 			if err != nil {
 				if err == context.DeadlineExceeded || err == context.Canceled {
 					continue
@@ -456,19 +444,6 @@ func runRealConsumer(backpressure tools.CountingBackpressure, topic string, dura
 				continue
 			}
 
-			if len(messages) > 0 {
-				// 백프레셔에 알림
-				backpressure.CountConsumings(len(messages))
-				totalConsumed += len(messages)
-
-				// 간단한 처리 시뮬레이션 (예: 메시지 검증)
-				for _, msg := range messages {
-					_ = msg.Value.ID // 실제로 메시지 사용
-				}
-
-				log.Printf("Topic %s: Consumed batch of %d messages (total: %d)",
-					topic, len(messages), totalConsumed)
-			}
 		}
 	}
 }

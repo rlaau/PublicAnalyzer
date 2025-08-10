@@ -1,7 +1,12 @@
 package tools
 
 import (
+	"fmt"
 	"log"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,6 +44,7 @@ type CountingBackpressure interface {
 	GetCurrentSaturation() float64
 	GetQueueSize() int64
 	GetMetersStatus() (producer int64, consumer int64)
+	GetMaxBatchSize() int
 }
 
 type KafkaCountingBackpressure struct {
@@ -79,6 +85,9 @@ type KafkaCountingBackpressure struct {
 	saturationTrend   float64   // 포화도 변화 추세
 	adjustmentHistory []float64 // 최근 조정 비율 히스토리
 	historyMu         sync.RWMutex
+
+	//큐 부하 저장할 파일 저장 경로
+	storagePath string
 }
 
 // 클라이언트가 달성하길 원하는 채널 스펙
@@ -94,9 +103,61 @@ type SeedProducingConfig struct {
 	SeedBatchSize int
 }
 
-// NewKafkaCountingBackpressure 새로운 백프레셔 인스턴스 생성
-func NewKafkaCountingBackpressure(requestedQueueSpec RequestedQueueSpec, seedProducingConfig SeedProducingConfig) *KafkaCountingBackpressure {
-	return &KafkaCountingBackpressure{
+// save(): 직접 flush 버전 + 부모 디렉토리 보장
+func (k *KafkaCountingBackpressure) save() error {
+	if k.storagePath == "" {
+		return fmt.Errorf("storagePath is not set")
+	}
+	if err := os.MkdirAll(filepath.Dir(k.storagePath), 0o755); err != nil {
+		return err
+	}
+	total := k.producerMeter.TotalSum()
+	return os.WriteFile(k.storagePath, []byte(strconv.FormatInt(total, 10)+"\n"), 0o644)
+}
+
+// Load: 총 큐부하만 복원 (파일 없으면 생성 후 0으로 초기화)
+// Load: 총 큐부하만 복원 (파일 없으면 생성 후 0으로 초기화) + 부모 디렉토리 보장
+func (k *KafkaCountingBackpressure) load(path string) error {
+	k.storagePath = path
+
+	// 부모 디렉토리 보장
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Printf("[backpressure] state file %s not found, initializing to 0", path)
+			if err := os.WriteFile(path, []byte("0\n"), 0o644); err != nil {
+				return err
+			}
+			k.producerMeter.Set(0)
+			k.consumerMeter.Set(0)
+			return nil
+		}
+		return err
+	}
+
+	s := strings.TrimSpace(string(b))
+	if s == "" {
+		k.producerMeter.Set(0)
+		k.consumerMeter.Set(0)
+		return nil
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return err
+	}
+	k.producerMeter.Set(v)
+	k.consumerMeter.Set(0)
+	log.Printf("[backpressure] producer미터의 값을 %d로 초기화함.", v)
+	return nil
+}
+
+// LoadKafkaCountingBackpressure 새로운 백프레셔 인스턴스 생성
+func LoadKafkaCountingBackpressure(requestedQueueSpec RequestedQueueSpec, seedProducingConfig SeedProducingConfig, queuemeterFilepath string) *KafkaCountingBackpressure {
+	k := &KafkaCountingBackpressure{
 		producerMeter:      cntmtr.NewIntCountMeter(),
 		consumerMeter:      cntmtr.NewIntCountMeter(),
 		queueCapacity:      requestedQueueSpec.QueueCapacity,
@@ -114,6 +175,12 @@ func NewKafkaCountingBackpressure(requestedQueueSpec RequestedQueueSpec, seedPro
 		adjustmentHistory:  make([]float64, 0, 10),
 		running:            false,
 	}
+	// 큐 부하 복원
+	k.load(queuemeterFilepath)
+	return k
+}
+func (k *KafkaCountingBackpressure) GetMaxBatchSize() int {
+	return int(float64(k.queueCapacity) * k.maxBatchRatio)
 }
 
 // CountConsuming 단일 컨슈밍 카운트
@@ -153,6 +220,8 @@ func (k *KafkaCountingBackpressure) GetNextSignal() SpeedSignal {
 	k.currentInterval = signal.ProducingIntervalSecond
 	k.currentBatchSize = signal.ProducingPerInterval
 	k.lastSignalTime = signal.Timestamp
+	//영속할 큐 값 지속적으로 저장
+	k.save()
 	k.signalMu.Unlock()
 
 	// 트렌드 업데이트
@@ -387,7 +456,7 @@ func (k *KafkaCountingBackpressure) Stop() {
 	k.stopOnce.Do(func() {
 		k.runMu.Lock()
 		defer k.runMu.Unlock()
-
+		k.save()
 		if !k.running {
 			return
 		}
@@ -437,5 +506,11 @@ func (k *KafkaCountingBackpressure) ResetMeters() {
 	k.lastSaturation = 0
 	k.saturationTrend = 0
 	k.adjustmentHistory = k.adjustmentHistory[:0]
+	// 상태 파일 삭제 시도
+	if k.storagePath != "" {
+		if err := os.Remove(k.storagePath); err != nil && !os.IsNotExist(err) {
+			log.Printf("[backpressure] failed to delete state file %s: %v", k.storagePath, err)
+		}
+	}
 	k.historyMu.Unlock()
 }

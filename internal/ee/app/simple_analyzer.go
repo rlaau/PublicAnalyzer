@@ -177,7 +177,6 @@ func (a *SimpleEOAAnalyzer) ProcessTransactions(txs []*shareddomain.MarkedTransa
 
 // transactionWorker는 이제 워커풀에 의해 대체됨 - 하위 호환성을 위해 주석 처리
 // 실제 작업은 TransactionJob.Do()에서 처리됨
-
 // batchConsumerWorker 배치 Consumer 워커 (고성능 배치 처리)
 func (a *SimpleEOAAnalyzer) batchConsumerWorker(ctx context.Context) {
 	defer a.wg.Done()

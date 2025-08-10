@@ -31,10 +31,8 @@ type KafkaBatchProducerWithBackpressure[T any] struct {
 	backpressure tools.CountingBackpressure
 
 	// 설정
-	mode         ProducerMode
-	topic        string
-	maxBatchSize int           // 백프레셔가 제안하는 최대 배치 크기 제한
-	maxInterval  time.Duration // 백프레셔가 제안하는 최대 인터벌 제한
+	mode  ProducerMode
+	topic string
 
 	// 메시지 버퍼 (ModeBuffered에서만 사용)
 	messageBuffer []Message[T]
@@ -98,7 +96,7 @@ func NewKafkaBatchProducerWithBackpressure[T any](
 		config.MaxBufferSize = 100000
 	}
 	if config.Mode == ModeDirect && config.DirectChannelSize <= 0 {
-		config.DirectChannelSize = 1000
+		config.DirectChannelSize = 10000
 	}
 
 	// 글로벌 브로커 설정
@@ -109,17 +107,7 @@ func NewKafkaBatchProducerWithBackpressure[T any](
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	// Kafka가 준비될 때까지 대기
-	log.Println("Waiting for Kafka to be ready...")
-	err := WaitForKafka(config.Brokers, 30*time.Second)
-	if err != nil {
-		panic("카프카 열지 못함")
-	}
-	log.Printf("Creating topic '%s' with brokers: %v", config.Topic, config.Brokers)
-	err = CreateTopicIfNotExists(config.Brokers, config.Topic, 1, 1)
-	if err != nil {
-		panic("카프카 토픽 생성 실패함")
-	}
+	PrepareKafkaConfigByDefalut(config.Brokers, config.Topic)
 	log.Printf("Topic '%s' creation completed", config.Topic)
 	p := &KafkaBatchProducerWithBackpressure[T]{
 		writer: &kafkaLib.Writer{
@@ -135,8 +123,6 @@ func NewKafkaBatchProducerWithBackpressure[T any](
 		backpressure: backpressure,
 		mode:         config.Mode,
 		topic:        config.Topic,
-		maxBatchSize: config.MaxBatchSize,
-		maxInterval:  config.MaxInterval,
 		ctx:          ctx,
 		cancel:       cancel,
 		running:      false,
@@ -191,14 +177,8 @@ func (p *KafkaBatchProducerWithBackpressure[T]) bufferedProducerLoop() {
 
 			// 신호 제한 적용
 			batchSize := signal.ProducingPerInterval
-			if batchSize > p.maxBatchSize {
-				batchSize = p.maxBatchSize
-			}
 
 			interval := time.Duration(signal.ProducingIntervalSecond) * time.Second
-			if interval > p.maxInterval {
-				interval = p.maxInterval
-			}
 
 			// 디버깅 로그
 			log.Printf("[Buffered] Backpressure signal - Batch: %d, Interval: %v, Saturation: %.2f%%",
@@ -248,14 +228,8 @@ func (p *KafkaBatchProducerWithBackpressure[T]) directProducerLoop() {
 
 		// 신호 제한 적용
 		batchSize := signal.ProducingPerInterval
-		if batchSize > p.maxBatchSize {
-			batchSize = p.maxBatchSize
-		}
 
 		interval := time.Duration(signal.ProducingIntervalSecond) * time.Second
-		if interval > p.maxInterval {
-			interval = p.maxInterval
-		}
 
 		log.Printf("[Direct] Backpressure signal - Batch: %d, Interval: %v, Saturation: %.2f%%",
 			batchSize, interval, signal.CurrentSaturation*100)
@@ -432,8 +406,8 @@ func (p *KafkaBatchProducerWithBackpressure[T]) publishBatch(messages []Message[
 			Value: data,
 		}
 	}
-
-	ctx, cancel := context.WithTimeout(p.ctx, 10*time.Second)
+	//일단 끝까지 flush위해서 사용.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	return p.writer.WriteMessages(ctx, kafkaMessages...)
@@ -442,7 +416,7 @@ func (p *KafkaBatchProducerWithBackpressure[T]) publishBatch(messages []Message[
 // flushBuffer 버퍼의 모든 메시지 전송 (ModeBuffered용)
 func (p *KafkaBatchProducerWithBackpressure[T]) flushBuffer() {
 	for {
-		messages := p.extractFromBuffer(p.maxBatchSize)
+		messages := p.extractFromBuffer(p.backpressure.GetMaxBatchSize())
 		if len(messages) == 0 {
 			break
 		}
@@ -471,8 +445,8 @@ func (p *KafkaBatchProducerWithBackpressure[T]) flushDirectChannel() {
 
 	if len(allMessages) > 0 {
 		// 배치로 나누어 전송
-		for i := 0; i < len(allMessages); i += p.maxBatchSize {
-			end := i + p.maxBatchSize
+		for i := 0; i < len(allMessages); i += int(p.backpressure.GetMaxBatchSize()) {
+			end := i + p.backpressure.GetMaxBatchSize()
 			if end > len(allMessages) {
 				end = len(allMessages)
 			}
@@ -575,4 +549,59 @@ func (p *KafkaBatchProducerWithBackpressure[T]) IsRunning() bool {
 	p.runningMu.RLock()
 	defer p.runningMu.RUnlock()
 	return p.running
+}
+
+// 백프레셔 카운팅 래퍼 ---------------------------------------------------------
+
+// KafkaBatchConsumerWithBackpressure: 읽은 개수만 충실히 카운팅.
+type KafkaBatchConsumerWithBackpressure[T any] struct {
+	inner        *KafkaBatchConsumer[T]
+	backpressure tools.CountingBackpressure
+}
+
+// 생성자
+func NewKafkaBatchConsumerWithBackpressure[T any](
+	config KafkaBatchConfig,
+	backpressure tools.CountingBackpressure,
+) *KafkaBatchConsumerWithBackpressure[T] {
+	return &KafkaBatchConsumerWithBackpressure[T]{
+		inner:        NewKafkaBatchConsumer[T](config),
+		backpressure: backpressure,
+	}
+}
+
+// 배치 읽기 + 카운팅
+func (c *KafkaBatchConsumerWithBackpressure[T]) ReadMessagesBatch(ctx context.Context) ([]Message[T], error) {
+	msgs, err := c.inner.ReadMessagesBatch(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if n := len(msgs); n > 0 {
+		// ✅ 여기서 딱 카운팅만
+		c.backpressure.CountConsumings(n)
+	}
+	return msgs, nil
+}
+
+// 단건 읽기 + 카운팅(단건)
+func (c *KafkaBatchConsumerWithBackpressure[T]) ReadMessage(ctx context.Context) ([]byte, T, error) {
+	key, v, err := c.inner.ReadMessage(ctx)
+	if err == nil {
+		c.backpressure.CountConsuming()
+	}
+	return key, v, err
+}
+
+// 설정/종료 pass-through
+func (c *KafkaBatchConsumerWithBackpressure[T]) SetBatchConfig(batchSize int, timeout time.Duration) {
+	c.inner.SetBatchConfig(batchSize, timeout)
+}
+
+func (c *KafkaBatchConsumerWithBackpressure[T]) Close() error {
+	return c.inner.Close()
+}
+
+// 필요하면 내부 접근자
+func (c *KafkaBatchConsumerWithBackpressure[T]) Underlying() *KafkaBatchConsumer[T] {
+	return c.inner
 }

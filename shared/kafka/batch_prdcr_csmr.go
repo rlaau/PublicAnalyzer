@@ -3,6 +3,7 @@ package kafka
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -57,57 +58,56 @@ func NewKafkaBatchConsumer[T any](config KafkaBatchConfig) *KafkaBatchConsumer[T
 	}
 }
 
-// ReadMessagesBatch 진정한 배치 읽기 (한 번에 여러 메시지)
 func (c *KafkaBatchConsumer[T]) ReadMessagesBatch(ctx context.Context) ([]Message[T], error) {
-	kafkaMessages := make([]kafkaLib.Message, 0, c.batchSize)
-
-	// 첫 번째 메시지는 블로킹으로 기다림
-	firstMsg, err := c.reader.ReadMessage(ctx)
+	// 첫 메시지는 호출자가 넘긴 ctx로 블로킹 읽기 (취소/종료 시 즉시 빠짐)
+	first, err := c.reader.ReadMessage(ctx)
 	if err != nil {
 		return nil, err
 	}
-	kafkaMessages = append(kafkaMessages, firstMsg)
 
-	// 나머지 메시지들은 논블로킹으로 수집 (진정한 배칭!)
-	timeoutCtx, cancel := context.WithTimeout(ctx, c.batchTimeout)
-	defer cancel()
+	kafkaMessages := make([]kafkaLib.Message, 0, c.batchSize)
+	kafkaMessages = append(kafkaMessages, first)
 
+	// 배치 타임아웃까지의 데드라인 계산
+	deadline := time.Now().Add(c.batchTimeout)
+
+	// 배치 크기 또는 데드라인까지 추가로 읽기
 	for len(kafkaMessages) < c.batchSize {
-		select {
-		case <-timeoutCtx.Done():
-			// 타임아웃 도달하면 현재까지 수집된 배치 반환
-			goto convertMessages
-		default:
-			// 논블로킹으로 추가 메시지 읽기 시도
-			readCtx, readCancel := context.WithTimeout(ctx, 1*time.Millisecond)
-			msg, err := c.reader.ReadMessage(readCtx)
-			readCancel()
-
-			if err != nil {
-				// 에러 발생시 현재까지 수집된 배치 반환
-				goto convertMessages
-			}
-			kafkaMessages = append(kafkaMessages, msg)
+		remain := time.Until(deadline)
+		if remain <= 0 {
+			break
 		}
+
+		// “남은 시간” 만큼만 블로킹
+		rctx, cancel := context.WithTimeout(ctx, remain)
+		msg, err := c.reader.ReadMessage(rctx)
+		cancel()
+
+		if err != nil {
+			// 타임아웃이면 지금까지 모은 배치로 반환
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				break
+			}
+			// 다른 에러면, 이미 모은 게 있으면 우선 그걸 반환해서 상위가 처리하게 하고
+			if len(kafkaMessages) > 0 {
+				break
+			}
+			// 처음부터 실패면 그대로 에러 리턴
+			return nil, err
+		}
+		kafkaMessages = append(kafkaMessages, msg)
 	}
 
-convertMessages:
-	// kafkaLib.Message를 Message[T]로 변환
-	messages := make([]Message[T], 0, len(kafkaMessages))
-	for _, kafkaMsg := range kafkaMessages {
-		// JSON 역직렬화
-		var value T
-		if err := json.Unmarshal(kafkaMsg.Value, &value); err != nil {
-			// 파싱 실패한 메시지는 스킵
+	// 변환
+	out := make([]Message[T], 0, len(kafkaMessages))
+	for _, km := range kafkaMessages {
+		var v T
+		if err := json.Unmarshal(km.Value, &v); err != nil {
 			continue
 		}
-		messages = append(messages, Message[T]{
-			Key:   kafkaMsg.Key,
-			Value: value,
-		})
+		out = append(out, Message[T]{Key: km.Key, Value: v})
 	}
-
-	return messages, nil
+	return out, nil
 }
 
 // ReadMessage 단건 호환성 (Consumer 인터페이스 구현)
@@ -155,6 +155,7 @@ func NewKafkaBatchProducer[T any](config KafkaBatchConfig) *KafkaBatchProducer[T
 	} else {
 		config.Brokers = GetGlobalBrokers()
 	}
+	PrepareKafkaConfigByDefalut(config.Brokers, config.Topic)
 
 	return &KafkaBatchProducer[T]{
 		writer: &kafkaLib.Writer{

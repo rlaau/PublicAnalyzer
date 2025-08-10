@@ -68,6 +68,10 @@ func (ct ChainTime) Format(layout string) string {
 	return time.Time(ct).Format(layout)
 }
 
+func (ct ChainTime) UTC() ChainTime {
+	return ChainTime(ct.Time().UTC())
+}
+
 // String은 기본 문자열 표현을 반환합니다
 func (ct ChainTime) String() string {
 	return time.Time(ct).String()

@@ -2,13 +2,20 @@ package tools
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 )
 
+const filePath string = "./test_storage"
+
+func returnIsolatedStroage(i int) string {
+	return filePath + "/" + strconv.Itoa(i)
+}
 func TestNewKafkaCountingBackpressure(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
+	bp := LoadKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000}, returnIsolatedStroage(0))
+	defer bp.ResetMeters()
 
 	if bp.queueCapacity != 10000 {
 		t.Errorf("Expected queue capacity 10000, got %d", bp.queueCapacity)
@@ -26,8 +33,8 @@ func TestNewKafkaCountingBackpressure(t *testing.T) {
 
 // TestGetNextSignal Pull 방식의 핵심 기능 테스트
 func TestGetNextSignal(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
-
+	bp := LoadKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000}, returnIsolatedStroage(1))
+	defer bp.ResetMeters()
 	// 초기 신호
 	signal1 := bp.GetNextSignal()
 	if signal1.ProducingPerInterval < 1000 {
@@ -58,8 +65,8 @@ func TestGetNextSignal(t *testing.T) {
 
 // TestPullBasedRealTimeResponse Pull 방식이 실시간으로 반응하는지 테스트
 func TestPullBasedRealTimeResponse(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
-
+	bp := LoadKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000}, returnIsolatedStroage(2))
+	defer bp.ResetMeters()
 	// 시나리오: 급격한 부하 증가
 	bp.CountProducings(8000) // 80% 포화도로 급증
 
@@ -82,8 +89,8 @@ func TestPullBasedRealTimeResponse(t *testing.T) {
 
 // TestNormalizationOnGetNextSignal GetNextSignal이 정규화를 수행하는지 테스트
 func TestNormalizationOnGetNextSignal(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
-
+	bp := LoadKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000}, returnIsolatedStroage(3))
+	defer bp.ResetMeters()
 	// 프로듀서와 컨슈머 카운트 추가
 	bp.CountProducings(1000)
 	bp.CountConsumings(400)
@@ -109,8 +116,8 @@ func TestNormalizationOnGetNextSignal(t *testing.T) {
 
 // TestTrendAnalysis 트렌드 분석 기능 테스트
 func TestTrendAnalysis(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
-
+	bp := LoadKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000}, returnIsolatedStroage(4))
+	defer bp.ResetMeters()
 	// 포화도 증가 트렌드 시뮬레이션
 	increments := []int{500, 700, 900, 1100}
 	previousBatchSize := 1000
@@ -140,8 +147,8 @@ func TestTrendAnalysis(t *testing.T) {
 
 // TestAdaptiveAdjustment 적응형 조절 테스트
 func TestAdaptiveAdjustment(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
-
+	bp := LoadKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000}, returnIsolatedStroage(5))
+	defer bp.ResetMeters()
 	// 시나리오 1: 안정적인 상태
 	bp.CountProducings(5000) // 50% 포화도 (목표치)
 	signal1 := bp.GetNextSignal()
@@ -165,8 +172,8 @@ func TestAdaptiveAdjustment(t *testing.T) {
 
 // TestBatchSizeLimits 배치 크기 제한 테스트
 func TestBatchSizeLimits(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
-
+	bp := LoadKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000}, returnIsolatedStroage(6))
+	defer bp.ResetMeters()
 	// 매우 낮은 부하로 최대 배치 크기 테스트
 	signal1 := bp.GetNextSignal()
 	maxAllowed := int(10000 * 0.30) // maxBatchRatio = 0.30
@@ -176,7 +183,7 @@ func TestBatchSizeLimits(t *testing.T) {
 	}
 
 	// 매우 높은 부하로 최소 배치 크기 테스트
-	bp2 := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
+	bp2 := LoadKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000}, returnIsolatedStroage(7))
 
 	bp2.CountProducings(9500) // 95% 포화도
 	signal2 := bp2.GetNextSignal()
@@ -188,8 +195,8 @@ func TestBatchSizeLimits(t *testing.T) {
 // TestIntervalLimits 인터벌 제한 테스트
 func TestIntervalLimits(t *testing.T) {
 	// 최소 인터벌 테스트
-	bp1 := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{2, 1000})
-
+	bp1 := LoadKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{2, 1000}, returnIsolatedStroage(8))
+	defer bp1.ResetMeters()
 	bp1.CountProducings(100) // 매우 낮은 부하
 	signal1 := bp1.GetNextSignal()
 	if signal1.ProducingIntervalSecond < 1 {
@@ -198,8 +205,8 @@ func TestIntervalLimits(t *testing.T) {
 	}
 
 	// 최대 인터벌 테스트
-	bp2 := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{30, 1000})
-
+	bp2 := LoadKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{30, 1000}, returnIsolatedStroage(9))
+	defer bp2.ResetMeters()
 	bp2.CountProducings(9900) // 매우 높은 부하
 	signal2 := bp2.GetNextSignal()
 	if signal2.ProducingIntervalSecond > 60 {
@@ -210,8 +217,8 @@ func TestIntervalLimits(t *testing.T) {
 
 // TestConcurrentPullRequests 동시 Pull 요청 테스트
 func TestConcurrentPullRequests(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
-
+	bp := LoadKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000}, returnIsolatedStroage(10))
+	defer bp.ResetMeters()
 	var wg sync.WaitGroup
 	signalChan := make(chan SpeedSignal, 10)
 
@@ -253,8 +260,8 @@ func TestConcurrentPullRequests(t *testing.T) {
 
 // TestHybridMode Pull과 Push 방식 혼용 테스트
 func TestHybridMode(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
-
+	bp := LoadKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000}, returnIsolatedStroage(11))
+	defer bp.ResetMeters()
 	// Push 방식 채널 등록
 	pushChan := make(chan SpeedSignal, 10)
 	bp.RegisterBackpressureChannel(pushChan)
@@ -288,8 +295,8 @@ func TestHybridMode(t *testing.T) {
 
 // TestEmergencyResponse 극한 상황 대응 테스트
 func TestEmergencyResponse(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
-
+	bp := LoadKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000}, returnIsolatedStroage(12))
+	defer bp.ResetMeters()
 	// 95% 이상 포화도 (비상 상황)
 	bp.CountProducings(9600)
 	signal := bp.GetNextSignal()
@@ -307,8 +314,8 @@ func TestEmergencyResponse(t *testing.T) {
 
 // TestResetMeters 미터 리셋 테스트
 func TestResetMeters(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
-
+	bp := LoadKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000}, returnIsolatedStroage(13))
+	defer bp.ResetMeters()
 	// 카운트 추가
 	bp.CountProducings(1000)
 	bp.CountConsumings(500)
@@ -339,8 +346,8 @@ func TestResetMeters(t *testing.T) {
 
 // TestSequentialPullScenario 실제 사용 시나리오 시뮬레이션
 func TestSequentialPullScenario(t *testing.T) {
-	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 100})
-
+	bp := LoadKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 100}, returnIsolatedStroage(14))
+	defer bp.ResetMeters()
 	// 10회 반복 프로듀싱 시뮬레이션
 	for i := 0; i < 10; i++ {
 		// 신호 요청
@@ -370,8 +377,8 @@ func TestSequentialPullScenario(t *testing.T) {
 
 // Benchmark tests
 func BenchmarkGetNextSignal(b *testing.B) {
-	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
-
+	bp := LoadKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000}, returnIsolatedStroage(15))
+	defer bp.ResetMeters()
 	bp.CountProducings(5000)
 
 	b.ResetTimer()
@@ -381,8 +388,8 @@ func BenchmarkGetNextSignal(b *testing.B) {
 }
 
 func BenchmarkGetNextSignalWithNormalization(b *testing.B) {
-	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
-
+	bp := LoadKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000}, returnIsolatedStroage(16))
+	defer bp.ResetMeters()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		bp.CountProducings(100)
@@ -392,8 +399,8 @@ func BenchmarkGetNextSignalWithNormalization(b *testing.B) {
 }
 
 func BenchmarkConcurrentGetNextSignal(b *testing.B) {
-	bp := NewKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000})
-
+	bp := LoadKafkaCountingBackpressure(RequestedQueueSpec{10000, 0.5}, SeedProducingConfig{1, 1000}, returnIsolatedStroage(17))
+	defer bp.ResetMeters()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			bp.CountProducings(10)
