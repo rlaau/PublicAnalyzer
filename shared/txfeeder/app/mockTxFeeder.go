@@ -114,6 +114,17 @@ type TxFeeder struct {
 	debugStats  DebugStats
 	wg          sync.WaitGroup
 	channelOnce sync.Once // 트랜잭션 채널 중복 닫기 방지
+
+	// --- 복잡 그래프 생성을 위한 추가 상태 ---
+	complexGraphEnabled bool
+
+	// 비율(주기) 제어: N 트랜잭션마다 한 번씩 트리거
+	twoDepositUserRatio int // 예: 17 → 17개마다 두-디포짓 유저 트랜잭션
+	userLinkRatio       int // 예: 23 → 23개마다 유저↔유저 트랜잭션
+
+	// sticky user 풀 (다회 등장)
+	stickyUsers   []sharedDomain.Address
+	twoDepositMap map[sharedDomain.Address][2]sharedDomain.Address // 유저 → [dep1, dep2]
 }
 
 // NewTxFeeder 간단한 TxFeeder 생성을 위한 헬퍼 함수
@@ -179,12 +190,12 @@ func GetRawTxFeeder(config *domain.TxGeneratorConfig, cexSet *sharedDomain.CEXSe
 		state:                   domain.NewTxGeneratorState(config.StartTime, config.TimeIncrementDuration, config.TransactionsPerTimeIncrement),
 		mockDepositAddrs:        domain.NewMockDepositAddressSet(),
 		cexSet:                  cexSet,
-		markedTxChannel:         make(chan sharedDomain.MarkedTransaction, 100_000), // Buffer for 10k transactions
+		markedTxChannel:         make(chan sharedDomain.MarkedTransaction, 500_000), // Buffer for 10k transactions
 		kafkaProducer:           kafkaProducer,
 		batchProducer:           nil, // 기본값: 배치 모드 비활성화
 		kafkaBrokers:            kafkaBrokers,
 		batchMode:               false,                 // 기본값: 단건 모드
-		batchSize:               100,                   // 기본 배치 크기
+		batchSize:               1000,                  // 기본 배치 크기
 		batchTimeout:            50 * time.Millisecond, // 기본 배치 타임아웃
 		stopChannel:             make(chan struct{}),
 		doneChannel:             make(chan struct{}),
@@ -192,7 +203,12 @@ func GetRawTxFeeder(config *domain.TxGeneratorConfig, cexSet *sharedDomain.CEXSe
 		stats: PipelineStats{
 			StartTime: time.Now(),
 		},
-		debugStats: DebugStats{},
+		debugStats:          DebugStats{},
+		complexGraphEnabled: true, // 기본 켬
+		twoDepositUserRatio: 8,
+		userLinkRatio:       10,
+		stickyUsers:         make([]sharedDomain.Address, 0, 1024),
+		twoDepositMap:       make(map[sharedDomain.Address][2]sharedDomain.Address),
 	}
 }
 
@@ -502,9 +518,8 @@ func (g *TxFeeder) sendBatchToKafka(messages []kafka.Message[*sharedDomain.Marke
 func (g *TxFeeder) generateSingleTransaction() sharedDomain.MarkedTransaction {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
-
 	// Determine transaction type based on patterns
-	txType := g.determineTransactionType()
+	txType := DepositToCexTx //g.determineTransactionType()
 
 	var tx sharedDomain.MarkedTransaction
 
@@ -512,7 +527,7 @@ func (g *TxFeeder) generateSingleTransaction() sharedDomain.MarkedTransaction {
 	case DepositToCexTx:
 		tx = g.generateDepositToCexTransaction()
 		// 처음 5개 특별 케이스는 로깅
-		if g.state.GeneratedCount < 5 && txType == DepositToCexTx {
+		if g.state.GeneratedCount < 5 {
 			fmt.Printf("   ✨ Generated Deposit→CEX: From=%s → To=%s\n",
 				tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
 		}
@@ -522,6 +537,12 @@ func (g *TxFeeder) generateSingleTransaction() sharedDomain.MarkedTransaction {
 			fmt.Printf("   ✨ Generated Random→Deposit: From=%s → To=%s\n",
 				tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
 		}
+	case TwoDepositUserTx: // ★ 추가
+		tx = g.generateTwoDepositUserTransaction()
+
+	case UserToUserTx: // ★ 추가
+		tx = g.generateUserToUserTransaction()
+
 	default:
 		tx = g.generateRandomTransaction()
 	}
@@ -532,12 +553,88 @@ func (g *TxFeeder) generateSingleTransaction() sharedDomain.MarkedTransaction {
 	return tx
 }
 
+// 유틸: 서로 다른 디포짓 두 개 뽑기
+func (g *TxFeeder) getTwoDistinctDeposits() (sharedDomain.Address, sharedDomain.Address) {
+	// 간단 반복으로 겹치지 않게 추출
+	for i := 0; i < 10; i++ {
+		a := g.mockDepositAddrs.GetRandomAddress()
+		b := g.mockDepositAddrs.GetRandomAddress()
+		if a != b {
+			return a, b
+		}
+	}
+	// 최악의 경우라도 반환
+	a := g.mockDepositAddrs.GetRandomAddress()
+	b := g.mockDepositAddrs.GetRandomAddress()
+	if a == b {
+		b = domain.GenerateRandomAddress()
+	}
+	return a, b
+}
+
+// sticky user 하나 얻기(있으면 재사용, 없으면 새로 만들고 풀에 등록)
+func (g *TxFeeder) getOrCreateStickyUser() sharedDomain.Address {
+	if len(g.stickyUsers) == 0 {
+		u := domain.GenerateRandomAddress()
+		g.stickyUsers = append(g.stickyUsers, u)
+		return u
+	}
+	// 라운드로빈 느낌으로 선택
+	idx := int(g.state.GeneratedCount) % len(g.stickyUsers)
+	// 가끔 새 유저 추가해서 풀 확장
+	if g.state.GeneratedCount%1024 == 0 {
+		nu := domain.GenerateRandomAddress()
+		g.stickyUsers = append(g.stickyUsers, nu)
+	}
+	return g.stickyUsers[idx]
+}
+
+// ★ (1) 두-디포짓 유저 패턴: 같은 유저가 두 디포짓 모두에 송금(시간을 두고 반복적으로 나타남)
+func (g *TxFeeder) generateTwoDepositUserTransaction() sharedDomain.MarkedTransaction {
+	user := g.getOrCreateStickyUser()
+
+	// 유저에 매핑된 디포짓 쌍 없으면 생성
+	pair, ok := g.twoDepositMap[user]
+	if !ok {
+		d1, d2 := g.getTwoDistinctDeposits()
+		pair = [2]sharedDomain.Address{d1, d2}
+		g.twoDepositMap[user] = pair
+	}
+
+	// 번갈아가며 d1/d2로 송금되도록 선택
+	pick := int(g.state.GeneratedCount) & 1
+	to := pair[pick]
+	from := user
+
+	return g.createMarkedTransaction(from, to)
+}
+
+// ★ (2) 유저↔유저 링크 패턴: sticky user들끼리 가끔 서로 송금 → 큰 컴포넌트 연결고리 형성
+func (g *TxFeeder) generateUserToUserTransaction() sharedDomain.MarkedTransaction {
+	// sticky user가 부족하면 보강
+	if len(g.stickyUsers) < 2 {
+		g.stickyUsers = append(g.stickyUsers, domain.GenerateRandomAddress(), domain.GenerateRandomAddress())
+	}
+	i := int(g.state.GeneratedCount) % len(g.stickyUsers)
+	j := (i + 1 + int(g.state.GeneratedCount/3)) % len(g.stickyUsers)
+	// 보수적으로 서로 다르게
+	if i == j {
+		j = (j + 1) % len(g.stickyUsers)
+	}
+
+	from := g.stickyUsers[i]
+	to := g.stickyUsers[j]
+	return g.createMarkedTransaction(from, to)
+}
+
 type TransactionType int
 
 const (
-	RandomTx          TransactionType = iota
-	DepositToCexTx                    // mockedAndHiddenDepositAddress -> CEX
-	RandomToDepositTx                 // random address -> mockedAndHiddenDepositAddress
+	RandomTx TransactionType = iota
+	DepositToCexTx
+	RandomToDepositTx
+	TwoDepositUserTx // ★ 추가: 한 유저가 두 개 디포짓과 연결되도록
+	UserToUserTx     // ★ 추가: 유저↔유저 직접 링크
 )
 
 func (t TransactionType) String() string {
@@ -553,33 +650,24 @@ func (t TransactionType) String() string {
 	}
 }
 
-// determineTransactionType determines what type of transaction to generate
 func (g *TxFeeder) determineTransactionType() TransactionType {
 	count := int(g.state.GeneratedCount)
 
-	// 디버깅: 처음 10개 트랜잭션의 타입 결정 과정 로깅
-	var txType TransactionType
-	var reason string
+	// // 새 패턴들 먼저 체크
+	// if g.complexGraphEnabled && g.twoDepositUserRatio > 0 && count%g.twoDepositUserRatio == 0 {
+	// 	return TwoDepositUserTx
+	// }
+	// if g.complexGraphEnabled && g.userLinkRatio > 0 && count%g.userLinkRatio == 0 {
+	// 	return UserToUserTx
+	// }
 
-	// 1 in 5 chance for DepositToCex transaction
+	// 기존 패턴 유지
 	if count%g.config.DepositToCexRatio == 0 {
-		txType = DepositToCexTx
-		reason = fmt.Sprintf("count=%d %% %d == 0", count, g.config.DepositToCexRatio)
+		return DepositToCexTx
 	} else if count%g.config.RandomToDepositRatio == 0 {
-		// 1 in 8 chance for RandomToDeposit transaction
-		txType = RandomToDepositTx
-		reason = fmt.Sprintf("count=%d %% %d == 0", count, g.config.RandomToDepositRatio)
-	} else {
-		txType = RandomTx
-		reason = fmt.Sprintf("count=%d, random", count)
+		return RandomToDepositTx
 	}
-
-	// 처음 10개는 디버깅 출력
-	if count < 10 {
-		fmt.Printf("   🎲 TX #%d: %v (%s)\n", count, txType, reason)
-	}
-
-	return txType
+	return RandomTx
 }
 
 // generateDepositToCexTransaction generates mockedDepositAddress -> CEX transaction

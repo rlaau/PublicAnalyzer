@@ -5,12 +5,16 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/api"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/app"
-	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/server"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	txFeeder "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/app"
 	feederDomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/domain"
 )
@@ -50,6 +54,7 @@ func runFixedIntegrationTest() {
 }
 
 func runFixedIntegrationTestInternal() error {
+
 	// 1. 테스트 설정 (개선됨)
 	config := setupIsolatedEviromentConfig()
 	ctx, cancel := context.WithTimeout(context.Background(), config.TestDuration)
@@ -60,30 +65,36 @@ func runFixedIntegrationTestInternal() error {
 		return fmt.Errorf("failed pre-clean: %w", err)
 	}
 
-	// 2. 파이프라인 생성
-	generator, analyzer, analyzerChannel, err, ctx := createSimplifiedPipeline(config, ctx)
+	// 2. 파이프라인 생성 (API 서버 포함)
+	generator, analyzer, err := createSimplifiedPipeline(config, ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create pipeline: %w", err)
 	}
-
-	// 종료 시에는 "삭제"를 하지 않는다(조회 가능해야 하므로)  ←★ 변경
 	defer func() {
 		if generator != nil {
-			generator.Close() // 프로세스 종료만
-			// generator.CleanupKafkaTopic()  // 삭제 금지
-			// generator.CleanupEnvironment() // 삭제 금지
+			generator.Close()
 		}
-		if analyzer != nil {
-			analyzer.Close()
-		}
-		if analyzerChannel != nil {
-			close(analyzerChannel)
-		}
+
 	}()
 
 	// 4. 통합 테스트 실행
-	if err := runSimplifiedPipelineTest(generator, analyzer, analyzerChannel, config, ctx); err != nil {
+	if err := runSimplifiedPipelineTest(generator, analyzer, config, ctx); err != nil {
 		return fmt.Errorf("pipeline test failed: %w", err)
+	}
+
+	// ✅ 여기서 Analyzer를 닫아 DB 락을 해제시킴
+	if analyzer != nil {
+		analyzer.Close()
+	}
+
+	// (선택) Badger가 잠금 파일 정리할 시간을 아주 살짝 줌
+	time.Sleep(100 * time.Millisecond)
+
+	// ✅ 이제 리포트 생성: Badger(RO) 오픈 성공할 타이밍
+	if err := generateGraphReportWithDB(config, analyzer.GraphDB()); err != nil {
+		fmt.Printf("   ⚠️ Graph report failed: %v\n", err)
+	} else {
+		fmt.Printf("   📁 Graph report saved under: %s\n", filepath.Join(config.IsolatedDir, "report"))
 	}
 
 	return nil
@@ -93,7 +104,7 @@ func runFixedIntegrationTestInternal() error {
 func setupIsolatedEviromentConfig() *IsolatedTestConfig {
 	fmt.Println("\n1️⃣ Setting up fixed test configuration...")
 
-	baseDir := findProjectRoot()
+	baseDir := computation.GetModuleRoot()
 	isolatedDir := filepath.Join(baseDir, "debug_queue_fixed")
 
 	config := &IsolatedTestConfig{
@@ -109,7 +120,7 @@ func setupIsolatedEviromentConfig() *IsolatedTestConfig {
 		TestDuration:      60 * time.Second, // 1분 테스트 (성능 검증용)
 		TotalTransactions: 2_000_000,        // 200만개로 충분한 순환 확인
 		GenerationRate:    50_000,           // 초당 5만개로 고속 진행
-		AnalysisWorkers:   1,                // TODO: 현재 기능적 저하 심각.(업그레이드 솔루션 참고)
+		AnalysisWorkers:   1,                //TODO 현재 기능적 저하 심각.
 	}
 
 	fmt.Printf("   ✅ Isolated directory: %s\n", config.IsolatedDir)
@@ -146,12 +157,9 @@ func resetIsolatedEnvironment(cfg *IsolatedTestConfig) error {
 	return nil
 }
 
-// createSimplifiedPipeline 새로운 채널 등록 방식으로 간소화된 파이프라인 생성
-func createSimplifiedPipeline(config *IsolatedTestConfig, ctx context.Context) (*txFeeder.TxFeeder, app.EOAAnalyzer, chan *shareddomain.MarkedTransaction, error, context.Context) {
-	fmt.Println("\n3️⃣ Creating simplified transaction pipeline...")
-
-	// Analyzer용 채널 생성 (현재 Kafka 사용; 채널은 호환용)
-	analyzerChannel := make(chan *shareddomain.MarkedTransaction, config.ChannelBufferSize)
+// createSimplifiedPipeline 새로운 채널 등록 방식으로 간소화된 파이프라인 생성 (API 서버 포함)
+func createSimplifiedPipeline(config *IsolatedTestConfig, ctx context.Context) (*txFeeder.TxFeeder, app.EOAAnalyzer, error) {
+	fmt.Println("\n3️⃣ Creating simplified transaction pipeline with API server...")
 
 	// TxFeeder 생성 (빈 cexSet으로 시작)
 	startTime, _ := time.Parse("2006-01-02", "2025-01-01") // 단일 시간 소스: tx.BlockTime의 기준점
@@ -191,7 +199,7 @@ func createSimplifiedPipeline(config *IsolatedTestConfig, ctx context.Context) (
 
 	transactionFeeder, err := txFeeder.NewTxFeederWithComplexConfig(feederConfig)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to create TxFeeder: %w", err), nil
+		return nil, nil, fmt.Errorf("failed to create TxFeeder: %w", err)
 	}
 	fmt.Printf("   ⚙️  TxGenerator: CEX ratio 1/%d (%.1f%%), Deposit ratio 1/%d (%.1f%%)\n",
 		genConfig.DepositToCexRatio, 100.0/float64(genConfig.DepositToCexRatio),
@@ -214,17 +222,37 @@ func createSimplifiedPipeline(config *IsolatedTestConfig, ctx context.Context) (
 	}
 	analyzer, err := app.CreateAnalyzer(analyzerConfig, ctx)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to create analyzer: %w", err), nil
+		return nil, nil, fmt.Errorf("failed to create analyzer: %w", err)
 	}
 	fmt.Printf("   ⚙️  EOAAnalyzer created with %d workers\n", config.AnalysisWorkers)
 
-	fmt.Printf("   ✅ Simplified pipeline created\n")
-	return transactionFeeder, analyzer, analyzerChannel, nil, ctx
+	fmt.Printf("   ✅ Simplified pipeline with API server created\n")
+	return transactionFeeder, analyzer, nil
 }
 
-// runSimplifiedPipelineTest 간소화된 파이프라인 테스트 실행
-func runSimplifiedPipelineTest(txFeeder *txFeeder.TxFeeder, analyzer app.EOAAnalyzer, _ chan *shareddomain.MarkedTransaction, config *IsolatedTestConfig, ctx context.Context) error {
-	fmt.Println("\n4️⃣ Running simplified pipeline test...")
+// runSimplifiedPipelineTest 간소화된 파이프라인 테스트 실행 (API 서버 포함)
+func runSimplifiedPipelineTest(txFeeder *txFeeder.TxFeeder, analyzer app.EOAAnalyzer, config *IsolatedTestConfig, ctx context.Context) error {
+	fmt.Println("\n4️⃣ Running simplified pipeline test with API server...")
+
+	//1. HTTP 서버 생성 및 API 등록 (일시적으로 주석처리)
+	srv := server.NewServer(":8080")
+	srv.SetupBasicRoutes()
+
+	// EE Analyzer API 등록
+	eeAPI := api.NewEEAPIHandler(analyzer)
+	if err := srv.RegisterModule(eeAPI); err != nil {
+		fmt.Printf("   ❌ Failed to register EE API: %v\n", err)
+	} else {
+		fmt.Printf("   ✅ EE Analyzer API registered successfully\n")
+	}
+
+	// 서버를 백그라운드에서 시작
+	go func() {
+		fmt.Printf("   🌐 Starting API server on :8080\n")
+		if err := srv.Start(); err != nil {
+			fmt.Printf("   ⚠️ API server stopped: %v\n", err)
+		}
+	}()
 
 	go func() {
 		if err := txFeeder.Start(ctx); err != nil {
@@ -244,7 +272,21 @@ func runSimplifiedPipelineTest(txFeeder *txFeeder.TxFeeder, analyzer app.EOAAnal
 	go runSimplifiedMonitoring(txFeeder, analyzer, ctx)
 	fmt.Printf("   📊 Monitoring started\n")
 
-	// 4. 테스트 완료 대기
+	fmt.Println("   📍 Available endpoints:")
+	fmt.Println("   - GET http://localhost:8080/health             - Server health")
+	fmt.Println("   - GET http://localhost:8080/ee/statistics      - EE Analyzer statistics")
+	fmt.Println("   - GET http://localhost:8080/ee/health          - EE Analyzer health")
+	fmt.Println("   - GET http://localhost:8080/ee/channel-status  - EE Channel status")
+	fmt.Println("   - GET http://localhost:8080/ee/dual-manager/window-stats - Window statistics")
+	fmt.Println("   - GET http://localhost:8080/ee/graph/stats     - Graph DB statistics")
+	fmt.Println("   - GET http://localhost:8080/                   - Web Dashboard")
+
+	// 4. 종료 시그널 대기 및 테스트 완료 대기
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	fmt.Printf("   🎯 Server and analyzer running! Press Ctrl+C to stop...\n")
+
 	select {
 	case <-ctx.Done():
 		fmt.Printf("   ⏰ Test completed by timeout\n")
@@ -254,12 +296,25 @@ func runSimplifiedPipelineTest(txFeeder *txFeeder.TxFeeder, analyzer app.EOAAnal
 		} else {
 			fmt.Printf("   ✅ Analyzer completed successfully\n")
 		}
+	case <-sigChan:
+		fmt.Printf("   🛑 Shutdown signal received...\n")
 	}
 
-	// 5. 정리 (삭제는 하지 않음)
-	txFeeder.Stop()
+	//5. 서버 정리
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
 
+	fmt.Printf("   🛑 Shutting down API server...\n")
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		fmt.Printf("   ⚠️ Server shutdown error: %v\n", err)
+	} else {
+		fmt.Printf("   ✅ API server shutdown completed\n")
+	}
+
+	// 6. 정리 (삭제는 하지 않음)
+	txFeeder.Stop()
 	printSimplifiedResults(txFeeder, analyzer)
+
 	return nil
 }
 
@@ -305,27 +360,4 @@ func printSimplifiedResults(generator *txFeeder.TxFeeder, analyzer app.EOAAnalyz
 	fmt.Printf("Analyzer Success: %v | Healthy: %t\n",
 		analyzerStats["success_count"], analyzer.IsHealthy())
 	fmt.Println(strings.Repeat("=", 60))
-}
-
-// 기존 유틸 함수들 재사용
-// * 상대적 관점에서의 프로젝트 루트 찾는 로직이므로, 파일 위치 바뀌면 변경 필요한 함수임
-func findProjectRoot() string {
-	currentDir, _ := os.Getwd()
-
-	for currentDir != "/" {
-		if strings.HasSuffix(currentDir, "chainAnalyzer") {
-			return currentDir
-		}
-
-		if data, err := os.ReadFile(filepath.Join(currentDir, "go.mod")); err == nil {
-			if strings.Contains(string(data), "chainAnalyzer") {
-				return currentDir
-			}
-		}
-
-		currentDir = filepath.Dir(currentDir)
-	}
-
-	workingDir, _ := os.Getwd()
-	return filepath.Join(workingDir, "../../../")
 }

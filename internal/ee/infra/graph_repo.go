@@ -40,6 +40,11 @@ type GraphRepository interface {
 	Close() error
 }
 
+// 인프라 구현체가 제공하는 선택적 기능
+type RawBadgerProvider interface {
+	RawBadgerDB() *badger.DB
+}
+
 // BadgerGraphRepository implements GraphRepository using BadgerDB
 type BadgerGraphRepository struct {
 	db *badger.DB
@@ -69,6 +74,11 @@ func NewBadgerGraphRepository(dbPath string) (*BadgerGraphRepository, error) {
 // Close closes the BadgerDB connection
 func (r *BadgerGraphRepository) Close() error {
 	return r.db.Close()
+}
+
+// RawDB returns the underlying Badger DB handle (read/write).
+func (r *BadgerGraphRepository) RawBadgerDB() *badger.DB {
+	return r.db
 }
 
 // nodeKey generates a key for storing EOA nodes

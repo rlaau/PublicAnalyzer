@@ -7,7 +7,7 @@ import (
 )
 
 type TotalEOAAnalyzerInfra struct {
-	GroundKnowledge     *GroundKnowledge
+	GroundKnowledge     *DomainKnowledge
 	GraphRepo           GraphRepository
 	PendingRelationRepo PendingRelationRepo
 	TxJobChannel        chan workerpool.Job
@@ -15,7 +15,7 @@ type TotalEOAAnalyzerInfra struct {
 	BatchConsumer       *kafka.KafkaBatchConsumer[*shareddomain.MarkedTransaction]
 }
 
-func NewEOAInfra(domainKnowledge *GroundKnowledge, graphRepo GraphRepository,
+func NewEOAInfra(domainKnowledge *DomainKnowledge, graphRepo GraphRepository,
 	txJobChannel chan workerpool.Job, workerPool *workerpool.Pool,
 	batchConsumer *kafka.KafkaBatchConsumer[*shareddomain.MarkedTransaction], pendingRelationRepo PendingRelationRepo,
 ) *TotalEOAAnalyzerInfra {

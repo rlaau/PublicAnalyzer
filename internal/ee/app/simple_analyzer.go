@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
@@ -31,6 +32,10 @@ type EOAAnalyzer interface {
 	GetStatistics() map[string]any
 	IsHealthy() bool
 	GetChannelStatus() (usage int, capacity int)
+	//그래, 맞다. 인터페이스는 이따구로 쓰면 안되지/
+	//근데 이거 고치려면 또 리팩토링 해야함. 또!!!
+	//그건 나중에 하자고.
+	GraphDB() *badger.DB
 
 	// 리소스 관리
 	io.Closer
@@ -95,7 +100,7 @@ func newSimpleAnalyzer(config *EOAAnalyzerConfig, infraStructure infra.TotalEOAA
 		return nil, fmt.Errorf("failed to create dual manager: %w", err)
 	}
 	log.Printf("🔄 DualManager with pending DB at: %s", config.PendingDBPath)
-
+	log.Printf("듀얼 매니져 초기화. 현재 cex주소 개수: %d, 예시:%s", len(dualManager.infra.GroundKnowledge.GetCEXAddresses()), dualManager.infra.GroundKnowledge.GetCEXAddresses()[0])
 	analyzer := &SimpleEOAAnalyzer{
 		infra:       infraStructure,
 		dualManager: dualManager,
@@ -109,6 +114,12 @@ func newSimpleAnalyzer(config *EOAAnalyzerConfig, infraStructure infra.TotalEOAA
 
 	log.Printf("✅ Simple EOA Analyzer created: %s", config.Name)
 	return analyzer, nil
+}
+func (a *SimpleEOAAnalyzer) GraphDB() *badger.DB {
+	if p, ok := a.infra.GraphRepo.(infra.RawBadgerProvider); ok {
+		return p.RawBadgerDB()
+	}
+	return nil
 }
 
 // Start 분석기 시작
@@ -507,6 +518,11 @@ func (a *SimpleEOAAnalyzer) cleanup() {
 	} else {
 		log.Printf("✅ Test data cleaned up")
 	}
+}
+
+// GetDualManager DualManager 인스턴스 반환 (API 서버용)
+func (a *SimpleEOAAnalyzer) GetDualManager() *DualManager {
+	return a.dualManager
 }
 
 // Close io.Closer 인터페이스 구현

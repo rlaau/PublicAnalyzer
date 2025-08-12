@@ -10,8 +10,8 @@ import (
 )
 
 // TODO: 추후 에 도메인 놀리지는 그라운드 놀리지에 편입 후 제거!
-// GroundKnowledge contains all known facts about addresses
-type GroundKnowledge struct {
+// DomainKnowledge contains all known facts about addresses
+type DomainKnowledge struct {
 	cexSet             *domain.CEXSet
 	detectedDepositSet *localdomain.DetectedDepositSet
 	depositRepository  DepositRepository
@@ -20,8 +20,8 @@ type GroundKnowledge struct {
 }
 
 // NewDomainKnowledge creates a new ground knowledge instance
-func NewDomainKnowledge(cexSet *domain.CEXSet, depositRepo DepositRepository) *GroundKnowledge {
-	return &GroundKnowledge{
+func NewDomainKnowledge(cexSet *domain.CEXSet, depositRepo DepositRepository) *DomainKnowledge {
+	return &DomainKnowledge{
 		cexSet:             cexSet,
 		detectedDepositSet: localdomain.NewDetectedDepositSet(),
 		depositRepository:  depositRepo,
@@ -31,7 +31,7 @@ func NewDomainKnowledge(cexSet *domain.CEXSet, depositRepo DepositRepository) *G
 
 // Load loads all existing knowledge from persistent storage
 // This should be called once at startup to restore previous state
-func (gk *GroundKnowledge) Load() error {
+func (gk *DomainKnowledge) Load() error {
 	gk.mutex.Lock()
 	defer gk.mutex.Unlock()
 
@@ -53,7 +53,7 @@ func (gk *GroundKnowledge) Load() error {
 }
 
 // IsCEXAddress checks if an address is a known CEX address
-func (gk *GroundKnowledge) IsCEXAddress(addr domain.Address) bool {
+func (gk *DomainKnowledge) IsCEXAddress(addr domain.Address) bool {
 	gk.mutex.RLock()
 	defer gk.mutex.RUnlock()
 
@@ -61,7 +61,7 @@ func (gk *GroundKnowledge) IsCEXAddress(addr domain.Address) bool {
 }
 
 // IsDepositAddress checks if an address is a detected deposit address
-func (gk *GroundKnowledge) IsDepositAddress(addr domain.Address) bool {
+func (gk *DomainKnowledge) IsDepositAddress(addr domain.Address) bool {
 	gk.mutex.RLock()
 	defer gk.mutex.RUnlock()
 
@@ -70,7 +70,7 @@ func (gk *GroundKnowledge) IsDepositAddress(addr domain.Address) bool {
 
 // DetectNewDepositAddress detects and adds a new deposit address
 // This is called when we see: someAddress -> CEXAddress transaction
-func (gk *GroundKnowledge) DetectNewDepositAddress(fromAddr, cexAddr domain.Address) error {
+func (gk *DomainKnowledge) DetectNewDepositAddress(fromAddr, cexAddr domain.Address) error {
 	fmt.Printf("   🔍 DetectNewDepositAddress: %s → CEX %s\n", fromAddr.String()[:10]+"...", cexAddr.String()[:10]+"...")
 
 	gk.mutex.Lock()
@@ -110,7 +110,7 @@ func (gk *GroundKnowledge) DetectNewDepositAddress(fromAddr, cexAddr domain.Addr
 }
 
 // GetDepositInfo retrieves information about a deposit address
-func (gk *GroundKnowledge) GetDepositInfo(addr domain.Address) (*localdomain.DetectedDepositWithEvidence, bool) {
+func (gk *DomainKnowledge) GetDepositInfo(addr domain.Address) (*localdomain.DetectedDepositWithEvidence, bool) {
 	gk.mutex.RLock()
 	defer gk.mutex.RUnlock()
 
@@ -118,7 +118,7 @@ func (gk *GroundKnowledge) GetDepositInfo(addr domain.Address) (*localdomain.Det
 }
 
 // GetCEXAddresses returns all known CEX addresses
-func (gk *GroundKnowledge) GetCEXAddresses() []string {
+func (gk *DomainKnowledge) GetCEXAddresses() []string {
 	gk.mutex.RLock()
 	defer gk.mutex.RUnlock()
 
@@ -126,7 +126,7 @@ func (gk *GroundKnowledge) GetCEXAddresses() []string {
 }
 
 // GetDetectedDeposits returns all detected deposit addresses
-func (gk *GroundKnowledge) GetDetectedDeposits() []*localdomain.DetectedDepositWithEvidence {
+func (gk *DomainKnowledge) GetDetectedDeposits() []*localdomain.DetectedDepositWithEvidence {
 	gk.mutex.RLock()
 	defer gk.mutex.RUnlock()
 
@@ -134,7 +134,7 @@ func (gk *GroundKnowledge) GetDetectedDeposits() []*localdomain.DetectedDepositW
 }
 
 // GetStats returns statistics about the ground knowledge
-func (gk *GroundKnowledge) GetStats() map[string]any {
+func (gk *DomainKnowledge) GetStats() map[string]any {
 	gk.mutex.RLock()
 	defer gk.mutex.RUnlock()
 

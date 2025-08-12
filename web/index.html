@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔗 ChainAnalyzer Dashboard</title>
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+    <header>
+        <h1>🔗 ChainAnalyzer Dashboard</h1>
+        <div class="server-info">
+            <span id="server-status">🔄 연결 중...</span>
+            <span id="last-update"></span>
+        </div>
+    </header>
+
+    <main>
+        <!-- 전체 시스템 상태 -->
+        <section class="overview">
+            <h2>📊 System Overview</h2>
+            <div class="overview-cards">
+                <div class="card">
+                    <h3>Server Status</h3>
+                    <div id="server-health" class="status-indicator">Unknown</div>
+                </div>
+                <div class="card">
+                    <h3>Active Modules</h3>
+                    <div id="module-count" class="metric">0</div>
+                </div>
+                <div class="card">
+                    <h3>System Uptime</h3>
+                    <div id="system-uptime" class="metric">-</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- EE 모듈 섹션 -->
+        <section class="module-section">
+            <h2>🔍 EE Analyzer Module</h2>
+            
+            <!-- EE 기본 상태 -->
+            <div class="module-overview">
+                <div class="card">
+                    <h3>Module Health</h3>
+                    <div id="ee-health" class="status-indicator">Loading...</div>
+                </div>
+                <div class="card">
+                    <h3>Processed Txs</h3>
+                    <div id="ee-processed" class="metric">0</div>
+                </div>
+                <div class="card">
+                    <h3>Success Rate</h3>
+                    <div id="ee-success-rate" class="metric">0%</div>
+                </div>
+                <div class="card">
+                    <h3>TPS</h3>
+                    <div id="ee-tps" class="metric">0</div>
+                </div>
+            </div>
+
+            <!-- EE 상세 정보 -->
+            <div class="details-grid">
+                <!-- 분석기 통계 -->
+                <div class="detail-card">
+                    <h3>📈 Analyzer Statistics</h3>
+                    <div id="analyzer-stats" class="stats-content">
+                        <div class="loading">데이터 로딩 중...</div>
+                    </div>
+                </div>
+
+                <!-- 채널 상태 -->
+                <div class="detail-card">
+                    <h3>📡 Channel Status</h3>
+                    <div id="channel-status" class="stats-content">
+                        <div class="loading">데이터 로딩 중...</div>
+                    </div>
+                    <div class="progress-bar">
+                        <div id="channel-progress" class="progress-fill"></div>
+                    </div>
+                </div>
+
+                <!-- DualManager 윈도우 -->
+                <div class="detail-card">
+                    <h3>🪟 Window Manager</h3>
+                    <div id="window-stats" class="stats-content">
+                        <div class="loading">데이터 로딩 중...</div>
+                    </div>
+                </div>
+
+                <!-- GraphDB 상태 -->
+                <div class="detail-card">
+                    <h3>🗄️ Graph Database</h3>
+                    <div id="graph-status" class="stats-content">
+                        <div class="loading">데이터 로딩 중...</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- API 엔드포인트 섹션 -->
+        <section class="api-section">
+            <h2>🔌 API Endpoints</h2>
+            <div class="api-grid">
+                <a href="/health" target="_blank" class="api-link">
+                    <div class="api-card">
+                        <h4>System Health</h4>
+                        <p>/health</p>
+                    </div>
+                </a>
+                <a href="/ee/health" target="_blank" class="api-link">
+                    <div class="api-card">
+                        <h4>EE Health</h4>
+                        <p>/ee/health</p>
+                    </div>
+                </a>
+                <a href="/ee/statistics" target="_blank" class="api-link">
+                    <div class="api-card">
+                        <h4>EE Statistics</h4>
+                        <p>/ee/statistics</p>
+                    </div>
+                </a>
+                <a href="/ee/channel-status" target="_blank" class="api-link">
+                    <div class="api-card">
+                        <h4>Channel Status</h4>
+                        <p>/ee/channel-status</p>
+                    </div>
+                </a>
+                <a href="/ee/dual-manager/window-stats" target="_blank" class="api-link">
+                    <div class="api-card">
+                        <h4>Window Stats</h4>
+                        <p>/ee/dual-manager/window-stats</p>
+                    </div>
+                </a>
+                <a href="/ee/graph/stats" target="_blank" class="api-link">
+                    <div class="api-card">
+                        <h4>Graph Stats</h4>
+                        <p>/ee/graph/stats</p>
+                    </div>
+                </a>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>ChainAnalyzer Dashboard | 실시간 업데이트: 2초마다</p>
+    </footer>
+
+    <script src="./app.js"></script>
+</body>
+</html>

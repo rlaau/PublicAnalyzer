@@ -90,7 +90,8 @@ func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.Mark
 
 	// 디버깅: 모든 트랜잭션의 케이스 분류 과정 로깅 (처음에는 항상 로깅)
 	debugEnabled := false //성능 이슈로 디버깅 취소//true // 일단 모든 트랜잭션 디버깅
-	if debugEnabled {
+	allDbg := true
+	if allDbg {
 		fmt.Printf("🔀 DualManager: From=%s To=%s\n",
 			fromAddr.String()[:10]+"...", toAddr.String()[:10]+"...")
 		fmt.Printf("   From_CEX=%t, To_CEX=%t, From_Deposit=%t, To_Deposit=%t\n",
@@ -151,14 +152,14 @@ func (dm *DualManager) handleExceptionalAddress(_ domain.Address, _ string) erro
 
 // handleDepositDetection handles detection of new deposit addresses
 func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Address, tx *domain.MarkedTransaction) error {
-	//fmt.Printf("💰 handleDepositDetection: %s → CEX %s\n",	depositAddr.String()[:10]+"...", cexAddr.String()[:10]+"...")
+	//fmt.Printf("💰 handleDepositDetection: %s → CEX %s\n", depositAddr.String()[:10]+"...", cexAddr.String()[:10]+"...")
 
 	// 1. 새로운 입금주소를 detectedDepositAddress에 추가
 	if err := dm.infra.GroundKnowledge.DetectNewDepositAddress(depositAddr, cexAddr); err != nil {
 		fmt.Printf("   ❌ DetectNewDepositAddress failed: %v\n", err)
 		return err
 	}
-	//fmt.Printf("   ✅ DetectNewDepositAddress succeeded\n")
+	fmt.Printf("   ✅ DetectNewDepositAddress succeeded\n")
 
 	// 2. DualManager의 pendingRelationsDB에서 depositAddr을 to로 하는 []from 값들 조회
 	// TODO pendingRelations에서 관리하는 타입을 to-> []fromInfo로 변경 요구
