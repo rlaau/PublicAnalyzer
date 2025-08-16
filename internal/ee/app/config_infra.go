@@ -23,9 +23,9 @@ func NewInfraByConfig(config *EOAAnalyzerConfig, ctx context.Context) infra.Tota
 		panic("더 이상 작업 불가")
 	}
 	fmt.Printf("CEX 로드 완료")
-	depositRepo, err := loadDetectedDepositSet(config.FileDBPath, config.Mode)
+	depositRepo, err := loadDetectedDepositSet(config.IsolatedDBPath, config.Mode)
 	if err != nil {
-		fmt.Printf("디포짓 로딩 실패. (파일 경로: %s)", config.FileDBPath)
+		fmt.Printf("디포짓 로딩 실패. (파일 경로: %s)", config.IsolatedDBPath)
 	}
 	groundKnowledge := infra.NewDomainKnowledge(cexSet, depositRepo)
 	if err := groundKnowledge.Load(); err != nil {

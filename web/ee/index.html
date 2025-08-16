@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔍 EE Analyzer Module - ChainAnalyzer</title>
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        .module-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem;
+            border-radius: 10px;
+            margin-bottom: 2rem;
+        }
+        .breadcrumb {
+            background: #f8f9fa;
+            padding: 1rem;
+            border-radius: 5px;
+            margin-bottom: 1rem;
+        }
+        .breadcrumb a {
+            color: #007bff;
+            text-decoration: none;
+        }
+        .breadcrumb a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🔗 ChainAnalyzer Dashboard</h1>
+        <div class="server-info">
+            <span id="server-status">🔄 연결 중...</span>
+            <span id="last-update"></span>
+        </div>
+    </header>
+
+    <main>
+        <!-- 브레드크럼브 네비게이션 -->
+        <nav class="breadcrumb">
+            <a href="/ui/dashboard">🏠 홈</a> > <span>🔍 EE Analyzer</span>
+        </nav>
+
+        <!-- EE 모듈 헤더 -->
+        <section class="module-header">
+            <h1>🔍 EE Analyzer Module</h1>
+            <p>EOA-EOA 거래 관계 분석 모듈입니다. 이더리움 외부 소유 계정 간의 거래 패턴을 분석하고 모니터링합니다.</p>
+        </section>
+
+        <!-- EE 기본 상태 -->
+        <section class="overview">
+            <h2>📊 Module Status</h2>
+            <div class="overview-cards">
+                <div class="card">
+                    <h3>Module Health</h3>
+                    <div id="ee-health" class="status-indicator">Loading...</div>
+                </div>
+                <div class="card">
+                    <h3>Processed Txs</h3>
+                    <div id="ee-processed" class="metric">0</div>
+                </div>
+                <div class="card">
+                    <h3>Success Rate</h3>
+                    <div id="ee-success-rate" class="metric">0%</div>
+                </div>
+                <div class="card">
+                    <h3>TPS</h3>
+                    <div id="ee-tps" class="metric">0</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- EE 상세 정보 -->
+        <section class="details-grid">
+            <!-- 분석기 통계 -->
+            <div class="detail-card">
+                <h3>📈 Analyzer Statistics</h3>
+                <div id="analyzer-stats" class="stats-content">
+                    <div class="loading">데이터 로딩 중...</div>
+                </div>
+            </div>
+
+            <!-- 채널 상태 -->
+            <div class="detail-card">
+                <h3>📡 Channel Status</h3>
+                <div id="channel-status" class="stats-content">
+                    <div class="loading">데이터 로딩 중...</div>
+                </div>
+                <div class="progress-bar">
+                    <div id="channel-progress" class="progress-fill"></div>
+                </div>
+            </div>
+
+            <!-- DualManager 윈도우 -->
+            <div class="detail-card">
+                <h3>🪟 Window Manager</h3>
+                <div id="window-stats" class="stats-content">
+                    <div class="loading">데이터 로딩 중...</div>
+                </div>
+            </div>
+
+            <!-- GraphDB 상태 -->
+            <div class="detail-card">
+                <h3>🗄️ Graph Database</h3>
+                <div id="graph-status" class="stats-content">
+                    <div class="loading">데이터 로딩 중...</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- EE 전용 기능들 -->
+        <section class="module-features">
+            <h2>🛠️ EE Module Features</h2>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <h4>💸 Transaction Analysis</h4>
+                    <p>EOA 간 거래 패턴 분석</p>
+                    <button onclick="location.href='/ui/ee/transactions'">거래 분석</button>
+                </div>
+                <div class="feature-card">
+                    <h4>📊 Graph Database</h4>
+                    <p>EOA 관계 그래프 조회</p>
+                    <button onclick="location.href='/ui/ee/graph'">그래프 조회</button>
+                </div>
+                <div class="feature-card">
+                    <h4>🔍 Debug Tools</h4>
+                    <p>모듈 디버깅 도구</p>
+                    <button onclick="location.href='/ui/ee/debug'">디버그 도구</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- API 엔드포인트 섹션 -->
+        <section class="api-section">
+            <h2>🔌 EE API Endpoints</h2>
+            <div class="api-grid">
+                <a href="/api/ee/health" target="_blank" class="api-link">
+                    <div class="api-card">
+                        <h4>EE Health</h4>
+                        <p>/api/ee/health</p>
+                    </div>
+                </a>
+                <a href="/api/ee/statistics" target="_blank" class="api-link">
+                    <div class="api-card">
+                        <h4>EE Statistics</h4>
+                        <p>/api/ee/statistics</p>
+                    </div>
+                </a>
+                <a href="/api/ee/channel-status" target="_blank" class="api-link">
+                    <div class="api-card">
+                        <h4>Channel Status</h4>
+                        <p>/api/ee/channel-status</p>
+                    </div>
+                </a>
+                <a href="/api/ee/dual-manager/window-stats" target="_blank" class="api-link">
+                    <div class="api-card">
+                        <h4>Window Stats</h4>
+                        <p>/api/ee/dual-manager/window-stats</p>
+                    </div>
+                </a>
+                <a href="/api/ee/graph/stats" target="_blank" class="api-link">
+                    <div class="api-card">
+                        <h4>Graph Stats</h4>
+                        <p>/api/ee/graph/stats</p>
+                    </div>
+                </a>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>ChainAnalyzer EE Module | 실시간 업데이트: 2초마다</p>
+    </footer>
+
+    <script src="/app.js"></script>
+    <script>
+        // EE 모듈 전용 스크립트
+        document.addEventListener('DOMContentLoaded', function() {
+            // EE 모듈 데이터만 업데이트
+            setInterval(updateEEData, 2000);
+        });
+
+        function updateEEData() {
+            // EE 관련 API 호출
+            updateEEHealth();
+            updateEEStatistics();
+            updateChannelStatus();
+            updateWindowStats();
+            updateGraphStatus();
+        }
+
+        function updateEEHealth() {
+            fetch('/api/ee/health')
+                .then(response => response.json())
+                .then(data => {
+                    const healthElement = document.getElementById('ee-health');
+                    if (data.healthy) {
+                        healthElement.textContent = '✅ Healthy';
+                        healthElement.className = 'status-indicator healthy';
+                    } else {
+                        healthElement.textContent = '❌ Unhealthy';
+                        healthElement.className = 'status-indicator unhealthy';
+                    }
+                })
+                .catch(error => {
+                    console.error('EE Health check failed:', error);
+                });
+        }
+
+        function updateEEStatistics() {
+            fetch('/api/ee/statistics')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.processed_transactions !== undefined) {
+                        document.getElementById('ee-processed').textContent = data.processed_transactions.toLocaleString();
+                    }
+                    if (data.success_rate !== undefined) {
+                        document.getElementById('ee-success-rate').textContent = (data.success_rate * 100).toFixed(1) + '%';
+                    }
+                    if (data.tps !== undefined) {
+                        document.getElementById('ee-tps').textContent = data.tps.toFixed(2);
+                    }
+                    
+                    // 상세 통계 업데이트
+                    const statsElement = document.getElementById('analyzer-stats');
+                    statsElement.innerHTML = `
+                        <div class="stat-row">
+                            <span>처리된 거래:</span>
+                            <span>${data.processed_transactions?.toLocaleString() || 0}</span>
+                        </div>
+                        <div class="stat-row">
+                            <span>성공률:</span>
+                            <span>${((data.success_rate || 0) * 100).toFixed(1)}%</span>
+                        </div>
+                        <div class="stat-row">
+                            <span>TPS:</span>
+                            <span>${(data.tps || 0).toFixed(2)}</span>
+                        </div>
+                    `;
+                })
+                .catch(error => {
+                    console.error('EE Statistics fetch failed:', error);
+                });
+        }
+
+        function updateChannelStatus() {
+            fetch('/api/ee/channel-status')
+                .then(response => response.json())
+                .then(data => {
+                    const statusElement = document.getElementById('channel-status');
+                    const progressElement = document.getElementById('channel-progress');
+                    
+                    statusElement.innerHTML = `
+                        <div class="stat-row">
+                            <span>사용량:</span>
+                            <span>${data.usage}/${data.capacity}</span>
+                        </div>
+                        <div class="stat-row">
+                            <span>사용률:</span>
+                            <span>${data.usage_percent.toFixed(1)}%</span>
+                        </div>
+                    `;
+                    
+                    progressElement.style.width = data.usage_percent + '%';
+                    if (data.usage_percent > 80) {
+                        progressElement.className = 'progress-fill warning';
+                    } else {
+                        progressElement.className = 'progress-fill';
+                    }
+                })
+                .catch(error => {
+                    console.error('Channel status fetch failed:', error);
+                });
+        }
+
+        function updateWindowStats() {
+            fetch('/api/ee/dual-manager/window-stats')
+                .then(response => response.json())
+                .then(data => {
+                    const windowElement = document.getElementById('window-stats');
+                    windowElement.innerHTML = `
+                        <div class="stat-row">
+                            <span>현재 윈도우:</span>
+                            <span>${data.current_window || 0}</span>
+                        </div>
+                        <div class="stat-row">
+                            <span>윈도우 크기:</span>
+                            <span>${data.window_size || 0}</span>
+                        </div>
+                        <div class="stat-row">
+                            <span>처리된 이벤트:</span>
+                            <span>${data.processed_events || 0}</span>
+                        </div>
+                    `;
+                })
+                .catch(error => {
+                    console.error('Window stats fetch failed:', error);
+                });
+        }
+
+        function updateGraphStatus() {
+            fetch('/api/ee/graph/stats')
+                .then(response => response.json())
+                .then(data => {
+                    const graphElement = document.getElementById('graph-status');
+                    graphElement.innerHTML = `
+                        <div class="stat-row">
+                            <span>DB 상태:</span>
+                            <span>${data.database_available ? '✅ 사용 가능' : '❌ 사용 불가'}</span>
+                        </div>
+                        <div class="stat-row">
+                            <span>메시지:</span>
+                            <span>${data.message}</span>
+                        </div>
+                    `;
+                })
+                .catch(error => {
+                    console.error('Graph stats fetch failed:', error);
+                });
+        }
+    </script>
+</body>
+</html>

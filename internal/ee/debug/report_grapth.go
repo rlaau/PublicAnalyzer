@@ -40,11 +40,11 @@ type component struct {
 }
 
 // 동일 핸들 버전: db는 Analyzer.GraphDB()로 받은 핸들
-func generateGraphReportWithDB(cfg *IsolatedTestConfig, db *badger.DB) error {
+func generateGraphReportWithDB(cfg *IsolatedPathConfig, db *badger.DB) error {
 	if db == nil {
 		return fmt.Errorf("graph DB handle is nil")
 	}
-	reportDir := filepath.Join(cfg.IsolatedDir, "report")
+	reportDir := filepath.Join(cfg.RootOfIsolatedDir, "report")
 	if err := os.MkdirAll(reportDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir report: %w", err)
 	}
@@ -165,7 +165,7 @@ func generateGraphReportWithDB(cfg *IsolatedTestConfig, db *badger.DB) error {
 		"top100_min_size":       top100[len(top100)-1].Size,
 		"generated_at_unix_sec": time.Now().Unix(),
 		"graph_db_path":         cfg.GraphDBPath,
-		"isolated_dir":          cfg.IsolatedDir,
+		"isolated_dir":          cfg.RootOfIsolatedDir,
 	}
 	if err := writeJSON(filepath.Join(reportDir, "summary.json"), summary); err != nil {
 		return err

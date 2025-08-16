@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🏢 CCE Analyzer Module - ChainAnalyzer</title>
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        .module-header {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            padding: 2rem;
+            border-radius: 10px;
+            margin-bottom: 2rem;
+        }
+        .breadcrumb {
+            background: #f8f9fa;
+            padding: 1rem;
+            border-radius: 5px;
+            margin-bottom: 1rem;
+        }
+        .breadcrumb a {
+            color: #007bff;
+            text-decoration: none;
+        }
+        .breadcrumb a:hover {
+            text-decoration: underline;
+        }
+        .placeholder {
+            background: #e9ecef;
+            border: 2px dashed #adb5bd;
+            border-radius: 10px;
+            padding: 3rem;
+            text-align: center;
+            color: #6c757d;
+            margin: 2rem 0;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🔗 ChainAnalyzer Dashboard</h1>
+        <div class="server-info">
+            <span id="server-status">🔄 연결 중...</span>
+            <span id="last-update"></span>
+        </div>
+    </header>
+
+    <main>
+        <!-- 브레드크럼브 네비게이션 -->
+        <nav class="breadcrumb">
+            <a href="/ui/dashboard">🏠 홈</a> > <span>🏢 CCE Analyzer</span>
+        </nav>
+
+        <!-- CCE 모듈 헤더 -->
+        <section class="module-header">
+            <h1>🏢 CCE Analyzer Module</h1>
+            <p>Contract-Contract 관계 분석 모듈입니다. 스마트 컨트랙트 간의 상호작용 패턴을 분석하고 모니터링합니다.</p>
+        </section>
+
+        <!-- 개발 중 안내 -->
+        <section class="placeholder">
+            <h2>🚧 모듈 개발 중</h2>
+            <p>CCE Analyzer 모듈은 현재 개발 중입니다.</p>
+            <p>완성되면 다음 기능들을 제공할 예정입니다:</p>
+            <ul style="text-align: left; display: inline-block; margin-top: 1rem;">
+                <li>스마트 컨트랙트 간 거래 분석</li>
+                <li>컨트랙트 호출 패턴 모니터링</li>
+                <li>DeFi 프로토콜 상호작용 추적</li>
+                <li>컨트랙트 관계 그래프 시각화</li>
+            </ul>
+        </section>
+
+        <!-- 향후 기능 미리보기 -->
+        <section class="overview">
+            <h2>📊 Planned Features</h2>
+            <div class="overview-cards">
+                <div class="card">
+                    <h3>Contract Analysis</h3>
+                    <div class="metric">개발 예정</div>
+                </div>
+                <div class="card">
+                    <h3>Interaction Patterns</h3>
+                    <div class="metric">개발 예정</div>
+                </div>
+                <div class="card">
+                    <h3>DeFi Monitoring</h3>
+                    <div class="metric">개발 예정</div>
+                </div>
+                <div class="card">
+                    <h3>Graph Visualization</h3>
+                    <div class="metric">개발 예정</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 계획된 API 엔드포인트 -->
+        <section class="api-section">
+            <h2>🔌 Planned CCE API Endpoints</h2>
+            <div class="api-grid">
+                <div class="api-card" style="opacity: 0.5;">
+                    <h4>CCE Health</h4>
+                    <p>/api/cce/health</p>
+                    <small>개발 예정</small>
+                </div>
+                <div class="api-card" style="opacity: 0.5;">
+                    <h4>Contract Statistics</h4>
+                    <p>/api/cce/statistics</p>
+                    <small>개발 예정</small>
+                </div>
+                <div class="api-card" style="opacity: 0.5;">
+                    <h4>Interaction Analysis</h4>
+                    <p>/api/cce/interactions</p>
+                    <small>개발 예정</small>
+                </div>
+                <div class="api-card" style="opacity: 0.5;">
+                    <h4>DeFi Monitoring</h4>
+                    <p>/api/cce/defi</p>
+                    <small>개발 예정</small>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>ChainAnalyzer CCE Module | 개발 중...</p>
+    </footer>
+
+    <script src="/app.js"></script>
+</body>
+</html>

@@ -19,39 +19,14 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/domain"
 )
 
-// EnvironmentConfig 환경 설정을 위한 구조체 (기존 호환성용)
-type EnvironmentConfig struct {
-	BaseDir         string
-	IsolatedDir     string
-	CEXFilePath     string
-	MockDepositFile string
-	GraphDBPath     string
-	PendingDBPath   string
-
-	// Pipeline 설정
-	ChannelBufferSize int
-	TestDuration      time.Duration
-	TotalTransactions int
-	GenerationRate    int
-	AnalysisWorkers   int
-}
-
-// AdditionalDataConfig 추가 데이터 설정을 위한 구조체 (향후 확장용)
-type AdditionalDataConfig struct {
-	// 향후 추가 데이터 관련 설정들이 들어갈 예정
-	// 일단 비워두고 나중에 필요할 때 확장
-}
-
 // TxFeederConfig 통합된 TxFeeder 설정
 type TxFeederConfig struct {
 	// 트랜잭션 생성 설정
-	GenConfig *domain.TxGeneratorConfig
-
-	// 환경 설정
-	EnvConfig *EnvironmentConfig
-
-	// 추가 데이터 설정 (현재는 사용하지 않음)
-	AdditionalDataConfig *AdditionalDataConfig
+	GenConfig                         *domain.TxGeneratorConfig
+	ProjectRootDir                    string
+	TargetIsolatedTestingDir          string
+	TargetIsolatedCEXFilePath         string
+	TargetIsolatedMockDepositFilePath string
 
 	// 배치 모드 설정
 	BatchMode    bool          // 배치 모드 활성화 여부
@@ -128,11 +103,9 @@ type TxFeeder struct {
 }
 
 // NewTxFeeder 간단한 TxFeeder 생성을 위한 헬퍼 함수
-func NewTxFeeder(genConfig *domain.TxGeneratorConfig, envConfig *EnvironmentConfig) (*TxFeeder, error) {
+func NewTxFeeder(genConfig *domain.TxGeneratorConfig) (*TxFeeder, error) {
 	config := &TxFeederConfig{
-		GenConfig:            genConfig,
-		EnvConfig:            envConfig,
-		AdditionalDataConfig: nil, // 현재 사용하지 않음
+		GenConfig: genConfig,
 	}
 
 	return NewTxFeederWithComplexConfig(config)
@@ -150,22 +123,19 @@ func NewTxFeederWithComplexConfig(config *TxFeederConfig) (*TxFeeder, error) {
 	}
 
 	// 3. 환경 설정이 있으면 실행
-	if config.EnvConfig != nil {
-		if err := feeder.SetupEnvironment(config.EnvConfig); err != nil {
-			return nil, fmt.Errorf("failed to setup environment: %w", err)
-		}
-
-		// CEX Set 로딩
-		if _, err := feeder.LoadCEXSetFromFile(config.EnvConfig.CEXFilePath); err != nil {
-			return nil, fmt.Errorf("failed to load CEX set: %w", err)
-		}
-
-		// Mock Deposit 주소 로딩
-		if err := feeder.LoadMockDepositAddresses(config.EnvConfig.MockDepositFile); err != nil {
-			return nil, fmt.Errorf("failed to load mock deposits: %w", err)
-		}
+	if err := feeder.SetupEnvironment(config); err != nil {
+		return nil, fmt.Errorf("failed to setup environment: %w", err)
 	}
 
+	// CEX Set 로딩
+	if _, err := feeder.LoadCEXSetFromFile(config.TargetIsolatedCEXFilePath); err != nil {
+		return nil, fmt.Errorf("failed to load CEX set: %w", err)
+	}
+
+	// Mock Deposit 주소 로딩
+	if err := feeder.LoadMockDepositAddresses(config.TargetIsolatedMockDepositFilePath); err != nil {
+		return nil, fmt.Errorf("failed to load mock deposits: %w", err)
+	}
 	// 4. AdditionalDataConfig는 현재 무시 (향후 확장용)
 	// if config.AdditionalDataConfig != nil {
 	//     // 향후 추가 데이터 설정 처리
@@ -519,7 +489,7 @@ func (g *TxFeeder) generateSingleTransaction() sharedDomain.MarkedTransaction {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 	// Determine transaction type based on patterns
-	txType := DepositToCexTx //g.determineTransactionType()
+	txType := g.determineTransactionType()
 
 	var tx sharedDomain.MarkedTransaction
 
@@ -820,11 +790,11 @@ func (g *TxFeeder) sendToKafka(tx *sharedDomain.MarkedTransaction, ctx context.C
 }
 
 // SetupEnvironment 격리된 테스트 환경을 설정 (feed_and_analyze.go에서 이동)
-func (g *TxFeeder) SetupEnvironment(envConfig *EnvironmentConfig) error {
+func (g *TxFeeder) SetupEnvironment(envConfig *TxFeederConfig) error {
 	fmt.Println("\n2️⃣ Preparing isolated environment...")
 
-	g.baseDir = envConfig.BaseDir
-	g.isolatedDir = envConfig.IsolatedDir
+	g.baseDir = envConfig.ProjectRootDir
+	g.isolatedDir = envConfig.TargetIsolatedTestingDir
 
 	// 기존 디렉토리 제거 후 새로 생성
 	os.RemoveAll(g.isolatedDir)
@@ -835,19 +805,19 @@ func (g *TxFeeder) SetupEnvironment(envConfig *EnvironmentConfig) error {
 	// CEX 데이터 복제
 	sourceCEX := filepath.Join(g.baseDir, "shared", "txfeeder", "infra", "real_cex.txt")
 	fmt.Printf("   🔍 Source CEX: %s\n", sourceCEX)
-	fmt.Printf("   🔍 Target CEX: %s\n", envConfig.CEXFilePath)
+	fmt.Printf("   🔍 Target CEX: %s\n", envConfig.TargetIsolatedCEXFilePath)
 
 	// 소스 파일 존재 확인
 	if _, err := os.Stat(sourceCEX); os.IsNotExist(err) {
 		return fmt.Errorf("source CEX file does not exist: %s", sourceCEX)
 	}
 
-	if err := g.copyFile(sourceCEX, envConfig.CEXFilePath); err != nil {
+	if err := g.copyFile(sourceCEX, envConfig.TargetIsolatedCEXFilePath); err != nil {
 		return fmt.Errorf("failed to copy CEX file: %w", err)
 	}
 
 	// 복사 후 검증
-	if copiedData, err := os.ReadFile(envConfig.CEXFilePath); err == nil {
+	if copiedData, err := os.ReadFile(envConfig.TargetIsolatedCEXFilePath); err == nil {
 		lines := strings.Split(string(copiedData), "\n")
 		nonEmptyLines := 0
 		for _, line := range lines {
@@ -862,7 +832,7 @@ func (g *TxFeeder) SetupEnvironment(envConfig *EnvironmentConfig) error {
 	}
 
 	// 모의 입금 주소 생성
-	if err := g.createMockDeposits(envConfig.MockDepositFile); err != nil {
+	if err := g.createMockDeposits(envConfig.TargetIsolatedMockDepositFilePath); err != nil {
 		return fmt.Errorf("failed to create mock deposits: %w", err)
 	}
 	fmt.Printf("   📄 Mock deposits created\n")

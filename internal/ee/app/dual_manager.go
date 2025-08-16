@@ -90,7 +90,7 @@ func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.Mark
 
 	// 디버깅: 모든 트랜잭션의 케이스 분류 과정 로깅 (처음에는 항상 로깅)
 	debugEnabled := false //성능 이슈로 디버깅 취소//true // 일단 모든 트랜잭션 디버깅
-	allDbg := true
+	allDbg := false
 	if allDbg {
 		fmt.Printf("🔀 DualManager: From=%s To=%s\n",
 			fromAddr.String()[:10]+"...", toAddr.String()[:10]+"...")
@@ -296,9 +296,6 @@ func (dm *DualManager) findOrCreateTimeBucket(txTime chaintimer.ChainTime) int {
 	}
 
 	// 현재 활성 버킷들 중에서 txTime이 속할 버킷 찾기
-	//TODO 이 로직이 좀. 바보같은데? 왜 first버킷부터 그런 식으로 찾는거지??
-	//TODO 미리 인덱스-버킷을 만드는건 좋은데,퍼스트부터 할 필요는 전혀 없음. 최신부터 하면 1회만에 찾는데.
-	//TODO 거꾸로 하면 20회나 더해야함. 진짜 굳이 싶은 로직임.
 	for i := 0; i < dm.bucketCount; i++ {
 		bucketIndex := (dm.rearIndex - i + MaxTimeBuckets) % MaxTimeBuckets
 		bucket := dm.firstActiveTimeBuckets[bucketIndex]

@@ -42,8 +42,7 @@ func (a *SimpleEOAAnalyzer) processSingleTransactionJob(tx *shareddomain.MarkedT
 	}
 
 	// EOA-EOA 트랜잭션만 처리
-	//TODO 이건 추후 제거 가능. 어차피 EE트랜잭션만 카프카 큐에 보내줄 거라서..
-	//TODO 뭐, 놔둬도 상관 없긴 함.
+
 	if tx.TxSyntax[0] != shareddomain.EOAMark || tx.TxSyntax[1] != shareddomain.EOAMark {
 		if processedCount <= 5 {
 			log.Printf("⏭️  Worker %d: skipping non-EOA tx #%d", workerID, processedCount)

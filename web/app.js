@@ -20,6 +20,7 @@ class ChainAnalyzerDashboard {
         
         this.state = {
             lastUpdate: null,
+            lastSuccessTime: null,
             errorCount: 0,
             isConnected: false
         };
@@ -295,15 +296,17 @@ class ChainAnalyzerDashboard {
     onUpdateSuccess() {
         this.resetErrorState();
         this.updateServerStatus('✅ 연결됨');
+        this.updateLastSuccessTime();
         this.updateLastUpdateTime();
     }
 
     onUpdateError(error) {
         console.error('❌ 대시보드 업데이트 실패:', error);
         this.state.errorCount++;
+        this.updateLastUpdateTime(); // 에러가 발생해도 마지막 업데이트 시간은 갱신
         
         if (this.state.errorCount >= this.config.maxErrors) {
-            this.updateServerStatus('❌ 연결 실패');
+            this.updateServerStatus('❌ 에러 발생');
             console.error(`연속 ${this.config.maxErrors}회 오류 발생`);
         } else {
             this.updateServerStatus(`⚠️ 오류 (${this.state.errorCount}/${this.config.maxErrors})`);
@@ -319,10 +322,16 @@ class ChainAnalyzerDashboard {
         this.updateElement('server-status', status);
     }
 
+    updateLastSuccessTime() {
+        this.state.lastSuccessTime = new Date();
+        const timeString = this.state.lastSuccessTime.toLocaleTimeString();
+        this.updateElement('last-success-time', `마지막 정상: ${timeString}`);
+    }
+
     updateLastUpdateTime() {
         this.state.lastUpdate = new Date();
         const timeString = this.state.lastUpdate.toLocaleTimeString();
-        this.updateElement('last-update', `마지막 업데이트: ${timeString}`);
+        this.updateElement('last-update-time', `마지막 시도: ${timeString}`);
     }
 }
 

@@ -40,7 +40,7 @@ func main() {
 		MaxProcessingTime:   50_000_000,
 		StatsInterval:       3_000_000_000, // 3초
 		HealthCheckInterval: 5_000_000_000, // 5초
-		FileDBPath:          testDir,
+		IsolatedDBPath:      testDir,
 		GraphDBPath:         filepath.Join(testDir, "graph"),
 		PendingDBPath:       filepath.Join(testDir, "pending"),
 		AutoCleanup:         true,

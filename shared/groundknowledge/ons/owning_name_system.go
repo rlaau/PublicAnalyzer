@@ -95,7 +95,7 @@ var defaultInitOpts = InitOptions{Interactive: true}
 
 func GetInstance() *ONS {
 	once.Do(func() {
-		root := filepath.Join(computation.GetModuleRoot(), "ONS")
+		root := filepath.Join(computation.FindProjectRootPath(), "ONS")
 		instance = &ONS{
 			moduleToIncludedOwners: make(map[ModuleName][]OwnerName),
 			moduleDescs:            make(map[ModuleName]string),
@@ -935,7 +935,7 @@ func loadNextSystemID(root string) uint64 {
 }
 
 func (m *ONS) saveNextSystemID() error {
-	root := filepath.Join(computation.GetModuleRoot(), "ONS")
+	root := filepath.Join(computation.FindProjectRootPath(), "ONS")
 	idPath := filepath.Join(root, "ONS_next_id.txt")
 	tmp := idPath + ".tmp"
 	data := []byte(strconv.FormatUint(uint64(m.nextSystemID), 10))

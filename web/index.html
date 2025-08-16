@@ -3,15 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>🔗 ChainAnalyzer Dashboard</title>
-    <link rel="stylesheet" href="./style.css">
+    <link rel="stylesheet" href="/style.css?v=<?= time() ?>">
 </head>
 <body>
     <header>
         <h1>🔗 ChainAnalyzer Dashboard</h1>
         <div class="server-info">
             <span id="server-status">🔄 연결 중...</span>
-            <span id="last-update"></span>
+            <span id="last-success-time"></span>
+            <span id="last-update-time"></span>
         </div>
     </header>
 
@@ -35,9 +39,40 @@
             </div>
         </section>
 
-        <!-- EE 모듈 섹션 -->
+        <!-- 모듈 네비게이션 -->
+        <section class="module-navigation">
+            <h2>🧩 Available Modules</h2>
+            <div class="module-grid">
+                <a href="/ui/ee/" class="module-link">
+                    <div class="module-card">
+                        <h3>🔍 EE Analyzer</h3>
+                        <p>EOA-EOA 거래 관계 분석</p>
+                        <div class="module-status active">운영 중</div>
+                    </div>
+                </a>
+                <a href="/ui/cce/" class="module-link">
+                    <div class="module-card">
+                        <h3>🏢 CCE Analyzer</h3>
+                        <p>Contract-Contract 관계 분석</p>
+                        <div class="module-status development">개발 중</div>
+                    </div>
+                </a>
+                <div class="module-card disabled">
+                    <h3>🔗 EEC Analyzer</h3>
+                    <p>EOA-Contract 관계 분석</p>
+                    <div class="module-status planned">계획됨</div>
+                </div>
+                <div class="module-card disabled">
+                    <h3>📊 Knowledge Propagator</h3>
+                    <p>분석 결과 전파</p>
+                    <div class="module-status planned">계획됨</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- EE 모듈 섹션 (요약) -->
         <section class="module-section">
-            <h2>🔍 EE Analyzer Module</h2>
+            <h2>🔍 EE Analyzer Module (Summary)</h2>
             
             <!-- EE 기본 상태 -->
             <div class="module-overview">
@@ -102,40 +137,40 @@
         <section class="api-section">
             <h2>🔌 API Endpoints</h2>
             <div class="api-grid">
-                <a href="/health" target="_blank" class="api-link">
+                <a href="/api/health" target="_blank" class="api-link">
                     <div class="api-card">
                         <h4>System Health</h4>
-                        <p>/health</p>
+                        <p>/api/health</p>
                     </div>
                 </a>
-                <a href="/ee/health" target="_blank" class="api-link">
+                <a href="/api/ee/health" target="_blank" class="api-link">
                     <div class="api-card">
                         <h4>EE Health</h4>
-                        <p>/ee/health</p>
+                        <p>/api/ee/health</p>
                     </div>
                 </a>
-                <a href="/ee/statistics" target="_blank" class="api-link">
+                <a href="/api/ee/statistics" target="_blank" class="api-link">
                     <div class="api-card">
                         <h4>EE Statistics</h4>
-                        <p>/ee/statistics</p>
+                        <p>/api/ee/statistics</p>
                     </div>
                 </a>
-                <a href="/ee/channel-status" target="_blank" class="api-link">
+                <a href="/api/ee/channel-status" target="_blank" class="api-link">
                     <div class="api-card">
                         <h4>Channel Status</h4>
-                        <p>/ee/channel-status</p>
+                        <p>/api/ee/channel-status</p>
                     </div>
                 </a>
-                <a href="/ee/dual-manager/window-stats" target="_blank" class="api-link">
+                <a href="/api/ee/dual-manager/window-stats" target="_blank" class="api-link">
                     <div class="api-card">
                         <h4>Window Stats</h4>
-                        <p>/ee/dual-manager/window-stats</p>
+                        <p>/api/ee/dual-manager/window-stats</p>
                     </div>
                 </a>
-                <a href="/ee/graph/stats" target="_blank" class="api-link">
+                <a href="/api/ee/graph/stats" target="_blank" class="api-link">
                     <div class="api-card">
                         <h4>Graph Stats</h4>
-                        <p>/ee/graph/stats</p>
+                        <p>/api/ee/graph/stats</p>
                     </div>
                 </a>
             </div>
@@ -146,6 +181,6 @@
         <p>ChainAnalyzer Dashboard | 실시간 업데이트: 2초마다</p>
     </footer>
 
-    <script src="./app.js"></script>
+    <script src="/app.js?v=<?= time() ?>"></script>
 </body>
 </html>

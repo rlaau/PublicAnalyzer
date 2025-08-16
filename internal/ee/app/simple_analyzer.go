@@ -394,11 +394,10 @@ func (a *SimpleEOAAnalyzer) IsHealthy() bool {
 		return true // 아직 트랜잭션이 없으면 건강함
 	}
 
-	channelUsage := float64(len(a.infra.TxJobChannel)) / float64(cap(a.infra.TxJobChannel))
 	errorRate := float64(errors) / float64(total)
 
-	// 채널 사용률 90% 이하, 에러율 10% 이하
-	return channelUsage < 0.9 && errorRate < 0.1
+	// 에러율 10% 이하
+	return errorRate < 0.1
 }
 
 // GetChannelStatus 채널 상태 반환
@@ -511,9 +510,9 @@ func (a *SimpleEOAAnalyzer) cleanup() {
 		return
 	}
 
-	log.Printf("🧹 Cleaning up test data: %s", a.config.FileDBPath)
+	log.Printf("🧹 Cleaning up test data: %s", a.config.IsolatedDBPath)
 
-	if err := os.RemoveAll(a.config.FileDBPath); err != nil {
+	if err := os.RemoveAll(a.config.IsolatedDBPath); err != nil {
 		log.Printf("⚠️ Failed to cleanup test data: %v", err)
 	} else {
 		log.Printf("✅ Test data cleaned up")
