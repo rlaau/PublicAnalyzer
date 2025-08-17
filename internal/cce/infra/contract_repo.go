@@ -19,7 +19,7 @@ func NewRepo(path string) (*Repo, error) {
 func (r *Repo) Close() error { return r.db.Close() }
 
 // UpsertBatch: 존재하면 덮어쓰기(필요 시 merge 전략 넣기)
-func (r *Repo) UpsertBatch(items []domain.Contract) error {
+func (r *Repo) UpsertBatch(items []domain.RawContract) error {
 	wb := r.db.NewWriteBatch()
 	defer wb.Cancel()
 
@@ -32,8 +32,8 @@ func (r *Repo) UpsertBatch(items []domain.Contract) error {
 	return wb.Flush()
 }
 
-func (r *Repo) Get(addr string) (*domain.Contract, error) {
-	var out domain.Contract
+func (r *Repo) Get(addr string) (*domain.RawContract, error) {
+	var out domain.RawContract
 	err := r.db.View(func(txn *badger.Txn) error {
 		itm, e := txn.Get(domain.KeyFor(addr))
 		if e != nil {

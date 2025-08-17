@@ -42,7 +42,7 @@ func main() {
 		PendingDBPath:     filepath.Join(isolatedDir, "pending"),
 	}
 	// 테스트 시작 전에 이전 데이터 정리 (삭제 후 생성 로직
-	if err := resetIsolatedEnvironmentPaths2(isolatedPathConfig); err != nil {
+	if err := resetIsolatedEnvironmentPaths(isolatedPathConfig); err != nil {
 		panic("failed pre-clean")
 	}
 	//테스트 시간 설정
@@ -217,7 +217,7 @@ func printServerInfo() {
 // resetIsolatedEnvironmentPaths
 // - 고립 환경을 "삭제 후 생성"으로 초기화
 // - 루트가 없으면 "지울 것 없음" 로그만 남기고 생성 단계로 진행
-func resetIsolatedEnvironmentPaths2(cfg *IsolatedPathConfig) error {
+func resetIsolatedEnvironmentPaths(cfg *IsolatedPathConfig) error {
 	// 0) 기본 검증
 	root := strings.TrimSpace(cfg.RootOfIsolatedDir)
 	if root == "" {
