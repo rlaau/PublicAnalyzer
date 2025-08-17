@@ -2,47 +2,49 @@ package domain
 
 import "github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
 
-// 컨트렉트의 게이트웨이
-type RawContract struct {
-	Address string `json:"address"`
-
-	// 생성 정보
-	Creator    *string               `json:"creator,omitempty"`
-	CreationTx *string               `json:"creation_tx,omitempty"`
-	CreatedAt  *chaintimer.ChainTime `json:"created_at,omitempty"`
-	//CreatedBlock int64                `json:"created_block,omitempty"`
-
-	// 코드/인터페이스
-	//BytecodeSHA256    string   `json:"bytecode_sha256,omitempty"`
-	IsERC20  bool `json:"is_erc20,omitempty"`
-	IsERC721 bool `json:"is_erc721,omitempty"`
-	//FunctionSighashes []string `json:"function_sighashes,omitempty"`
-	// Ownable 등에서 추정된 Owner(있을 때만)
-	Owner    *string   `json:"owner,omitempty"`
-	OwnerLog *[]string `json:"ownerlog,omitempty"`
-
-	// 관리
-	LastSeenAt chaintimer.ChainTime `json:"last_seen_at,omitempty"`
+// Contract는 "모든 컨트렉트가 지니는" "가장 일반적인 정보들"을 표현
+type Contract struct {
+	//키
+	Address Address
+	//생성 정보
+	CreatorOrZero    Address
+	CreationTxOrZero TxId
+	CreatedAt        chaintimer.ChainTime
+	//소유 정보
+	OwnerOrZero    Address
+	OwnerLogOrZero []Address
+	//메타 정보
+	IsERC20  bool
+	IsERC721 bool
 }
 
-// 컨트렉트 중 토큰인 것
-type RawToken struct {
-	Address string `json:"address"`
-
-	// 토큰 메타
-	Symbol   string `json:"symbol,omitempty"`
-	Name     string `json:"name,omitempty"`
-	Decimals *int64 `json:"decimals,omitempty"`
+type Token struct {
+	//키
+	Address Address
+	//토큰 메타
+	Symbol         string
+	Name           string
+	DecimalsOrZero int64
 }
-
-// 컨트렉트 중 프로토콜 인 것
-type RawProtocol struct {
-	Address string `json:"address"`
+type TokenScore struct {
+	//키
+	Address Address
+	//점수
+	AnyScore1 int64
 }
+type TokenRunnable struct{}
 
-type MarkedContract struct {
-	//TODO 여기선 ID 매퍼 이용
+type TokenResult struct {
+	Remarks string
 }
+type NFT struct{}
 
-// KV 키 규칙
-func KeyFor(addr string) []byte { return []byte("contract:" + addr) }
+type ContractKind int
+
+const (
+	UnsortedContract ContractKind = iota
+	ProtocolContract
+	ProxyContract
+)
+
+type OtherContract struct{}
