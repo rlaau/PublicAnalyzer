@@ -2,6 +2,8 @@ package domain
 
 import "github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
 
+//TODO 추후 이 컨트렉트는 CID기반으로 전환될 것
+
 // Contract는 "모든 컨트렉트가 지니는" "가장 일반적인 정보들"을 표현
 type Contract struct {
 	//키

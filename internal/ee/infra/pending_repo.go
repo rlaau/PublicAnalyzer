@@ -57,7 +57,7 @@ func (r *BadgerPendingRelationRepo) GetPendingRelations(toAddr domain.Address) (
 	if err == badger.ErrKeyNotFound {
 		return []domain.Address{}, nil // Return empty slice if not found
 	}
-	serializedFromAddress, err := fp.Map(fromAddresses, domain.ParseAddressFromString)
+	serializedFromAddress, err := fp.MapOrError(fromAddresses, domain.ParseAddressFromString)
 
 	return serializedFromAddress, err
 }
