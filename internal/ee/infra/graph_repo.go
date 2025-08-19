@@ -15,19 +15,19 @@ import (
 // GraphRepository defines the interface for graph database operations
 type GraphRepository interface {
 	// Node operations
-	SaveNode(node *domain.EOANode) error
-	GetNode(addr shareddomain.Address) (*domain.EOANode, error)
+	SaveNode(node *domain.OldEOANode) error
+	GetNode(addr shareddomain.Address) (*domain.OldEOANode, error)
 	UpdateNodeLastSeen(addr shareddomain.Address) error
 
 	// Edge operations
-	SaveEdge(edge *domain.EOAEdge) error
-	GetEdge(addrA, addrB shareddomain.Address) (*domain.EOAEdge, error)
+	SaveEdge(edge *domain.OldEOAEdge) error
+	GetEdge(addrA, addrB shareddomain.Address) (*domain.OldEOAEdge, error)
 	UpdateEdgeEvidence(addrA, addrB shareddomain.Address, txID shareddomain.TxId, infoCode uint8) error
 
 	// Graph traversal operations
 	GetConnectedEOAs(addr shareddomain.Address, maxDepth int) (*domain.EOASubgraph, error)
 	GetEOAsUsingDeposit(depositAddr shareddomain.Address) ([]shareddomain.Address, error)
-	FindShortestPath(addrA, addrB shareddomain.Address, maxDepth int) ([]*domain.EOAEdge, error)
+	FindShortestPath(addrA, addrB shareddomain.Address, maxDepth int) ([]*domain.OldEOAEdge, error)
 
 	// Cleanup operations
 	DeleteStaleNodes(threshold chaintimer.ChainTime) error
@@ -168,7 +168,7 @@ type AdjacencyData struct {
 }
 
 // SaveNode saves an EOA node to BadgerDB
-func (r *BadgerGraphRepository) SaveNode(node *domain.EOANode) error {
+func (r *BadgerGraphRepository) SaveNode(node *domain.OldEOANode) error {
 	nodeData := NodeData{
 		Address:   node.Address.String(),
 		FirstSeen: node.FirstSeen.Unix(),
@@ -188,7 +188,7 @@ func (r *BadgerGraphRepository) SaveNode(node *domain.EOANode) error {
 }
 
 // GetNode retrieves an EOA node from BadgerDB
-func (r *BadgerGraphRepository) GetNode(addr shareddomain.Address) (*domain.EOANode, error) {
+func (r *BadgerGraphRepository) GetNode(addr shareddomain.Address) (*domain.OldEOANode, error) {
 	key := nodeKey(addr)
 	var nodeData NodeData
 
@@ -210,7 +210,7 @@ func (r *BadgerGraphRepository) GetNode(addr shareddomain.Address) (*domain.EOAN
 		return nil, err
 	}
 
-	return &domain.EOANode{
+	return &domain.OldEOANode{
 		Address:   addr,
 		FirstSeen: chaintimer.Unix(nodeData.FirstSeen, 0),
 		LastSeen:  chaintimer.Unix(nodeData.LastSeen, 0),
@@ -248,7 +248,7 @@ func (r *BadgerGraphRepository) UpdateNodeLastSeen(addr shareddomain.Address) er
 }
 
 // SaveEdge saves an EOA edge by updating adjacency lists of both nodes
-func (r *BadgerGraphRepository) SaveEdge(edge *domain.EOAEdge) error {
+func (r *BadgerGraphRepository) SaveEdge(edge *domain.OldEOAEdge) error {
 	// Calculate total volume from evidence (assuming we can derive it)
 	totalVolume := "0" // TODO: Calculate from transaction data if available
 
@@ -264,7 +264,7 @@ func (r *BadgerGraphRepository) SaveEdge(edge *domain.EOAEdge) error {
 }
 
 // addConnectionToAdjacency adds a connection to a node's adjacency list
-func (r *BadgerGraphRepository) addConnectionToAdjacency(txn *badger.Txn, fromAddr, toAddr, depositAddr shareddomain.Address, evidence []domain.EdgeInfo, totalVolume string, firstSeen, lastConfirmed chaintimer.ChainTime) error {
+func (r *BadgerGraphRepository) addConnectionToAdjacency(txn *badger.Txn, fromAddr, toAddr, depositAddr shareddomain.Address, evidence []domain.OldEdgeInfo, totalVolume string, firstSeen, lastConfirmed chaintimer.ChainTime) error {
 	key := adjacencyKey(fromAddr)
 
 	var adjData AdjacencyData
@@ -334,7 +334,7 @@ func (r *BadgerGraphRepository) addConnectionToAdjacency(txn *badger.Txn, fromAd
 }
 
 // GetEdge retrieves an EOA edge by checking adjacency list
-func (r *BadgerGraphRepository) GetEdge(addrA, addrB shareddomain.Address) (*domain.EOAEdge, error) {
+func (r *BadgerGraphRepository) GetEdge(addrA, addrB shareddomain.Address) (*domain.OldEOAEdge, error) {
 	key := adjacencyKey(addrA)
 	var adjData AdjacencyData
 
@@ -371,14 +371,14 @@ func (r *BadgerGraphRepository) GetEdge(addrA, addrB shareddomain.Address) (*dom
 				return nil, fmt.Errorf("failed to parse first detect tx: %w", err)
 			}
 
-			evidence := []domain.EdgeInfo{
+			evidence := []domain.OldEdgeInfo{
 				{
 					TxID:     firstTxID,
 					InfoCode: domain.SameDepositUsage,
 				},
 			}
 
-			return &domain.EOAEdge{
+			return &domain.OldEOAEdge{
 				AddressA:      addrA,
 				AddressB:      addrB,
 				DepositAddr:   depositAddr,
@@ -488,7 +488,7 @@ func (r *BadgerGraphRepository) GetConnectedEOAs(addr shareddomain.Address, maxD
 }
 
 // getAdjacencyList retrieves the adjacency list for a given address
-func (r *BadgerGraphRepository) getAdjacencyList(txn *badger.Txn, addr shareddomain.Address) ([]shareddomain.Address, []*domain.EOAEdge, error) {
+func (r *BadgerGraphRepository) getAdjacencyList(txn *badger.Txn, addr shareddomain.Address) ([]shareddomain.Address, []*domain.OldEOAEdge, error) {
 	key := adjacencyKey(addr)
 
 	item, err := txn.Get(key)
@@ -505,7 +505,7 @@ func (r *BadgerGraphRepository) getAdjacencyList(txn *badger.Txn, addr shareddom
 	}
 
 	var connectedAddrs []shareddomain.Address
-	var edges []*domain.EOAEdge
+	var edges []*domain.OldEOAEdge
 
 	for _, conn := range adjData.Connections {
 		connectedAddr, err := parseAddressFromString(conn.ConnectedAddr)
@@ -524,7 +524,7 @@ func (r *BadgerGraphRepository) getAdjacencyList(txn *badger.Txn, addr shareddom
 			continue
 		}
 
-		evidence := []domain.EdgeInfo{
+		evidence := []domain.OldEdgeInfo{
 			{
 				TxID:     firstTxID,
 				InfoCode: domain.SameDepositUsage,
@@ -532,7 +532,7 @@ func (r *BadgerGraphRepository) getAdjacencyList(txn *badger.Txn, addr shareddom
 		}
 
 		connectedAddrs = append(connectedAddrs, connectedAddr)
-		edges = append(edges, &domain.EOAEdge{
+		edges = append(edges, &domain.OldEOAEdge{
 			AddressA:      addr,
 			AddressB:      connectedAddr,
 			DepositAddr:   depositAddr,
@@ -546,7 +546,7 @@ func (r *BadgerGraphRepository) getAdjacencyList(txn *badger.Txn, addr shareddom
 }
 
 // getNodeFromTxn retrieves a node within a transaction
-func (r *BadgerGraphRepository) getNodeFromTxn(txn *badger.Txn, addr shareddomain.Address) (*domain.EOANode, error) {
+func (r *BadgerGraphRepository) getNodeFromTxn(txn *badger.Txn, addr shareddomain.Address) (*domain.OldEOANode, error) {
 	key := nodeKey(addr)
 	var nodeData NodeData
 
@@ -562,7 +562,7 @@ func (r *BadgerGraphRepository) getNodeFromTxn(txn *badger.Txn, addr shareddomai
 		return nil, err
 	}
 
-	return &domain.EOANode{
+	return &domain.OldEOANode{
 		Address:   addr,
 		FirstSeen: chaintimer.Unix(nodeData.FirstSeen, 0),
 		LastSeen:  chaintimer.Unix(nodeData.LastSeen, 0),
@@ -620,7 +620,7 @@ func (r *BadgerGraphRepository) GetEOAsUsingDeposit(depositAddr shareddomain.Add
 }
 
 // FindShortestPath finds the shortest path between two EOAs using BFS
-func (r *BadgerGraphRepository) FindShortestPath(addrA, addrB shareddomain.Address, maxDepth int) ([]*domain.EOAEdge, error) {
+func (r *BadgerGraphRepository) FindShortestPath(addrA, addrB shareddomain.Address, maxDepth int) ([]*domain.OldEOAEdge, error) {
 	//TODO: Implement BFS shortest path algorithm using adjacency lists
 	return nil, fmt.Errorf("shortest path not implemented yet")
 }
