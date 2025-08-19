@@ -19,9 +19,10 @@ const (
 
 // EOANode represents an EOA address node in the relationship graph
 type EOANode struct {
-	Address   domain.Address
-	FirstSeen chaintimer.ChainTime
-	LastSeen  chaintimer.ChainTime
+	Address     domain.Address
+	AddressKind domain.AddressKind
+	FirstSeen   chaintimer.ChainTime
+	LastSeen    chaintimer.ChainTime
 }
 
 // NewEOANode creates a new EOA node

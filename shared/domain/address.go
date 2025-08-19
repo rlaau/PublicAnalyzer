@@ -51,6 +51,14 @@ type PredefinedAddress interface {
 		NFTContractAddress |
 		BridgeAddress
 }
+type AddressKind int
+
+// ! 이런 상수들은 추후 인-디코딩 기준이 되므로 반드시 append-only일것
+const (
+	KindDepositAddress AddressKind = iota
+	KindCexAddress
+	KindEOA
+)
 
 type DefinedOnProcess interface {
 	UserAddress | CexDepositAddress
