@@ -6,7 +6,6 @@ import (
 
 	localdomain "github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
 )
 
 // TODO: 추후 에 도메인 놀리지는 그라운드 놀리지에 편입 후 제거!
@@ -70,6 +69,8 @@ func (gk *DomainKnowledge) IsDepositAddress(addr domain.Address) bool {
 
 // DetectNewDepositAddress detects and adds a new deposit address
 // This is called when we see: someAddress -> CEXAddress transaction
+// TODO 얘도 고칠꺼 짱 많음
+// TODO 1. 디포짓 관리는 EEC에 2.시간은 인자로 받는 것이지, Now로 하는 것이 아님!! 정 상태가 필요하면 체인타이머를 받고
 func (gk *DomainKnowledge) DetectNewDepositAddress(fromAddr, cexAddr domain.Address) error {
 	fmt.Printf("   🔍 DetectNewDepositAddress: %s → CEX %s\n", fromAddr.String()[:10]+"...", cexAddr.String()[:10]+"...")
 
@@ -92,8 +93,9 @@ func (gk *DomainKnowledge) DetectNewDepositAddress(fromAddr, cexAddr domain.Addr
 
 	// Persist new detection to storage
 	deposit := &localdomain.DetectedDepositWithEvidence{
-		Address:    fromAddr,
-		DetectedAt: chaintimer.Now(),
+		Address: fromAddr,
+		//TODO 얘도 그냥 "시간"을 받기
+		//DetectedAt: chaintimer.Now(),
 		CEXAddress: cexAddr,
 		TxCount:    1,
 	}

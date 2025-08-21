@@ -28,6 +28,10 @@ func (ct ChainTime) Unix() int64 {
 // 얘도 걍  alias임
 type ChainDuration time.Duration
 
+func NewChainDurationSeconds(i int) ChainDuration {
+	return ChainDuration(time.Duration(i) * time.Second)
+}
+
 // Duration은 내부 time.Duration 값을 반환합니다
 func (d ChainDuration) Duration() time.Duration {
 	return time.Duration(d)

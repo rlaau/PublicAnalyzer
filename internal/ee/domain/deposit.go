@@ -3,8 +3,8 @@ package domain
 import (
 	"sync"
 
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
 )
 
 // DetectedDepositWithEvidence represents a deposit address that has been identified
@@ -42,8 +42,8 @@ func (s *DetectedDepositSet) Add(addr domain.Address, cexAddr domain.Address) {
 
 	// Add new detected deposit address
 	s.addresses[addrStr] = &DetectedDepositWithEvidence{
-		Address:    addr,
-		DetectedAt: chaintimer.Now(),
+		Address: addr,
+		//DetectedAt: chaintimer.Now(),
 		CEXAddress: cexAddr,
 		TxCount:    1,
 	}

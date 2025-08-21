@@ -1,6 +1,6 @@
 package domain
 
-import "github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
+import "github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 
 //TODO 추후 이 컨트렉트는 CID기반으로 전환될 것
 

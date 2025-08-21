@@ -13,8 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	sharedDomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/domain"
 )
@@ -689,7 +689,10 @@ func (g *TxFeeder) createMarkedTransaction(from, to sharedDomain.Address) shared
 	//*시스템에 도달 한 것을 시뮬레이션 시킴. 이 시점에서 "txFeeder" txIngester처럼 "시간 전파"도 일으켜야 함
 	chainTime := chaintimer.ChainTime(g.state.CurrentTime.Add(delay))
 	//* 시간 전파 로직
-	chaintimer.AdvanceTo(chainTime)
+	//TODO 추후 시간 전파 시엔, 체인피더에서 체인타이머 생성 후 인자로 계속 넘겨주기!!!!
+	//TODO 아 근데 생각해보면, 이 경우 그냥 필요없을 가능성도 큼!!! 컨텍스트 느낌의 타이머인 한, 전역 관리 없이
+	//TODO 필요한 놈들이 그때그때 만들어서 쓰게 하면 됨!
+	//chaintimer.AdvanceTo(chainTime)
 	return sharedDomain.MarkedTransaction{
 		// 여기선 발생 즉시 주입되므로 지연 시간이 0이라서 currentTime==chainTime
 		BlockTime: chainTime,

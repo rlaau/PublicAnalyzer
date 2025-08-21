@@ -1,8 +1,18 @@
 package mode
 
-type ProcessMode int
+type ProcessingMode int
 
 const (
-	TestingModeProcess ProcessMode = iota
+	TestingModeProcess ProcessingMode = iota
 	ProductionModeProcess
 )
+
+func (m ProcessingMode) IsTest() bool {
+	if m == TestingModeProcess {
+		return true
+	}
+	if m == ProductionModeProcess {
+		return false
+	}
+	panic("입략값 에러")
+}

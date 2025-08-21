@@ -1,6 +1,6 @@
 package domain
 
-import "github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
+import "github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 
 type BlockNumber uint64
 

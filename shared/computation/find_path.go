@@ -11,6 +11,10 @@ func FindTestingStorageRootPath() string {
 	return filepath.Join(FindProjectRootPath(), "testing_enviroment")
 }
 
+func FindProductionStorageRootPath() string {
+	return filepath.Join(FindProjectRootPath(), "production_storage")
+}
+
 // 프로젝트 루트 경로 리턴
 func FindProjectRootPath() string {
 	cwd, _ := os.Getwd()

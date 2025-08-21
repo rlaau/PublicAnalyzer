@@ -7,8 +7,8 @@ import (
 	localdomain "github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
 
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/fp"
 )
 

@@ -8,8 +8,8 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
 )
 
 // GraphRepository defines the interface for graph database operations
@@ -236,7 +236,8 @@ func (r *BadgerGraphRepository) UpdateNodeLastSeen(addr shareddomain.Address) er
 		}
 		//*조금 불안정하긴 함. 99%정확도는 보장하지만, 1%의 손실은 가능
 		//* tx를 바로 분석하는게 아니라, 시간을 체인 시스템 시간으로부터 로드함
-		nodeData.LastSeen = chaintimer.Now().Unix()
+		//TODO 정 필요 시엔 타이머를 받거나 시간을 받기
+		//nodeData.LastSeen = chaintimer.Now().Unix()
 
 		data, err := json.Marshal(nodeData)
 		if err != nil {
@@ -425,7 +426,8 @@ func (r *BadgerGraphRepository) updateConnectionEvidence(txn *badger.Txn, fromAd
 	for i := range adjData.Connections {
 		if adjData.Connections[i].ConnectedAddr == toAddr.String() {
 			adjData.Connections[i].TxCount++
-			adjData.Connections[i].LastConfirmed = chaintimer.Now().Unix()
+			//TODO 얘낸 차피 싹 리팩터링이라 걍 ㅋㅋ
+			//adjData.Connections[i].LastConfirmed = chaintimer.Now().Unix()
 			// TODO: Update total volume if transaction value is available
 			break
 		}

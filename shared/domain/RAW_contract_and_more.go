@@ -1,6 +1,6 @@
 package domain
 
-import "github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
+import "github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 
 // **이 파일의 데이터타입은 빅쿼리에서 초기 백필용 데이터 받아올 때 사용한 raw타입입**/
 // **프로덕션 프로세스 내부에서 돌아갈 타입은 다른 파일 참고

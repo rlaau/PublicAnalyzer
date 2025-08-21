@@ -1,8 +1,8 @@
 package domain
 
 import (
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
 )
 
 // OldEdgeInfo represents evidence information for an EOA relationship
@@ -26,17 +26,17 @@ type OldEOANode struct {
 
 // NewEOANode creates a new EOA node
 func NewEOANode(addr domain.Address) *OldEOANode {
-	now := chaintimer.Now()
+	//now := chaintimer.Now()
 	return &OldEOANode{
-		Address:   addr,
-		FirstSeen: now,
-		LastSeen:  now,
+		Address: addr,
+		//FirstSeen: now,
+		//LastSeen:  now,
 	}
 }
 
 // UpdateLastSeen updates the last seen timestamp
 func (n *OldEOANode) UpdateLastSeen() {
-	n.LastSeen = chaintimer.Now()
+	//n.LastSeen = chaintimer.Now()
 }
 
 // OldEOAEdge represents a relationship edge between two EOA addresses
@@ -52,21 +52,21 @@ type OldEOAEdge struct {
 
 // NewEOAEdge creates a new EOA relationship edge
 func NewEOAEdge(addrA, addrB, depositAddr domain.Address, txID domain.TxId, infoCode uint8) *OldEOAEdge {
-	now := chaintimer.Now()
+	//now := chaintimer.Now()
 	return &OldEOAEdge{
-		AddressA:      addrA,
-		AddressB:      addrB,
-		DepositAddr:   depositAddr,
-		Evidence:      []OldEdgeInfo{{TxID: txID, InfoCode: infoCode}},
-		FirstSeen:     now,
-		LastConfirmed: now,
+		AddressA:    addrA,
+		AddressB:    addrB,
+		DepositAddr: depositAddr,
+		Evidence:    []OldEdgeInfo{{TxID: txID, InfoCode: infoCode}},
+		//FirstSeen:     now,
+		//LastConfirmed: now,
 	}
 }
 
 // AddEvidence adds new evidence to this edge
 func (e *OldEOAEdge) AddEvidence(txID domain.TxId, infoCode uint8) {
 	e.Evidence = append(e.Evidence, OldEdgeInfo{TxID: txID, InfoCode: infoCode})
-	e.LastConfirmed = chaintimer.Now()
+	//e.LastConfirmed = chaintimer.Now()
 }
 
 // EvidenceCount returns the number of supporting evidence entries
@@ -76,7 +76,8 @@ func (e *OldEOAEdge) EvidenceCount() int {
 
 // IsStale checks if the edge is older than the window threshold
 func (e *OldEOAEdge) IsStale(windowThreshold chaintimer.ChainDuration) bool {
-	return chaintimer.Since(e.LastConfirmed) > windowThreshold
+	//return chaintimer.Since(e.LastConfirmed) > windowThreshold
+	return false
 }
 
 // EOASubgraph represents a subgraph result from graph database queries
@@ -98,7 +99,7 @@ func NewEOASubgraph(centerAddr domain.Address, depth int) *EOASubgraph {
 		Nodes:         make([]*OldEOANode, 0),
 		Edges:         make([]*OldEOAEdge, 0),
 		QueryDepth:    depth,
-		CreatedAt:     chaintimer.Now(),
+		//CreatedAt:     chaintimer.Now(),
 	}
 }
 

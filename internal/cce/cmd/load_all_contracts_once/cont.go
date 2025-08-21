@@ -10,8 +10,8 @@ import (
 	"time"
 
 	cloudbq "cloud.google.com/go/bigquery"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
 	"google.golang.org/api/iterator"
 )
 

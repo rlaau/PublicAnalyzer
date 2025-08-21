@@ -11,8 +11,8 @@ import (
 	"sync"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	sharedDomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
 )
 
 // DepositRepository defines the interface for deposit address persistence

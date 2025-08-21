@@ -5,8 +5,8 @@ import (
 	"encoding/binary"
 	"sync"
 
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
 )
 
 // MockCCEService provides a temporary mock implementation of CCEService for testing

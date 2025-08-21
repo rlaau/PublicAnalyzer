@@ -4,7 +4,7 @@ import (
 	"encoding/hex"
 	"math/big"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/groundknowledge/chaintimer"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 )
 
 type RawTransaction struct {
