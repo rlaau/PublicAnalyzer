@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -8,6 +9,14 @@ import (
 
 // Address는 이더리움 주소를 나타내는 타입입니다.
 type Address [20]byte
+
+var zeroAddress = Address{}
+
+// IsNullAddress checks if the address is zero, or originated from "" or "0x".
+func IsNullAddress(a Address) bool {
+	// 단순 비교 (컴파일러가 최적화해서 memcmp 수준으로 처리)
+	return bytes.Equal(a[:], zeroAddress[:])
+}
 
 // ParseAddressFromString converts hex string to Address
 func ParseAddressFromString(hexStr string) (Address, error) {

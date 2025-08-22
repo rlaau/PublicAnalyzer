@@ -9,7 +9,7 @@ import (
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/analyzerpool/iface"
 	computation "github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
 	kb "github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
@@ -21,19 +21,6 @@ const (
 	defaultGroup = "analyzerpool"
 )
 
-type modeDefaults struct {
-	batchSize    int
-	batchTimeout time.Duration
-	chanCap      int // 이벤트 pending 상한 (역압)
-}
-
-func pickDefaults(m mode.ProcessingMode) modeDefaults {
-	if m.IsTest() {
-		return modeDefaults{batchSize: 1000, batchTimeout: 150 * time.Millisecond, chanCap: 2048}
-	}
-	return modeDefaults{batchSize: 10000, batchTimeout: 200 * time.Millisecond, chanCap: 8192}
-}
-
 type AnalyzerPool[CcEvt, EeEvt, CceEvt, EecEvt, TX any] struct {
 	isTest mode.ProcessingMode
 
@@ -44,10 +31,10 @@ type AnalyzerPool[CcEvt, EeEvt, CceEvt, EecEvt, TX any] struct {
 		eec iface.EecPort
 	}
 
-	busCC  *EventBus[CcEvt]
-	busEE  *EventBus[EeEvt]
-	busCCE *EventBus[CceEvt]
-	busEEC *EventBus[EecEvt]
+	busCC  *eventbus.EventBus[CcEvt]
+	busEE  *eventbus.EventBus[EeEvt]
+	busCCE *eventbus.EventBus[CceEvt]
+	busEEC *eventbus.EventBus[EecEvt]
 
 	fanCC  *txFanout[TX]
 	fanEE  *txFanout[TX]
@@ -58,35 +45,40 @@ type AnalyzerPool[CcEvt, EeEvt, CceEvt, EecEvt, TX any] struct {
 }
 
 func CreateAnalyzerPoolFrame[CCEvt, EEEvt, CCEEvt, EECEvt, TX any](isTest mode.ProcessingMode) (*AnalyzerPool[CCEvt, EEEvt, CCEEvt, EECEvt, TX], error) {
-	def := pickDefaults(isTest)
-
 	// 1) 루트 분기
-	var root string
+	var root func() string
 	if isTest.IsTest() {
-		root = computation.FindTestingStorageRootPath()
+		root = computation.FindTestingStorageRootPath
 	} else {
-		root = computation.FindProductionStorageRootPath()
+		root = computation.FindProductionStorageRootPath
 	}
-	analyzerPoolRoot := filepath.Join(root, poolFolder)
-	eventBusRoot := filepath.Join(analyzerPoolRoot, subEventBus)
+	// 상대 경로 상수화
+	rel := func(name string) string {
+		return filepath.Join("analyzer_pool", "eventbus", fmt.Sprintf("%s.jsonl", name))
+	}
+	// capLimit: 모드에 따라 조정 (예시 값)
+	capLimit := 2048
+	if !isTest.IsTest() {
+		capLimit = 8192
+	}
 
-	// 2) 이벤트 버스 파일 경로(JSONL)
-	bCC, err := newSimpleBus[CCEvt](filepath.Join(eventBusRoot, "cc.jsonl"), def.chanCap)
+	// 2) 이벤트 버스 생성 (JSONL 경로 = root()/analyzer_pool/eventbus/*.jsonl)
+	bCC, err := eventbus.NewWithRoot[CCEvt](root, rel("cc"), capLimit)
 	if err != nil {
 		return nil, err
 	}
-	bEE, err := newSimpleBus[EEEvt](filepath.Join(eventBusRoot, "ee.jsonl"), def.chanCap)
+	bEE, err := eventbus.NewWithRoot[EEEvt](root, rel("ee"), capLimit)
 	if err != nil {
 		bCC.Close()
 		return nil, err
 	}
-	bCCE, err := newSimpleBus[CCEEvt](filepath.Join(eventBusRoot, "cce.jsonl"), def.chanCap)
+	bCCE, err := eventbus.NewWithRoot[CCEEvt](root, rel("cce"), capLimit)
 	if err != nil {
 		bCC.Close()
 		bEE.Close()
 		return nil, err
 	}
-	bEEC, err := newSimpleBus[EECEvt](filepath.Join(eventBusRoot, "eec.jsonl"), def.chanCap)
+	bEEC, err := eventbus.NewWithRoot[EECEvt](root, rel("eec"), capLimit)
 	if err != nil {
 		bCC.Close()
 		bEE.Close()
@@ -94,21 +86,31 @@ func CreateAnalyzerPoolFrame[CCEvt, EEEvt, CCEEvt, EECEvt, TX any](isTest mode.P
 		return nil, err
 	}
 
-	var kafkaTxTopic string
+	// 3) Tx fanout (네가 만든 배치 컨슈머로 구성)
+	//    토픽/그룹/브로커는 실제 값으로 대체
+	defBatchSize := 1000
+	defTimeout := 300 // ms
+	var cfg func(string) kb.KafkaBatchConfig
 	if isTest.IsTest() {
-		kafkaTxTopic = kafka.TestingTxTopic
+		cfg = func(groupSuffix string) kb.KafkaBatchConfig {
+			return kb.KafkaBatchConfig{
+				Brokers:      kb.GetGlobalBrokers(),
+				Topic:        kb.TestingTxTopic,
+				GroupID:      fmt.Sprintf("testval.%s", groupSuffix),
+				BatchSize:    defBatchSize,
+				BatchTimeout: time.Duration(defTimeout) * time.Millisecond,
+			}
+		}
 	} else {
-		kafkaTxTopic = kafka.ProductionTxTopic
-	}
-	// 3) Kafka 배치 컨슈머 구성 (브로커는 글로벌에서 가져오되 없으면 그대로)
-	brokers := kb.GetGlobalBrokers()
-	cfg := func(groupSuffix string) kb.KafkaBatchConfig {
-		return kb.KafkaBatchConfig{
-			Brokers:      brokers,
-			Topic:        kafkaTxTopic,
-			GroupID:      fmt.Sprintf("%s.%s", defaultGroup, groupSuffix),
-			BatchSize:    def.batchSize,
-			BatchTimeout: def.batchTimeout,
+		//TODO 실제 프로덕션 시엔 더 정교하게
+		cfg = func(groupSuffix string) kb.KafkaBatchConfig {
+			return kb.KafkaBatchConfig{
+				Brokers:      kb.GetGlobalBrokers(),
+				Topic:        kb.ProductionTxTopic,
+				GroupID:      fmt.Sprintf("production.%s", groupSuffix),
+				BatchSize:    defBatchSize,
+				BatchTimeout: time.Duration(defTimeout) * time.Millisecond,
+			}
 		}
 	}
 
@@ -119,14 +121,8 @@ func CreateAnalyzerPoolFrame[CCEvt, EEEvt, CCEEvt, EECEvt, TX any](isTest mode.P
 
 	return &AnalyzerPool[CCEvt, EEEvt, CCEEvt, EECEvt, TX]{
 		isTest: isTest,
-		busCC:  bCC,
-		busEE:  bEE,
-		busCCE: bCCE,
-		busEEC: bEEC,
-		fanCC:  fCC,
-		fanEE:  fEE,
-		fanCCE: fCCE,
-		fanEEC: fEEC,
+		busCC:  bCC, busEE: bEE, busCCE: bCCE, busEEC: bEEC,
+		fanCC: fCC, fanEE: fEE, fanCCE: fCCE, fanEEC: fEEC,
 	}, nil
 }
 
@@ -147,7 +143,7 @@ func (p *AnalyzerPool[CCEvt, EEEvt, CCEEvt, EECEvt, TX]) GetViewEEC() iface.EecP
 
 // ---- Event Publish / Dequeue
 
-func (p *AnalyzerPool[CcEvt, EEEvt, CCEEvt, EECEvt, TX]) PublishToCC(v CcEvt) error {
+func (p *AnalyzerPool[CCEvt, EEEvt, CCEEvt, EECEvt, TX]) PublishToCC(v CCEvt) error {
 	return p.busCC.Publish(v)
 }
 func (p *AnalyzerPool[CCEvt, EeEvt, CCEEvt, EECEvt, TX]) PublishToEE(v EeEvt) error {
