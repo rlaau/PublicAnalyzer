@@ -20,7 +20,7 @@ import (
 )
 
 // ------------------------------------------------------------
-// 3) 키-스키마 & 상수
+// 1) 키-스키마 & 상수
 // ------------------------------------------------------------
 
 const (
@@ -51,6 +51,7 @@ type RopeDB interface {
 	ViewRopeByNode(a shareddomain.Address) (*domain.Rope, error) // 첫 번째 Rope 기준(필요 시 Trait 선택 버전 추가)
 	ViewRope(id domain.RopeID) (*domain.Rope, error)
 	ViewInSameRope(a1, a2 shareddomain.Address) (bool, error)
+	GetGraphStats() map[string]any
 
 	Close() error
 }
@@ -539,3 +540,38 @@ func dedupAppend(base, inc []shareddomain.Address) []shareddomain.Address {
 }
 
 func sizeOf(rm domain.RopeMark) int { return int(rm.Size) }
+
+// GetGraphStas returns basic graph statistics:
+// - nodes:  total number of vertices (keys with prefix "v:")
+// - ropes:  total number of rope marks (keys with prefix "r:")
+// - traits: total number of trait marks (keys with prefix "t:")
+func (b *BadgerRopeDB) GetGraphStats() map[string]any {
+	var nodes, ropes, traits uint64
+
+	_ = b.db.View(func(txn *badger.Txn) error {
+		// 공통 카운터 헬퍼
+		countPrefix := func(pfx []byte) uint64 {
+			var c uint64
+			itOpts := badger.DefaultIteratorOptions
+			itOpts.PrefetchValues = false // 키 개수만 필요
+			it := txn.NewIterator(itOpts)
+			defer it.Close()
+
+			for it.Seek(pfx); it.ValidForPrefix(pfx); it.Next() {
+				c++
+			}
+			return c
+		}
+
+		nodes = countPrefix([]byte(kV))  // "v:"
+		ropes = countPrefix([]byte(kR))  // "r:"
+		traits = countPrefix([]byte(kT)) // "t:"
+		return nil
+	})
+
+	return map[string]any{
+		"nodes":  nodes,
+		"ropes":  ropes,
+		"traits": traits,
+	}
+}
