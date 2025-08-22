@@ -1,12 +1,6 @@
 package domain
 
 import (
-
-	// ===== 너의 프로젝트 경로로 교체 =====
-	// 우리가 만든 메모리 이벤트버스
-	// FindTestingStorageRootPath / FindProductionStorageRootPath
-	// =====================================
-
 	chaintimer "github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
@@ -18,20 +12,21 @@ import (
 type TraitID uint64
 type RopeID uint64
 
-type TraitCode int
+type TraitCode uint16
+type RuleCode uint16
 
-const (
-	TraitDual TraitCode = iota
-	TraitCexAndDeposit
-)
+// * 실제 사용 시, RopeDB를 임포트하는 패키지는
+// * 자기만의 트레이트코드, 룰코드 선언 후 사용
+// const (
+// 	TraitDual TraitCode = iota
+// 	TraitCexAndDeposit
+// )
 
-type RuleCode int
-
-const (
-	RuleCustomer RuleCode = iota
-	RuleDeposit
-	RuleCEX
-)
+// const (
+// 	RuleCustomer RuleCode = iota
+// 	RuleDeposit
+// 	RuleCEX
+// )
 
 // Vertex: 요약 저장(빠른 R/W)
 type Vertex struct {

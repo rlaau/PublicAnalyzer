@@ -18,16 +18,23 @@ func addr(n int) shareddomain.Address {
 	binary.BigEndian.PutUint64(a[12:], uint64(n))
 	return a
 }
-func traitA() domain.TraitCode { return domain.TraitCode(100) }
-func traitB() domain.TraitCode { return domain.TraitCode(200) }
-func traitC() domain.TraitCode { return domain.TraitCode(300) }
+
+const (
+	TraitA domain.TraitCode = 100
+	TraitB domain.TraitCode = 200
+	TraitC domain.TraitCode = 300
+)
+const (
+	RuleCustomer domain.RuleCode = 1
+	RuleDeposit  domain.RuleCode = 2
+)
 
 func link(t *testing.T, db RopeDB, a1, a2 shareddomain.Address, trait domain.TraitCode) {
 	t.Helper()
 	ev := domain.TraitEvent{
 		Trait: trait,
-		RuleA: domain.RuleCustomer,
-		RuleB: domain.RuleDeposit,
+		RuleA: RuleCustomer,
+		RuleB: RuleDeposit,
 		Time:  chaintimer.ChainTime(time.Now()),
 		Score: 1,
 	}
@@ -100,37 +107,37 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 	impl := db.(*badgerRopeDB)
 
 	// 초기 그래프 구성
-	link(t, db, addr(1), addr(2), traitA())
-	link(t, db, addr(2), addr(3), traitA())
+	link(t, db, addr(1), addr(2), TraitA)
+	link(t, db, addr(2), addr(3), TraitA)
 
-	link(t, db, addr(3), addr(4), traitB())
+	link(t, db, addr(3), addr(4), TraitB)
 
-	link(t, db, addr(3), addr(5), traitC())
-	link(t, db, addr(5), addr(6), traitC())
+	link(t, db, addr(3), addr(5), TraitC)
+	link(t, db, addr(5), addr(6), TraitC)
 
-	link(t, db, addr(7), addr(8), traitA())
-	link(t, db, addr(8), addr(9), traitA())
+	link(t, db, addr(7), addr(8), TraitA)
+	link(t, db, addr(8), addr(9), TraitA)
 	// 10은 독립
 
 	// 초기 안정화(개별 대기)
-	waitRopeMembers(t, impl, addr(1), traitA(), 3, addr(1), addr(2), addr(3))
-	waitRopeMembers(t, impl, addr(3), traitB(), 2, addr(3), addr(4))
-	waitRopeMembers(t, impl, addr(3), traitC(), 3, addr(3), addr(5), addr(6))
-	waitRopeMembers(t, impl, addr(7), traitA(), 3, addr(7), addr(8), addr(9))
+	waitRopeMembers(t, impl, addr(1), TraitA, 3, addr(1), addr(2), addr(3))
+	waitRopeMembers(t, impl, addr(3), TraitB, 2, addr(3), addr(4))
+	waitRopeMembers(t, impl, addr(3), TraitC, 3, addr(3), addr(5), addr(6))
+	waitRopeMembers(t, impl, addr(7), TraitA, 3, addr(7), addr(8), addr(9))
 
 	// 액션1: 3-4를 traitC로 연결 → C 로프가 [3,4,5,6]
-	link(t, db, addr(3), addr(4), traitC())
-	waitRopeMembers(t, impl, addr(3), traitC(), 4, addr(3), addr(4), addr(5), addr(6))
+	link(t, db, addr(3), addr(4), TraitC)
+	waitRopeMembers(t, impl, addr(3), TraitC, 4, addr(3), addr(4), addr(5), addr(6))
 
 	// 4: 파트너링크 2개(3과 B,C), 로프 개수 2개(B,C)
 	{
 		links := linksOf(t, impl, addr(4))
 		hasB, hasC := false, false
 		for _, l := range links {
-			if l.Partner == addr(3) && l.Trait == traitB() {
+			if l.Partner == addr(3) && l.Trait == TraitB {
 				hasB = true
 			}
-			if l.Partner == addr(3) && l.Trait == traitC() {
+			if l.Partner == addr(3) && l.Trait == TraitC {
 				hasC = true
 			}
 		}
@@ -149,27 +156,27 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 	}
 
 	// 액션2: 10-4 traitB → B 로프가 [3,4,10]
-	link(t, db, addr(10), addr(4), traitB())
-	waitRopeMembers(t, impl, addr(4), traitB(), 3, addr(3), addr(4), addr(10))
+	link(t, db, addr(10), addr(4), TraitB)
+	waitRopeMembers(t, impl, addr(4), TraitB, 3, addr(3), addr(4), addr(10))
 
 	// 액션3: 10-6 traitA → 새 A 로프 [6,10]
-	link(t, db, addr(10), addr(6), traitA())
-	waitRopeMembers(t, impl, addr(10), traitA(), 2, addr(6), addr(10))
+	link(t, db, addr(10), addr(6), TraitA)
+	waitRopeMembers(t, impl, addr(10), TraitA, 2, addr(6), addr(10))
 
 	// 액션4: 10-2 traitA → (6,10) 가 (1,2,3) 로프와 병합 → [1,2,3,6,10]
-	link(t, db, addr(10), addr(2), traitA())
-	waitRopeMembers(t, impl, addr(2), traitA(), 5, addr(1), addr(2), addr(3), addr(6), addr(10))
+	link(t, db, addr(10), addr(2), TraitA)
+	waitRopeMembers(t, impl, addr(2), TraitA, 5, addr(1), addr(2), addr(3), addr(6), addr(10))
 
 	// 액션5: 3-7 traitA → 위 로프와 (7,8,9) 로프 병합 → [1,2,3,6,7,8,9,10]
-	link(t, db, addr(3), addr(7), traitA())
-	waitRopeMembers(t, impl, addr(3), traitA(), 8, addr(1), addr(2), addr(3), addr(6), addr(7), addr(8), addr(9), addr(10))
+	link(t, db, addr(3), addr(7), TraitA)
+	waitRopeMembers(t, impl, addr(3), TraitA, 8, addr(1), addr(2), addr(3), addr(6), addr(7), addr(8), addr(9), addr(10))
 
 	// 3-7 사이 traitA 링크 존재
 	{
 		links3 := linksOf(t, impl, addr(3))
 		ok := false
 		for _, l := range links3 {
-			if l.Partner == addr(7) && l.Trait == traitA() {
+			if l.Partner == addr(7) && l.Trait == TraitA {
 				ok = true
 				break
 			}
