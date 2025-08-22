@@ -47,7 +47,7 @@ func main() {
 	}
 	//테스트 시간 설정
 	startTime, _ := time.Parse("2006-01-02", "2025-01-01")
-	testDuration := 300 * time.Second
+	testDuration := 60 * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), testDuration)
 
 	//txFeeder만들기

@@ -83,19 +83,60 @@ type Rope struct {
 
 // 한 Tx/이벤트로 들어오는 도메인 입력(버텍스 간 Trait 관계 이벤트)
 type TraitEvent struct {
-	Trait TraitCode
-	RuleA RuleCode
-	RuleB RuleCode
-	TxID  shareddomain.TxId
+	Trait    TraitCode
+	AddressA shareddomain.Address
+	RuleA    RuleCode
+	AddressB shareddomain.Address
+	RuleB    RuleCode
+	TxID     shareddomain.TxId
+	Time     chaintimer.ChainTime
+	Score    int32 // 이번 이벤트가 의미하는 점수 증분
+}
+
+func NewTraitEvent(trait TraitCode, ar1, ar2 AddressAndRule, txScala TxScala) TraitEvent {
+	if ar2.Address.IsSmallerThan(ar1.Address) {
+		return TraitEvent{
+			Trait:    trait,
+			AddressA: ar2.Address,
+			RuleA:    ar2.Rule,
+			AddressB: ar1.Address,
+			RuleB:    ar1.Rule,
+			TxID:     txScala.TxId,
+			Time:     txScala.Time,
+			Score:    txScala.Score,
+		}
+	}
+	return TraitEvent{
+		Trait:    trait,
+		AddressA: ar1.Address,
+		RuleA:    ar1.Rule,
+		AddressB: ar2.Address,
+		RuleB:    ar2.Rule,
+		TxID:     txScala.TxId,
+		Time:     txScala.Time,
+		Score:    txScala.Score,
+	}
+
+}
+
+type AddressAndRule struct {
+	Address shareddomain.Address
+	Rule    RuleCode
+}
+
+type TxScala struct {
+	TxId  shareddomain.TxId
 	Time  chaintimer.ChainTime
-	Score int32 // 이번 이벤트가 의미하는 점수 증분
+	Score int32
 }
 
 // 내부 비동기 큐용: TraitMark Upsert
 type TraitMarkUpsert struct {
 	TraitID     TraitID
 	Trait       TraitCode
+	AddressA    shareddomain.Address
 	RuleA       RuleCode
+	AddressB    shareddomain.Address
 	RuleB       RuleCode
 	ScoreDelta  int32
 	VolumeDelta uint32

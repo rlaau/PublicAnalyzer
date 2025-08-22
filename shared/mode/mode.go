@@ -14,5 +14,5 @@ func (m ProcessingMode) IsTest() bool {
 	if m == ProductionModeProcess {
 		return false
 	}
-	panic("입략값 에러")
+	panic("mode: ProcessingMode.IsTest() -> 입략값 에러")
 }

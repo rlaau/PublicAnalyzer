@@ -18,6 +18,18 @@ func IsNullAddress(a Address) bool {
 	return bytes.Equal(a[:], zeroAddress[:])
 }
 
+// OrderAddresses는 두 Address를 사전순으로 비교해 앞에 오는 것과 뒤에 오는 것을 리턴합니다.
+func OrderAddresses(a1, a2 Address) (Address, Address) {
+	if bytes.Compare(a1[:], a2[:]) <= 0 {
+		return a1, a2
+	}
+	return a2, a1
+}
+
+func (a Address) IsSmallerThan(a2 Address) bool {
+	return (bytes.Compare(a[:], a2[:]) <= 0)
+}
+
 // ParseAddressFromString converts hex string to Address
 func ParseAddressFromString(hexStr string) (Address, error) {
 	var addr Address

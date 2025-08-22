@@ -31,14 +31,18 @@ const (
 
 func link(t *testing.T, db RopeDB, a1, a2 shareddomain.Address, trait domain.TraitCode) {
 	t.Helper()
-	ev := domain.TraitEvent{
-		Trait: trait,
-		RuleA: RuleCustomer,
-		RuleB: RuleDeposit,
-		Time:  chaintimer.ChainTime(time.Now()),
-		Score: 1,
-	}
-	if err := db.PushTraitEvent(a1, a2, ev); err != nil {
+	ev := domain.NewTraitEvent(trait, domain.AddressAndRule{
+		Address: a1,
+		Rule:    RuleCustomer,
+	}, domain.AddressAndRule{
+		Address: a2,
+		Rule:    RuleDeposit,
+	},
+		domain.TxScala{
+			Time:  chaintimer.ChainTime(time.Now()),
+			Score: 1,
+		})
+	if err := db.PushTraitEvent(ev); err != nil {
 		t.Fatalf("PushTraitEvent(%v,%v,trait=%v): %v", a1, a2, trait, err)
 	}
 }
@@ -57,7 +61,7 @@ func containsAll(hay []shareddomain.Address, needles ...shareddomain.Address) bo
 }
 
 // impl의 내부 상태를 이용해 (a, trait) 가 속한 RopeMark 멤버를 기다린다.
-func waitRopeMembers(t *testing.T, impl *badgerRopeDB, a shareddomain.Address, trait domain.TraitCode,
+func waitRopeMembers(t *testing.T, impl *BadgerRopeDB, a shareddomain.Address, trait domain.TraitCode,
 	expectCount int, expectMembers ...shareddomain.Address,
 ) {
 	t.Helper()
@@ -84,12 +88,12 @@ func waitRopeMembers(t *testing.T, impl *badgerRopeDB, a shareddomain.Address, t
 	}
 }
 
-func ropeCountOf(t *testing.T, impl *badgerRopeDB, a shareddomain.Address) int {
+func ropeCountOf(t *testing.T, impl *BadgerRopeDB, a shareddomain.Address) int {
 	t.Helper()
 	return len(impl.getOrCreateVertex(a).Ropes)
 }
 
-func linksOf(t *testing.T, impl *badgerRopeDB, a shareddomain.Address) []domain.PartnerLink {
+func linksOf(t *testing.T, impl *BadgerRopeDB, a shareddomain.Address) []domain.PartnerLink {
 	t.Helper()
 	return impl.getOrCreateVertex(a).Links
 }
@@ -104,7 +108,7 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 	}
 	defer db.Close()
 
-	impl := db.(*badgerRopeDB)
+	impl := db.(*BadgerRopeDB)
 
 	// 초기 그래프 구성
 	link(t, db, addr(1), addr(2), TraitA)

@@ -45,7 +45,7 @@ func NewRopeDB(isTest mode.ProcessingMode, dbName string) (RopeDB, error) {
 
 type RopeDB interface {
 	// 이벤트 입력(내부적으로 Vertex 동기 갱신 + Rope/Trait Upsert 큐잉)
-	PushTraitEvent(a1, a2 shareddomain.Address, ev domain.TraitEvent) error
+	PushTraitEvent(ev domain.TraitEvent) error
 
 	// 조회
 	ViewRopeByNode(a shareddomain.Address) (*domain.Rope, error) // 첫 번째 Rope 기준(필요 시 Trait 선택 버전 추가)
@@ -59,7 +59,7 @@ type RopeDB interface {
 // 5) 구현체
 // ------------------------------------------------------------
 // * BadgerDB자체가 SWMR모델이라서, 내 설계에 부합함. 쓰기는 비동기로 미루면서, 읽기 핫패스는 부담 줄이기 가능
-type badgerRopeDB struct {
+type BadgerRopeDB struct {
 	db     *badger.DB
 	isTest bool
 	ctx    context.Context
@@ -97,7 +97,7 @@ func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string) (
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	b := &badgerRopeDB{
+	b := &BadgerRopeDB{
 		db: db, isTest: isTest.IsTest(),
 		ctx: ctx, cancel: cancel,
 		busRope: busR, busTrait: busT,
@@ -110,7 +110,7 @@ func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string) (
 	return b, nil
 }
 
-func (b *badgerRopeDB) Close() error {
+func (b *BadgerRopeDB) Close() error {
 	b.cancel()
 	// 이벤트버스: pending 저장 & 채널 close
 	b.busTrait.Close()
@@ -123,9 +123,16 @@ func (b *badgerRopeDB) Close() error {
 // 6) 퍼블릭 API (Push*, View*)
 // ------------------------------------------------------------
 
-func (b *badgerRopeDB) PushTraitEvent(a1, a2 shareddomain.Address, ev domain.TraitEvent) error {
+func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
+	a1 := ev.AddressA
+	a2 := ev.AddressB
 	if shareddomain.IsNullAddress(a1) || shareddomain.IsNullAddress(a2) {
 		return errors.New("address empty")
+	}
+	if a2.IsSmallerThan(a1) {
+		a1, a2 = a2, a1
+		ev.AddressA, ev.AddressB = ev.AddressB, ev.AddressA
+		ev.RuleA, ev.RuleB = ev.RuleB, ev.RuleA
 	}
 	// --- 1) Vertex 동기 로드/생성
 	v1 := b.getOrCreateVertex(a1)
@@ -246,7 +253,7 @@ func setRopeForTrait(v *domain.Vertex, id domain.RopeID, t domain.TraitCode) {
 	v.Ropes = append(v.Ropes, domain.RopeRef{ID: id, Trait: t})
 }
 
-func (b *badgerRopeDB) ViewRopeByNode(a shareddomain.Address) (*domain.Rope, error) {
+func (b *BadgerRopeDB) ViewRopeByNode(a shareddomain.Address) (*domain.Rope, error) {
 	v := b.getOrCreateVertex(a)
 	if len(v.Ropes) == 0 {
 		return nil, nil
@@ -255,7 +262,7 @@ func (b *badgerRopeDB) ViewRopeByNode(a shareddomain.Address) (*domain.Rope, err
 	return b.ViewRope(ref.ID)
 }
 
-func (b *badgerRopeDB) ViewRope(id domain.RopeID) (*domain.Rope, error) {
+func (b *BadgerRopeDB) ViewRope(id domain.RopeID) (*domain.Rope, error) {
 	rm := b.getRopeMark(id)
 	if rm.ID == 0 {
 		return nil, nil
@@ -267,7 +274,7 @@ func (b *badgerRopeDB) ViewRope(id domain.RopeID) (*domain.Rope, error) {
 	return &domain.Rope{ID: rm.ID, Trait: rm.Trait, Nodes: nodes}, nil
 }
 
-func (b *badgerRopeDB) ViewInSameRope(a1, a2 shareddomain.Address) (bool, error) {
+func (b *BadgerRopeDB) ViewInSameRope(a1, a2 shareddomain.Address) (bool, error) {
 	v1 := b.getOrCreateVertex(a1)
 	v2 := b.getOrCreateVertex(a2)
 	return inSameRope(v1, v2), nil
@@ -277,7 +284,7 @@ func (b *badgerRopeDB) ViewInSameRope(a1, a2 shareddomain.Address) (bool, error)
 // 7) 워커(비동기 Upsert 적용)
 // ------------------------------------------------------------
 
-func (b *badgerRopeDB) traitWorker() {
+func (b *BadgerRopeDB) traitWorker() {
 	defer b.wg.Done()
 	for {
 		select {
@@ -292,7 +299,7 @@ func (b *badgerRopeDB) traitWorker() {
 	}
 }
 
-func (b *badgerRopeDB) ropeWorker() {
+func (b *BadgerRopeDB) ropeWorker() {
 	defer b.wg.Done()
 	for {
 		select {
@@ -307,7 +314,7 @@ func (b *badgerRopeDB) ropeWorker() {
 	}
 }
 
-func (b *badgerRopeDB) applyTraitUpsert(op domain.TraitMarkUpsert) {
+func (b *BadgerRopeDB) applyTraitUpsert(op domain.TraitMarkUpsert) {
 	key := []byte(fmt.Sprintf("%s%d", kT, uint64(op.TraitID)))
 	_ = b.db.Update(func(txn *badger.Txn) error {
 		var tm domain.TraitMark
@@ -336,7 +343,7 @@ func (b *badgerRopeDB) applyTraitUpsert(op domain.TraitMarkUpsert) {
 	})
 }
 
-func (b *badgerRopeDB) applyRopeUpsert(op domain.RopeMarkUpsert) {
+func (b *BadgerRopeDB) applyRopeUpsert(op domain.RopeMarkUpsert) {
 	key := []byte(fmt.Sprintf("%s%d", kR, uint64(op.RopeID)))
 	_ = b.db.Update(func(txn *badger.Txn) error {
 		var rm domain.RopeMark
@@ -389,7 +396,7 @@ func (b *badgerRopeDB) applyRopeUpsert(op domain.RopeMarkUpsert) {
 // 8) VertexDB 동기 I/O & 유틸
 // ------------------------------------------------------------
 
-func (b *badgerRopeDB) getOrCreateVertex(a shareddomain.Address) *domain.Vertex {
+func (b *BadgerRopeDB) getOrCreateVertex(a shareddomain.Address) *domain.Vertex {
 	key := []byte(kV + a.String())
 	var v domain.Vertex
 	err := b.db.View(func(txn *badger.Txn) error {
@@ -405,7 +412,7 @@ func (b *badgerRopeDB) getOrCreateVertex(a shareddomain.Address) *domain.Vertex 
 	return &domain.Vertex{Address: a, Ropes: nil, Links: nil}
 }
 
-func (b *badgerRopeDB) putVertex(v *domain.Vertex) {
+func (b *BadgerRopeDB) putVertex(v *domain.Vertex) {
 	key := []byte(kV + v.Address.String())
 	_ = b.db.Update(func(txn *badger.Txn) error {
 		data, _ := json.Marshal(v)
@@ -415,7 +422,7 @@ func (b *badgerRopeDB) putVertex(v *domain.Vertex) {
 
 // ropeIDByTrait는 ropeID와 함께 존재 여부 반환함
 // (로프ID, isExist반환)
-func (b *badgerRopeDB) ropeIDByTrait(v *domain.Vertex, t domain.TraitCode) (domain.RopeID, bool) {
+func (b *BadgerRopeDB) ropeIDByTrait(v *domain.Vertex, t domain.TraitCode) (domain.RopeID, bool) {
 	for _, r := range v.Ropes {
 		if r.Trait == t {
 			return r.ID, true
@@ -437,7 +444,7 @@ func inSameRope(v1, v2 *domain.Vertex) bool {
 	return false
 }
 
-func (b *badgerRopeDB) getRopeMark(id domain.RopeID) domain.RopeMark {
+func (b *BadgerRopeDB) getRopeMark(id domain.RopeID) domain.RopeMark {
 	key := []byte(fmt.Sprintf("%s%d", kR, uint64(id)))
 	var rm domain.RopeMark
 	_ = b.db.View(func(txn *badger.Txn) error {
@@ -450,13 +457,13 @@ func (b *badgerRopeDB) getRopeMark(id domain.RopeID) domain.RopeMark {
 	return rm
 }
 
-func (b *badgerRopeDB) nextTraitID() domain.TraitID {
+func (b *BadgerRopeDB) nextTraitID() domain.TraitID {
 	return domain.TraitID(b.incr(kCTrait))
 }
-func (b *badgerRopeDB) nextRopeID() domain.RopeID {
+func (b *BadgerRopeDB) nextRopeID() domain.RopeID {
 	return domain.RopeID(b.incr(kCRope))
 }
-func (b *badgerRopeDB) incr(key string) uint64 {
+func (b *BadgerRopeDB) incr(key string) uint64 {
 	var next uint64
 	_ = b.db.Update(func(txn *badger.Txn) error {
 		itm, err := txn.Get([]byte(key))
@@ -475,7 +482,7 @@ func (b *badgerRopeDB) incr(key string) uint64 {
 }
 
 // v1<->v2, Trait 기준으로 링크 업서트하여 공통 TraitID 보장
-func (b *badgerRopeDB) ensureLink(v1, v2 *domain.Vertex, t domain.TraitCode) (domain.TraitID, bool) {
+func (b *BadgerRopeDB) ensureLink(v1, v2 *domain.Vertex, t domain.TraitCode) (domain.TraitID, bool) {
 	find := func(v *domain.Vertex, p shareddomain.Address, t domain.TraitCode) (int, bool) {
 		for i, l := range v.Links {
 			if l.Partner == p && l.Trait == t {

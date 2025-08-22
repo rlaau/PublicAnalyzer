@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="20" y="30" font-size="18" font-family="monospace">Component 1  |  size=2  |  edges=1</text>
+<g stroke="#999" stroke-width="1" opacity="0.9">
+<line x1="126.0" y1="450.0" x2="774.0" y2="450.0"/>
+</g>
+<g>
+<circle cx="774.0" cy="450.0" r="8" fill="#1f77b4"/>
+<text x="774.0" y="450.0" font-size="10" font-family="monospace" text-anchor="middle" dy="-12">0x7d22…d1f8</text>
+<circle cx="126.0" cy="450.0" r="8" fill="#1f77b4"/>
+<text x="126.0" y="450.0" font-size="10" font-family="monospace" text-anchor="middle" dy="-12">0x327c…f061</text>
+</g>
+</svg>
