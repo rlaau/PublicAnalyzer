@@ -3,11 +3,12 @@ package app
 import (
 	"fmt"
 	"sync"
+	"time"
 
-	localdomain "github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
+	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/fp"
 )
@@ -195,27 +196,31 @@ func (dm *DualManager) saveToGraphDB(fromAddr, toAddr domain.Address, tx *domain
 
 // saveConnectionToGraphDB saves a connection between two EOAs to the graph database
 func (dm *DualManager) saveConnectionToGraphDB(fromAddr, toAddr domain.Address, txID domain.TxId) error {
-	// Create or update nodes
-	nodeFrom := localdomain.NewEOANode(fromAddr)
-	nodeTo := localdomain.NewEOANode(toAddr)
-
-	if err := dm.infra.GraphRepo.SaveNode(nodeFrom); err != nil {
-		return err
+	trait := infra.TraitDepositAndUser
+	addressAndRule1 := ropedomain.AddressAndRule{
+		Address: fromAddr,
+		Rule:    infra.RuleUser,
 	}
-	if err := dm.infra.GraphRepo.SaveNode(nodeTo); err != nil {
-		return err
+	addressAndRule2 := ropedomain.AddressAndRule{
+		Address: toAddr,
+		Rule:    infra.RuleDeposit,
 	}
-
-	// Create or update edge
-	_, err := dm.infra.GraphRepo.GetEdge(fromAddr, toAddr)
-	if err != nil {
-		// Create new edge
-		edge := localdomain.NewEOAEdge(fromAddr, toAddr, toAddr, txID, localdomain.SameDepositUsage) // toAddr is depositAddr
-		return dm.infra.GraphRepo.SaveEdge(edge)
+	txScala := ropedomain.TxScala{
+		TxId: txID,
+		//TODO 추후 로직 개선할 것. 시간 받도록
+		Time: chaintimer.ChainTime(time.Now()),
+		//1만큼 증가
+		Score: 1,
 	}
 
-	// Update existing edge with new evidence
-	return dm.infra.GraphRepo.UpdateEdgeEvidence(fromAddr, toAddr, txID, localdomain.SameDepositUsage)
+	traitEvent := ropedomain.NewTraitEvent(
+		trait,
+		addressAndRule1,
+		addressAndRule2,
+		txScala,
+	)
+	return dm.infra.GraphRepo.PushTraitEvent(traitEvent)
+
 }
 
 // AddToWindowBuffer adds transaction to the sliding window buffer

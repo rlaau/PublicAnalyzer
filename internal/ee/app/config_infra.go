@@ -11,6 +11,7 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/workerpool"
 )
 
@@ -32,7 +33,14 @@ func NewInfraByConfig(config *EOAAnalyzerConfig, ctx context.Context) infra.Tota
 		panic("그라운드 놀리지를 파일->(메모리,파일)로 로드하지 못함")
 	}
 	log.Printf("🧠 Ground knowledge loaded")
-	graphRepo, err := infra.NewBadgerGraphRepository(config.GraphDBPath)
+	isTest := config.Mode.IsTest()
+	var pMode mode.ProcessingMode
+	if isTest {
+		pMode = mode.TestingModeProcess
+	} else {
+		pMode = mode.ProductionModeProcess
+	}
+	graphRepo, err := infra.NewBagerEeGraphDB(pMode)
 	if err != nil {
 		panic("그래프DB로드 실패")
 	}

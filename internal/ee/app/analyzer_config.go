@@ -12,6 +12,16 @@ const (
 	TestingMode    AnalyzerMode = "testing"    // 테스트 모드 - 임시 저장, 자동 정리
 )
 
+func (a AnalyzerMode) IsTest() bool {
+	if a == TestingMode {
+		return true
+	}
+	if a == ProductionMode {
+		return false
+	}
+	panic("입력값 오류")
+}
+
 // EOAAnalyzerConfig 분석기 설정
 type EOAAnalyzerConfig struct {
 	// 기본 설정

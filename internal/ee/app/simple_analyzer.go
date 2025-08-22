@@ -361,10 +361,11 @@ func (a *SimpleEOAAnalyzer) printStatistics() {
 	}
 
 	// Graph 통계
-	if graphStats, err := a.infra.GraphRepo.GetGraphStats(); err == nil {
-		log.Printf("   Graph: %v nodes | %v edges",
-			graphStats["total_nodes"], graphStats["total_edges"])
-	}
+	//TODO 여기서 통계 내기
+	// if graphStats, err := a.infra.GraphRepo.GetGraphStats(); err == nil {
+	// 	log.Printf("   Graph: %v nodes | %v edges",
+	// 		graphStats["total_nodes"], graphStats["total_edges"])
+	// }
 }
 
 // GetStatistics 통계 반환
@@ -494,12 +495,13 @@ func (a *SimpleEOAAnalyzer) printFinalReport() {
 	}
 
 	// Graph 최종 통계
-	if graphStats, err := a.infra.GraphRepo.GetGraphStats(); err == nil {
-		log.Printf("\n🗂️  Graph Database State:")
-		for key, value := range graphStats {
-			log.Printf("   %s: %v", key, value)
-		}
-	}
+	//TODO 여기서 최종 통계 내기
+	// if graphStats, err := a.infra.GraphRepo.GetGraphStats(); err == nil {
+	// 	log.Printf("\n🗂️  Graph Database State:")
+	// 	for key, value := range graphStats {
+	// 		log.Printf("   %s: %v", key, value)
+	// 	}
+	// }
 
 	log.Printf(strings.Repeat("=", 80) + "\n")
 }

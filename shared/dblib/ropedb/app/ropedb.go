@@ -109,6 +109,9 @@ func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string) (
 	go b.ropeWorker()
 	return b, nil
 }
+func (b *BadgerRopeDB) RawBadgerDB() *badger.DB {
+	return b.db
+}
 
 func (b *BadgerRopeDB) Close() error {
 	b.cancel()
