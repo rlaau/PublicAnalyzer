@@ -9,6 +9,7 @@ import (
 )
 
 // TODO: 추후 에 도메인 놀리지는 그라운드 놀리지에 편입 후 제거!
+// TODO 그리고 애초에 여기 모든 필드는 pool통한 통신으로 대체 가능. 그걸로 나중에 바꾸기!!
 // DomainKnowledge contains all known facts about addresses
 type DomainKnowledge struct {
 	cexSet             *domain.CEXSet

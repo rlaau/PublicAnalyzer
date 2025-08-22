@@ -39,7 +39,7 @@ import (
 	"time"
 
 	badger "github.com/dgraph-io/badger/v4"
-	mmdb "github.com/rlaaudgjs5638/chainAnalyzer/shared/mmdb" // <-- adjust if needed
+	mmdb "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/mmdb"
 )
 
 type durations struct {

@@ -3,7 +3,6 @@ package app
 import (
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
 
@@ -35,7 +34,7 @@ type DualManager struct {
 	bucketsMutex sync.RWMutex // TimeBucket 관련 작업 전용 (BadgerDB는 자체 동시성 보장)
 }
 
-// TimeBucket represents a time bucket in the sliding window
+// TimeBucket represents a time bucket in `the sliding window
 type TimeBucket struct {
 	StartTime chaintimer.ChainTime
 	EndTime   chaintimer.ChainTime
@@ -116,7 +115,7 @@ func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.Mark
 		if debugEnabled {
 			fmt.Printf("   → Case 2: Deposit Detection (Address → CEX)\n")
 		}
-		err := dm.handleDepositDetection(toAddr, fromAddr, tx)
+		err := dm.handleDepositDetection(toAddr, fromAddr, tx, tx.BlockTime)
 		return nil, fp.HandleErrOrNilToSkipStep(err)
 	}
 
@@ -134,7 +133,12 @@ func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.Mark
 		if debugEnabled {
 			fmt.Printf("   → Case 4: Address → Detected Deposit (saveToGraphDB)\n")
 		}
-		err := dm.saveToGraphDB(fromAddr, toAddr, tx)
+		fromScala := infra.FromScala{
+			FromAddress: fromAddr,
+			LastTxId:    tx.TxID,
+			LastTime:    tx.BlockTime,
+		}
+		err := dm.saveDualToGraphDB(fromScala, toAddr)
 		return nil, fp.HandleErrOrNilToSkipStep(err)
 	}
 
@@ -152,7 +156,7 @@ func (dm *DualManager) handleExceptionalAddress(_ domain.Address, _ string) erro
 }
 
 // handleDepositDetection handles detection of new deposit addresses
-func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Address, tx *domain.MarkedTransaction) error {
+func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Address, tx *domain.MarkedTransaction, time chaintimer.ChainTime) error {
 	//fmt.Printf("💰 handleDepositDetection: %s → CEX %s\n", depositAddr.String()[:10]+"...", cexAddr.String()[:10]+"...")
 
 	// 1. 새로운 입금주소를 detectedDepositAddress에 추가
@@ -161,44 +165,67 @@ func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Addres
 		return err
 	}
 	fmt.Printf("   ✅ DetectNewDepositAddress succeeded\n")
-
-	// 2. DualManager의 pendingRelationsDB에서 depositAddr을 to로 하는 []from 값들 조회
-	// TODO pendingRelations에서 관리하는 타입을 to-> []fromInfo로 변경 요구
-	// TODO fromInfo는 [txTD,address]로 저장하기
-	fromAddresses, err := dm.infra.PendingRelationRepo.GetPendingRelations(depositAddr)
-	if err == nil && len(fromAddresses) > 0 {
+	// CEX와 Deposit의 연결을 그래프DB에 추가
+	if err := dm.saveCexAndDepositToGraphDB(cexAddr, depositAddr, tx.TxID, time); err != nil {
+		fmt.Printf("Cex, Deposit연결을 그래프DB저장하려던 중 에러남")
+	}
+	// 3. DualManager의 pendingRelationsDB에서 depositAddr을 to로 하는 []fromScala 값들 조회
+	fromScalas, err := dm.infra.PendingRelationRepo.GetPendingRelations(depositAddr)
+	if err == nil && len(fromScalas) > 0 {
 		// 3. [](to,from) 쌍들을 그래프DB에 저장
-		for _, fromAddr := range fromAddresses {
-
-			//TODO 이 구문 수정 필요. 여기의 txID는 cex,deposit의 관계지, deposit->eoa의 txId가 아님
-			//TODO그러니까, 여기서 "가장 중요한 값인" "depsot,eoa"의 관계 자체는 잘 저장이 됨. 근데 얘내를 증명하느 "TxID"가 deposit-cex의 것임.
-			//TODO 그러니까, "애초부타 pendingDB가 txID를 함꼐 저장하게 해서" fromInfo 방식 타입으로 불러온 후 제대로된 txID저장 필요
-			//TODO 추후 pendingRelationsDB에서 fromInfo를 [txTD, address]로 저장하게 한 후, 그거스이 txID쓰기
-			if err := dm.saveConnectionToGraphDB(fromAddr, depositAddr, tx.TxID); err != nil {
+		for _, fromScala := range fromScalas {
+			if err := dm.saveDualRelationToGraphDB(fromScala, depositAddr); err != nil {
 				return err
 			}
 		}
 
 		// 처리된 관계 제거
-		//TODO pendingRelations와 windowBucket은 항상 "holding한 toUser가 동일"해야 하므로, 펜딩에서 제거 시 윈도우에서도 제거 필요
 		if err := dm.infra.PendingRelationRepo.DeletePendingRelations(depositAddr); err != nil {
 			return err
+		}
+		if isRemoved := dm.DeleteUserFromTimeBucket(depositAddr); !isRemoved {
+			fmt.Printf("dm.handleDepositDetection: 팬딩 릴레이션에선 depositAddr제거했는데, 타임버킷에선 depositAddr을 찾지 못해서 제거하지 못함")
+			return nil
 		}
 	}
 
 	return nil
 }
 
-// saveToGraphDB saves from-to dual relationship to graph database
-func (dm *DualManager) saveToGraphDB(fromAddr, toAddr domain.Address, tx *domain.MarkedTransaction) error {
-	return dm.saveConnectionToGraphDB(fromAddr, toAddr, tx.TxID)
+// saveDualToGraphDB saves from-to dual relationship to graph database
+func (dm *DualManager) saveDualToGraphDB(fromScala infra.FromScala, toAddr domain.Address) error {
+	return dm.saveDualRelationToGraphDB(fromScala, toAddr)
 }
 
-// saveConnectionToGraphDB saves a connection between two EOAs to the graph database
-func (dm *DualManager) saveConnectionToGraphDB(fromAddr, toAddr domain.Address, txID domain.TxId) error {
+func (dm *DualManager) saveCexAndDepositToGraphDB(cex, deposit domain.Address, txId domain.TxId, lastTime chaintimer.ChainTime) error {
+	trait := infra.TraitCexAndDeposit
+	addrAndRule1 := ropedomain.AddressAndRule{
+		Address: cex,
+		Rule:    infra.RuleCex,
+	}
+	addrAndRule2 := ropedomain.AddressAndRule{
+		Address: deposit,
+		Rule:    infra.RuleDeposit,
+	}
+	txScala := ropedomain.TxScala{
+		TxId:     txId,
+		Time:     lastTime,
+		ScoreInc: 1,
+	}
+	traitEvent := ropedomain.NewTraitEvent(
+		trait,
+		addrAndRule1,
+		addrAndRule2,
+		txScala,
+	)
+	return dm.infra.GraphRepo.PushTraitEvent(traitEvent)
+}
+
+// saveDualRelationToGraphDB saves a connection between two EOAs to the graph database
+func (dm *DualManager) saveDualRelationToGraphDB(fromScala infra.FromScala, toAddr domain.Address) error {
 	trait := infra.TraitDepositAndUser
 	addressAndRule1 := ropedomain.AddressAndRule{
-		Address: fromAddr,
+		Address: fromScala.FromAddress,
 		Rule:    infra.RuleUser,
 	}
 	addressAndRule2 := ropedomain.AddressAndRule{
@@ -206,11 +233,10 @@ func (dm *DualManager) saveConnectionToGraphDB(fromAddr, toAddr domain.Address, 
 		Rule:    infra.RuleDeposit,
 	}
 	txScala := ropedomain.TxScala{
-		TxId: txID,
-		//TODO 추후 로직 개선할 것. 시간 받도록
-		Time: chaintimer.ChainTime(time.Now()),
+		TxId: fromScala.LastTxId,
+		Time: fromScala.LastTime,
 		//1만큼 증가
-		Score: 1,
+		ScoreInc: fromScala.Volume,
 	}
 
 	traitEvent := ropedomain.NewTraitEvent(
@@ -241,8 +267,14 @@ func (dm *DualManager) AddToWindowBuffer(tx *domain.MarkedTransaction) (*domain.
 		return nil, err
 	}
 
+	fromScala := infra.FromScala{
+		FromAddress: fromAddr,
+		LastTxId:    tx.TxID,
+		LastTime:    tx.BlockTime,
+	}
+
 	// 2. Add to pending relations in BadgerDB
-	if err := dm.infra.PendingRelationRepo.AddToPendingRelations(toAddr, fromAddr); err != nil {
+	if err := dm.infra.PendingRelationRepo.AddToPendingRelations(toAddr, fromScala); err != nil {
 		return nil, err
 	}
 
@@ -421,6 +453,35 @@ func (dm *DualManager) isToUserInWindow(toAddr domain.Address) bool {
 				}
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// DeleteUserFromTimeBucket removes the given to user from the sliding window buckets.
+// It scans from the latest bucket (rearIndex) backward and deletes on first match.
+// Returns true if the user was found and removed; otherwise returns false.
+func (dm *DualManager) DeleteUserFromTimeBucket(toAddr domain.Address) bool {
+	// 버킷 구조 수정이므로 write lock
+	dm.bucketsMutex.Lock()
+	defer dm.bucketsMutex.Unlock()
+
+	if dm.bucketCount == 0 {
+		return false
+	}
+
+	// 최신(rearIndex)부터 역순으로 검색
+	for i := 0; i < dm.bucketCount; i++ {
+		idx := (dm.rearIndex - i + MaxTimeBuckets) % MaxTimeBuckets
+		b := dm.firstActiveTimeBuckets[idx]
+		if b == nil {
+			continue
+		}
+		if _, ok := b.ToUsers[toAddr]; ok {
+			delete(b.ToUsers, toAddr)
+			// (선택) 디버깅 로그: 초기 구동 단계에서만 보고 싶으면 조건부로 활성화
+			// fmt.Printf("🗑️  DeleteUserFromTimeBucket: removed %s from bucket[%d]\n", toAddr.String()[:10]+"...", idx)
+			return true
 		}
 	}
 	return false

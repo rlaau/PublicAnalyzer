@@ -8,7 +8,7 @@
 		DepositToCexRatio:            50,              // 1/50 비율로 CEX 주소 사용
 		RandomToDepositRatio:         30,              // 1/15 비율로 Deposit 주소 사용
 	}
-에, 1분 테스트
+
 ### 기존 그래프DB
 1. 총 그래프. 96그래프/ 46엣지
 2. 총 런타임. 60초

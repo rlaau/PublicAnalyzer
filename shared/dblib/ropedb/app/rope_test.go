@@ -39,8 +39,8 @@ func link(t *testing.T, db RopeDB, a1, a2 shareddomain.Address, trait domain.Tra
 		Rule:    RuleDeposit,
 	},
 		domain.TxScala{
-			Time:  chaintimer.ChainTime(time.Now()),
-			Score: 1,
+			Time:     chaintimer.ChainTime(time.Now()),
+			ScoreInc: 1,
 		})
 	if err := db.PushTraitEvent(ev); err != nil {
 		t.Fatalf("PushTraitEvent(%v,%v,trait=%v): %v", a1, a2, trait, err)

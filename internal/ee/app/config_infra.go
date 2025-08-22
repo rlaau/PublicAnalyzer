@@ -51,7 +51,7 @@ func NewInfraByConfig(config *EOAAnalyzerConfig, ctx context.Context) infra.Tota
 	//* 워커풀 생성 및 채널 등록
 	workerPool := workerpool.New(ctx, config.WorkerCount, txJobChannel)
 	log.Printf("🔧 WorkerPool initialized with %d workers", config.WorkerCount)
-	pendingDB, err := infra.NewBadgerPendingRelationRepo(config.PendingDBPath)
+	pendingDB, err := infra.NewFFBadgerPendingRelationRepo(config.PendingDBPath)
 	if err != nil {
 		panic("펜딜 레포지토리를 열지 못함.")
 	}

@@ -103,7 +103,7 @@ func NewTraitEvent(trait TraitCode, ar1, ar2 AddressAndRule, txScala TxScala) Tr
 			RuleB:    ar1.Rule,
 			TxID:     txScala.TxId,
 			Time:     txScala.Time,
-			Score:    txScala.Score,
+			Score:    txScala.ScoreInc,
 		}
 	}
 	return TraitEvent{
@@ -114,7 +114,7 @@ func NewTraitEvent(trait TraitCode, ar1, ar2 AddressAndRule, txScala TxScala) Tr
 		RuleB:    ar2.Rule,
 		TxID:     txScala.TxId,
 		Time:     txScala.Time,
-		Score:    txScala.Score,
+		Score:    txScala.ScoreInc,
 	}
 
 }
@@ -125,9 +125,9 @@ type AddressAndRule struct {
 }
 
 type TxScala struct {
-	TxId  shareddomain.TxId
-	Time  chaintimer.ChainTime
-	Score int32
+	TxId     shareddomain.TxId
+	Time     chaintimer.ChainTime
+	ScoreInc int32
 }
 
 // 내부 비동기 큐용: TraitMark Upsert
