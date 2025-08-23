@@ -26,7 +26,7 @@ func OrderAddresses(a1, a2 Address) (Address, Address) {
 	return a2, a1
 }
 
-func (a Address) IsSmallerThan(a2 Address) bool {
+func (a Address) LessThan(a2 Address) bool {
 	return (bytes.Compare(a[:], a2[:]) <= 0)
 }
 

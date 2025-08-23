@@ -2,10 +2,13 @@ package app
 
 import (
 	"encoding/binary"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
@@ -20,14 +23,28 @@ func addr(n int) shareddomain.Address {
 }
 
 const (
-	TraitA domain.TraitCode = 100
-	TraitB domain.TraitCode = 200
-	TraitC domain.TraitCode = 300
+	TraitApple   domain.TraitCode = 100
+	TraitBravo   domain.TraitCode = 200
+	TraitCharlie domain.TraitCode = 300
 )
+
+// 트레이트 코드 → 이름 매핑
+var TraitLegend = map[domain.TraitCode]string{
+	TraitApple:   "TraitApple",
+	TraitBravo:   "TraitBravo",
+	TraitCharlie: "TraitCharlie",
+}
+
 const (
 	RuleCustomer domain.RuleCode = 1
 	RuleDeposit  domain.RuleCode = 2
 )
+
+// 룰 코드 → 이름 매핑
+var RuleLegend = map[domain.RuleCode]string{
+	RuleCustomer: "RuleCustomer",
+	RuleDeposit:  "RuleDeposit",
+}
 
 func link(t *testing.T, db RopeDB, a1, a2 shareddomain.Address, trait domain.TraitCode) {
 	t.Helper()
@@ -93,16 +110,16 @@ func ropeCountOf(t *testing.T, impl *BadgerRopeDB, a shareddomain.Address) int {
 	return len(impl.getOrCreateVertex(a).Ropes)
 }
 
-func linksOf(t *testing.T, impl *BadgerRopeDB, a shareddomain.Address) []domain.PartnerLink {
+func linksOf(t *testing.T, impl *BadgerRopeDB, a shareddomain.Address) []domain.TraitRef {
 	t.Helper()
-	return impl.getOrCreateVertex(a).Links
+	return impl.getOrCreateVertex(a).Traits
 }
 
 // --- 시나리오 ---
 
 func TestRopeDB_UseCase_Spec(t *testing.T) {
-	tmp := t.TempDir()
-	db, err := NewRopeDBWithRoot(mode.TestingModeProcess, tmp, "tmp_test") // 항상 새/빈 디렉터리
+	testDir := computation.FindTestingStorageRootPath() + "/rope_visual"
+	db, err := NewRopeDBWithRoot(mode.TestingModeProcess, testDir, "rope_test", TraitLegend, RuleLegend) // 항상 새/빈 디렉터리
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,37 +128,37 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 	impl := db.(*BadgerRopeDB)
 
 	// 초기 그래프 구성
-	link(t, db, addr(1), addr(2), TraitA)
-	link(t, db, addr(2), addr(3), TraitA)
+	link(t, db, addr(1), addr(2), TraitApple)
+	link(t, db, addr(2), addr(3), TraitApple)
 
-	link(t, db, addr(3), addr(4), TraitB)
+	link(t, db, addr(3), addr(4), TraitBravo)
 
-	link(t, db, addr(3), addr(5), TraitC)
-	link(t, db, addr(5), addr(6), TraitC)
+	link(t, db, addr(3), addr(5), TraitCharlie)
+	link(t, db, addr(5), addr(6), TraitCharlie)
 
-	link(t, db, addr(7), addr(8), TraitA)
-	link(t, db, addr(8), addr(9), TraitA)
+	link(t, db, addr(7), addr(8), TraitApple)
+	link(t, db, addr(8), addr(9), TraitApple)
 	// 10은 독립
 
 	// 초기 안정화(개별 대기)
-	waitRopeMembers(t, impl, addr(1), TraitA, 3, addr(1), addr(2), addr(3))
-	waitRopeMembers(t, impl, addr(3), TraitB, 2, addr(3), addr(4))
-	waitRopeMembers(t, impl, addr(3), TraitC, 3, addr(3), addr(5), addr(6))
-	waitRopeMembers(t, impl, addr(7), TraitA, 3, addr(7), addr(8), addr(9))
+	waitRopeMembers(t, impl, addr(1), TraitApple, 3, addr(1), addr(2), addr(3))
+	waitRopeMembers(t, impl, addr(3), TraitBravo, 2, addr(3), addr(4))
+	waitRopeMembers(t, impl, addr(3), TraitCharlie, 3, addr(3), addr(5), addr(6))
+	waitRopeMembers(t, impl, addr(7), TraitApple, 3, addr(7), addr(8), addr(9))
 
 	// 액션1: 3-4를 traitC로 연결 → C 로프가 [3,4,5,6]
-	link(t, db, addr(3), addr(4), TraitC)
-	waitRopeMembers(t, impl, addr(3), TraitC, 4, addr(3), addr(4), addr(5), addr(6))
+	link(t, db, addr(3), addr(4), TraitCharlie)
+	waitRopeMembers(t, impl, addr(3), TraitCharlie, 4, addr(3), addr(4), addr(5), addr(6))
 
 	// 4: 파트너링크 2개(3과 B,C), 로프 개수 2개(B,C)
 	{
 		links := linksOf(t, impl, addr(4))
 		hasB, hasC := false, false
 		for _, l := range links {
-			if l.Partner == addr(3) && l.Trait == TraitB {
+			if l.Partner == addr(3) && l.Trait == TraitBravo {
 				hasB = true
 			}
-			if l.Partner == addr(3) && l.Trait == TraitC {
+			if l.Partner == addr(3) && l.Trait == TraitCharlie {
 				hasC = true
 			}
 		}
@@ -160,27 +177,27 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 	}
 
 	// 액션2: 10-4 traitB → B 로프가 [3,4,10]
-	link(t, db, addr(10), addr(4), TraitB)
-	waitRopeMembers(t, impl, addr(4), TraitB, 3, addr(3), addr(4), addr(10))
+	link(t, db, addr(10), addr(4), TraitBravo)
+	waitRopeMembers(t, impl, addr(4), TraitBravo, 3, addr(3), addr(4), addr(10))
 
 	// 액션3: 10-6 traitA → 새 A 로프 [6,10]
-	link(t, db, addr(10), addr(6), TraitA)
-	waitRopeMembers(t, impl, addr(10), TraitA, 2, addr(6), addr(10))
+	link(t, db, addr(10), addr(6), TraitApple)
+	waitRopeMembers(t, impl, addr(10), TraitApple, 2, addr(6), addr(10))
 
 	// 액션4: 10-2 traitA → (6,10) 가 (1,2,3) 로프와 병합 → [1,2,3,6,10]
-	link(t, db, addr(10), addr(2), TraitA)
-	waitRopeMembers(t, impl, addr(2), TraitA, 5, addr(1), addr(2), addr(3), addr(6), addr(10))
+	link(t, db, addr(10), addr(2), TraitApple)
+	waitRopeMembers(t, impl, addr(2), TraitApple, 5, addr(1), addr(2), addr(3), addr(6), addr(10))
 
 	// 액션5: 3-7 traitA → 위 로프와 (7,8,9) 로프 병합 → [1,2,3,6,7,8,9,10]
-	link(t, db, addr(3), addr(7), TraitA)
-	waitRopeMembers(t, impl, addr(3), TraitA, 8, addr(1), addr(2), addr(3), addr(6), addr(7), addr(8), addr(9), addr(10))
+	link(t, db, addr(3), addr(7), TraitApple)
+	waitRopeMembers(t, impl, addr(3), TraitApple, 8, addr(1), addr(2), addr(3), addr(6), addr(7), addr(8), addr(9), addr(10))
 
 	// 3-7 사이 traitA 링크 존재
 	{
 		links3 := linksOf(t, impl, addr(3))
 		ok := false
 		for _, l := range links3 {
-			if l.Partner == addr(7) && l.Trait == TraitA {
+			if l.Partner == addr(7) && l.Trait == TraitApple {
 				ok = true
 				break
 			}
@@ -194,4 +211,19 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 	if rc := ropeCountOf(t, impl, addr(3)); rc != 3 {
 		t.Fatalf("vertex(3) rope count want=3 got=%d", rc)
 	}
+	frame := impl.MakeGraphFrameHTML("Rope Graph Viewer")
+
+	// 2) 백그라운드 HTML (내부에서 FetchDefaultGraphJson 호출)
+	bg, err := impl.MakeBackgroundHTML("graph_frame.html")
+	if err != nil {
+		t.Logf("bg warn: %v", err)
+	}
+
+	// 3) 파일로 덤프
+	_ = os.WriteFile(filepath.Join(testDir, "graph_frame.html"), []byte(frame), 0o644)
+	_ = os.WriteFile(filepath.Join(testDir, "index.html"), []byte(bg), 0o644)
+
+	// 필요하면 테스트 로그에 경로 출력
+	t.Log("wrote graph_frame.html & index.html")
+
 }

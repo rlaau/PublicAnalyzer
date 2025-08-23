@@ -28,6 +28,7 @@ type Token struct {
 	Name           string
 	DecimalsOrZero int64
 }
+
 type TokenScore struct {
 	//키
 	Address Address

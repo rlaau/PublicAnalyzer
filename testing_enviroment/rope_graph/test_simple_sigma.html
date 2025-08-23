@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Simple Sigma Test</title>
+    <style>
+        body { margin: 0; padding: 20px; font-family: Arial, sans-serif; }
+        #container { width: 800px; height: 600px; border: 1px solid #ccc; }
+        #info { margin-top: 10px; padding: 10px; background: #f0f0f0; }
+    </style>
+    <script src="https://unpkg.com/graphology@0.25.4/dist/graphology.umd.min.js"></script>
+    <script src="https://unpkg.com/sigma@2.4.0/build/sigma.min.js"></script>
+</head>
+<body>
+    <h1>Simple Sigma.js Test</h1>
+    <div id="container"></div>
+    <div id="info">Loading...</div>
+
+    <script>
+        console.log('Starting simple test...');
+        document.getElementById('info').innerText = 'Checking libraries...';
+        
+        if (!window.graphology) {
+            document.getElementById('info').innerText = 'ERROR: Graphology not loaded!';
+            console.error('Graphology not loaded');
+        } else if (!window.Sigma) {
+            document.getElementById('info').innerText = 'ERROR: Sigma not loaded!';
+            console.error('Sigma not loaded');
+        } else {
+            console.log('Libraries loaded successfully');
+            document.getElementById('info').innerText = 'Libraries OK, creating graph...';
+            
+            try {
+                const Graph = window.graphology.Graph;
+                const graph = new Graph();
+                
+                // Add simple test nodes
+                graph.addNode('node1', { x: 0, y: 0, size: 15, color: '#ff0000', label: 'Node 1' });
+                graph.addNode('node2', { x: 100, y: 0, size: 15, color: '#00ff00', label: 'Node 2' });
+                graph.addNode('node3', { x: 50, y: 100, size: 15, color: '#0000ff', label: 'Node 3' });
+                
+                // Add edges
+                graph.addEdge('node1', 'node2', { color: '#999' });
+                graph.addEdge('node2', 'node3', { color: '#999' });
+                graph.addEdge('node3', 'node1', { color: '#999' });
+                
+                console.log('Graph created with', graph.order, 'nodes and', graph.size, 'edges');
+                
+                const renderer = new window.Sigma(graph, document.getElementById('container'), {
+                    renderLabels: true,
+                    labelSize: 12
+                });
+                
+                document.getElementById('info').innerText = 'SUCCESS: Graph rendered! Nodes: ' + graph.order + ', Edges: ' + graph.size;
+                console.log('Sigma renderer created successfully');
+                
+            } catch (err) {
+                console.error('Error:', err);
+                document.getElementById('info').innerText = 'ERROR: ' + err.message;
+            }
+        }
+    </script>
+</body>
+</html>

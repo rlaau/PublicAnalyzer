@@ -36,6 +36,7 @@ type EOAAnalyzer interface {
 	//근데 이거 고치려면 또 리팩토링 해야함. 또!!!
 	//그건 나중에 하자고.
 	GraphDB() *badger.DB
+	GetRopeDBStats() map[string]any
 
 	// 리소스 관리
 	io.Closer
@@ -382,6 +383,10 @@ func (a *SimpleEOAAnalyzer) GetStatistics() map[string]any {
 		"channel_usage":      len(a.infra.TxJobChannel),
 		"channel_capacity":   cap(a.infra.TxJobChannel),
 	}
+}
+
+func (a *SimpleEOAAnalyzer) GetRopeDBStats() map[string]any {
+	return a.infra.GraphRepo.GetGraphStats()
 }
 
 // IsHealthy 헬스 상태 체크

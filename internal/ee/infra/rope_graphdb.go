@@ -15,11 +15,28 @@ const (
 	TraitDepositAndUser ropedomain.TraitCode = 1
 	TraitCexAndDeposit  ropedomain.TraitCode = 2
 )
+
+var TraitLegend = map[ropedomain.TraitCode]string{
+	TraitDepositAndUser: "TraitDepositAndUser",
+	TraitCexAndDeposit:  "TraitCexAndDeposit",
+}
+
 const (
 	RuleUser    ropedomain.RuleCode = 1
 	RuleDeposit ropedomain.RuleCode = 2
 	RuleCex     ropedomain.RuleCode = 3
 )
+
+var RuleLegend = map[ropedomain.RuleCode]string{
+	RuleUser:    "RuleUser",
+	RuleDeposit: "RuleDeposit",
+	RuleCex:     "RuleCex",
+}
+
+var TraitName = map[ropedomain.TraitCode]string{
+	TraitDepositAndUser: "DepositAndUser",
+	TraitCexAndDeposit:  "CexAndDeposit",
+}
 
 // ///////////////////////////////////////////////////////////////////////////
 type RawBadgerProvider interface {
@@ -27,7 +44,7 @@ type RawBadgerProvider interface {
 }
 
 func NewBagerEeGraphDB(mode mode.ProcessingMode) (ropeapp.RopeDB, error) {
-	db, err := ropeapp.NewRopeDB(mode, "EeGraphDB")
+	db, err := ropeapp.NewRopeDB(mode, "EeGraphDB", TraitLegend, RuleLegend)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open rope db")
 	}

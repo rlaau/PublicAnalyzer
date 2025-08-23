@@ -33,14 +33,14 @@ const (
 	maxRopeSize = 1000 // 도메인 상한
 )
 
-func NewRopeDB(isTest mode.ProcessingMode, dbName string) (RopeDB, error) {
+func NewRopeDB(isTest mode.ProcessingMode, dbName string, traitLegend map[domain.TraitCode]string, ruleLegend map[domain.RuleCode]string) (RopeDB, error) {
 	var root string
 	if isTest.IsTest() {
 		root = computation.FindTestingStorageRootPath()
 	} else {
 		root = computation.FindProductionStorageRootPath()
 	}
-	return NewRopeDBWithRoot(isTest, root, dbName)
+	return NewRopeDBWithRoot(isTest, root, dbName, traitLegend, ruleLegend)
 }
 
 type RopeDB interface {
@@ -52,6 +52,10 @@ type RopeDB interface {
 	ViewRope(id domain.RopeID) (*domain.Rope, error)
 	ViewInSameRope(a1, a2 shareddomain.Address) (bool, error)
 	GetGraphStats() map[string]any
+
+	// 트레이트 기반 조회
+	ViewAllTraitMarkByCode(t domain.TraitCode) ([]domain.TraitMark, error)
+	ViewAllTraitMarkByString(s string) ([]domain.TraitMark, error)
 
 	Close() error
 }
@@ -67,13 +71,17 @@ type BadgerRopeDB struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
+	// 범례 (코드 → 문자열 매핑)
+	traitLegend map[domain.TraitCode]string
+	ruleLegend  map[domain.RuleCode]string
+
 	// 비동기 쓰기 버스
 	busRope  *eventbus.EventBus[domain.RopeMarkUpsert]
 	busTrait *eventbus.EventBus[domain.TraitMarkUpsert]
 }
 
 // NewRopeDBWithRoot: 모드(true=test, false=prod)로 루트 분기
-func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string) (RopeDB, error) {
+func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, traitLegend map[domain.TraitCode]string, ruleLegend map[domain.RuleCode]string) (RopeDB, error) {
 	// Badger
 	dbDir := filepath.Join(root, "rope_db", dbname, "badger")
 	opts := badger.DefaultOptions(dbDir).WithLogger(nil)
@@ -101,6 +109,8 @@ func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string) (
 	b := &BadgerRopeDB{
 		db: db, isTest: isTest.IsTest(),
 		ctx: ctx, cancel: cancel,
+		traitLegend: traitLegend,
+		ruleLegend:  ruleLegend,
 		busRope: busR, busTrait: busT,
 	}
 
@@ -133,7 +143,7 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 	if shareddomain.IsNullAddress(a1) || shareddomain.IsNullAddress(a2) {
 		return errors.New("address empty")
 	}
-	if a2.IsSmallerThan(a1) {
+	if a2.LessThan(a1) {
 		a1, a2 = a2, a1
 		ev.AddressA, ev.AddressB = ev.AddressB, ev.AddressA
 		ev.RuleA, ev.RuleB = ev.RuleB, ev.RuleA
@@ -149,7 +159,9 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 	_ = b.busTrait.Publish(domain.TraitMarkUpsert{
 		TraitID:     tid,
 		Trait:       ev.Trait,
+		AddressA:    ev.AddressA,
 		RuleA:       ev.RuleA,
+		AddressB:    ev.AddressB,
 		RuleB:       ev.RuleB,
 		ScoreDelta:  ev.Score,
 		VolumeDelta: 1,
@@ -330,7 +342,9 @@ func (b *BadgerRopeDB) applyTraitUpsert(op domain.TraitMarkUpsert) {
 			tm = domain.TraitMark{
 				ID:       op.TraitID,
 				Trait:    op.Trait,
+				AddressA: op.AddressA,
 				RuleA:    op.RuleA,
+				AddressB: op.AddressB,
 				RuleB:    op.RuleB,
 				Score:    0,
 				Volume:   0,
@@ -413,7 +427,7 @@ func (b *BadgerRopeDB) getOrCreateVertex(a shareddomain.Address) *domain.Vertex 
 	if err == nil && !shareddomain.IsNullAddress(v.Address) {
 		return &v
 	}
-	return &domain.Vertex{Address: a, Ropes: nil, Links: nil}
+	return &domain.Vertex{Address: a, Ropes: nil, Traits: nil}
 }
 
 func (b *BadgerRopeDB) putVertex(v *domain.Vertex) {
@@ -488,7 +502,7 @@ func (b *BadgerRopeDB) incr(key string) uint64 {
 // v1<->v2, Trait 기준으로 링크 업서트하여 공통 TraitID 보장
 func (b *BadgerRopeDB) ensureLink(v1, v2 *domain.Vertex, t domain.TraitCode) (domain.TraitID, bool) {
 	find := func(v *domain.Vertex, p shareddomain.Address, t domain.TraitCode) (int, bool) {
-		for i, l := range v.Links {
+		for i, l := range v.Traits {
 			if l.Partner == p && l.Trait == t {
 				return i, true
 			}
@@ -500,19 +514,19 @@ func (b *BadgerRopeDB) ensureLink(v1, v2 *domain.Vertex, t domain.TraitCode) (do
 
 	switch {
 	case ok1 && ok2:
-		return v1.Links[i1].TraitID, false
+		return v1.Traits[i1].TraitID, false
 	case ok1 && !ok2:
-		id := v1.Links[i1].TraitID
-		v2.Links = append(v2.Links, domain.PartnerLink{Partner: v1.Address, Trait: t, TraitID: id})
+		id := v1.Traits[i1].TraitID
+		v2.Traits = append(v2.Traits, domain.TraitRef{Partner: v1.Address, Trait: t, TraitID: id})
 		return id, false
 	case !ok1 && ok2:
-		id := v2.Links[i2].TraitID
-		v1.Links = append(v1.Links, domain.PartnerLink{Partner: v2.Address, Trait: t, TraitID: id})
+		id := v2.Traits[i2].TraitID
+		v1.Traits = append(v1.Traits, domain.TraitRef{Partner: v2.Address, Trait: t, TraitID: id})
 		return id, false
 	default:
 		id := b.nextTraitID()
-		v1.Links = append(v1.Links, domain.PartnerLink{Partner: v2.Address, Trait: t, TraitID: id})
-		v2.Links = append(v2.Links, domain.PartnerLink{Partner: v1.Address, Trait: t, TraitID: id})
+		v1.Traits = append(v1.Traits, domain.TraitRef{Partner: v2.Address, Trait: t, TraitID: id})
+		v2.Traits = append(v2.Traits, domain.TraitRef{Partner: v1.Address, Trait: t, TraitID: id})
 		return id, true
 	}
 }
@@ -574,4 +588,51 @@ func (b *BadgerRopeDB) GetGraphStats() map[string]any {
 		"ropes":  ropes,
 		"traits": traits,
 	}
+}
+
+// ViewAllTraitMarkByCode returns all TraitMark records with the given trait code
+func (b *BadgerRopeDB) ViewAllTraitMarkByCode(t domain.TraitCode) ([]domain.TraitMark, error) {
+	var result []domain.TraitMark
+	err := b.db.View(func(txn *badger.Txn) error {
+		itOpts := badger.DefaultIteratorOptions
+		it := txn.NewIterator(itOpts)
+		defer it.Close()
+		
+		pfx := []byte(kT) // "t:" prefix for trait marks
+		for it.Seek(pfx); it.ValidForPrefix(pfx); it.Next() {
+			item := it.Item()
+			var tm domain.TraitMark
+			err := item.Value(func(val []byte) error {
+				return json.Unmarshal(val, &tm)
+			})
+			if err != nil {
+				continue // skip invalid entries
+			}
+			if tm.Trait == t {
+				result = append(result, tm)
+			}
+		}
+		return nil
+	})
+	return result, err
+}
+
+// ViewAllTraitMarkByString returns all TraitMark records with the trait name matching the given string
+func (b *BadgerRopeDB) ViewAllTraitMarkByString(s string) ([]domain.TraitMark, error) {
+	// Find trait code by string using legend
+	var targetCode domain.TraitCode
+	found := false
+	for code, name := range b.traitLegend {
+		if name == s {
+			targetCode = code
+			found = true
+			break
+		}
+	}
+	
+	if !found {
+		return []domain.TraitMark{}, nil // return empty slice if string not found in legend
+	}
+	
+	return b.ViewAllTraitMarkByCode(targetCode)
 }

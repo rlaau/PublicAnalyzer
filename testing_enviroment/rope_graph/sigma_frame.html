@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Embedded Sigma Graph</title>
+  <script src="https://cdn.jsdelivr.net/npm/graphology@0.25.1/dist/graphology.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sigma@2.4.0/build/sigma.umd.min.js"></script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+    }
+    #sigma-container {
+      width: 100%;
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div id="sigma-container"></div>
+  <script>
+    // Wait for DOM and scripts to be fully loaded
+    window.addEventListener("DOMContentLoaded", () => {
+      const graph = new graphology.Graph();
+
+      graph.addNode("n1", { label: "Node 1", x: 0, y: 0, size: 10, color: "#FF5733" });
+      graph.addNode("n2", { label: "Node 2", x: 1, y: 1, size: 10, color: "#33C3FF" });
+      graph.addEdge("n1", "n2", { label: "Edge", color: "#999" });
+
+      const container = document.getElementById("sigma-container");
+      const renderer = new sigma.Sigma(graph, container);  // <-- sigma는 대문자 Sigma로 접근
+    });
+  </script>
+</body>
+</html>

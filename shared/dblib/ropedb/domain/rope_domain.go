@@ -31,8 +31,8 @@ type RuleCode uint16
 // Vertex: 요약 저장(빠른 R/W)
 type Vertex struct {
 	Address shareddomain.Address
-	Ropes   []RopeRef     // (RopeID, Trait) 목록
-	Links   []PartnerLink // (Partner, Trait, TraitID)
+	Ropes   []RopeRef  // (RopeID, Trait) 목록
+	Traits  []TraitRef // (Partner, Trait, TraitID)
 }
 
 // 도메인 로직 상, 한 Vertex내에서 TraitCode-RopeID는 1:1 매핑임
@@ -41,10 +41,10 @@ type RopeRef struct {
 	Trait TraitCode
 }
 
-type PartnerLink struct {
-	Partner shareddomain.Address
-	Trait   TraitCode
+type TraitRef struct {
 	TraitID TraitID
+	Trait   TraitCode
+	Partner shareddomain.Address
 }
 
 // RopeMark: Rope에 대한 저장 문서(조회 시 조립의 근간)
@@ -59,9 +59,12 @@ type RopeMark struct {
 
 // TraitMark: Trait(엣지)에 대한 저장 문서
 type TraitMark struct {
-	ID       TraitID
-	Trait    TraitCode
+	ID    TraitID
+	Trait TraitCode
+
+	AddressA shareddomain.Address
 	RuleA    RuleCode
+	AddressB shareddomain.Address
 	RuleB    RuleCode
 	Score    int32
 	Volume   uint32
@@ -94,7 +97,7 @@ type TraitEvent struct {
 }
 
 func NewTraitEvent(trait TraitCode, ar1, ar2 AddressAndRule, txScala TxScala) TraitEvent {
-	if ar2.Address.IsSmallerThan(ar1.Address) {
+	if ar2.Address.LessThan(ar1.Address) {
 		return TraitEvent{
 			Trait:    trait,
 			AddressA: ar2.Address,

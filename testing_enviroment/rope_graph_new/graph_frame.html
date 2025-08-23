@@ -1,0 +1,190 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Rope Graph</title>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #container { position: absolute; inset: 0; }
+    #hud {
+      position: absolute; top: 10px; left: 10px; z-index: 10;
+      background: rgba(255,255,255,0.92); padding: 8px 10px; border-radius: 10px;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Noto Sans, Arial;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+      font-size: 12px;
+    }
+    #hud code { padding: 2px 6px; background: #eee; border-radius: 6px; }
+    #diag {
+      position: absolute; right: 10px; bottom: 10px; z-index: 10;
+      background: rgba(0,0,0,0.6); color:#fff; padding: 8px 10px; border-radius: 8px;
+      font: 12px/1.3 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Noto Sans, Arial;
+      white-space: pre-wrap; max-width: 40vw;
+    }
+  </style>
+  <script src="https://unpkg.com/graphology@0.25.4/dist/graphology.umd.min.js"></script>
+  <script src="https://unpkg.com/sigma@2.4.0/build/sigma.min.js"></script>
+</head>
+<body>
+  <div id="hud">
+    <strong>Rope Graph</strong>
+    <div>nodes: <code id="ncount">0</code> | edges: <code id="ecount">0</code></div>
+  </div>
+  <div id="container"></div>
+  <div id="diag"></div>
+
+  <script>
+  (function(){
+    const diag = document.getElementById('diag');
+    const log = (...a)=>{ console.log(...a); diag.textContent += a.map(x=>typeof x==='string'?x:JSON.stringify(x)).join(' ')+'\\n'; };
+    const Graphology = window.graphology;
+    const SigmaCtor = window.Sigma || (window.sigma && window.sigma.Sigma);
+
+    let RENDERER = null;
+    let GRAPH = null;
+    let DATA = null; // 현재까지 병합된 전체 데이터(GraphData 형식)
+    let localExpand = true; // 서버 붙이면 false로 바꾸고, parent가 expand-result를 내려주게 하면 됨.
+
+    function colorHsl(h,s,l){ return 'hsl('+h+','+s+'%,'+l+'%)'; }
+    function hashStr(s){ let h=2166136261>>>0; for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619);} return h>>>0; }
+    function ropeColor(ropeId){ const h=(ropeId*89+45)%360, s=60+(ropeId%3)*10, l=35+(ropeId%4)*5; return colorHsl(h,s,l); }
+    function traitColor(code){ const h=(code*137)%360; return colorHsl(h,70,45); }
+    function labelColor(bgHsl){ const m=/hsl\\(\\s*(\\d+)\\s*,\\s*(\\d+)%\\s*,\\s*(\\d+)%\\s*\\)/.exec(bgHsl); const l=m?parseInt(m[3],10):50; return l>55?'#222':'#fff'; }
+
+    function buildGraphFromData(data){
+      DATA = data;
+      const G = new Graphology.Graph({type:'undirected'});
+      const idToIndex = new Map();
+      data.nodes.forEach((n,i)=>{
+        idToIndex.set(n.id, i);
+        const c = n.color || (n.ropeId ? ropeColor(n.ropeId) : '#888');
+        G.addNode(n.id, {
+          label: n.label || n.id,
+          size: Math.max(4, Math.min(16, (n.size||8))),
+          color: c,
+          labelColor: labelColor(c),
+          x: Math.cos(2*Math.PI*i/Math.max(1,data.nodes.length)) * 100,
+          y: Math.sin(2*Math.PI*i/Math.max(1,data.nodes.length)) * 100,
+        });
+      });
+      const eSeen = new Set();
+      data.edges.forEach((e)=>{
+        if (eSeen.has(e.id)) return; eSeen.add(e.id);
+        if (!G.hasNode(e.source)) { const c='#888'; G.addNode(e.source,{label:e.source,size:6,color:c,labelColor:labelColor(c)}); }
+        if (!G.hasNode(e.target)) { const c='#888'; G.addNode(e.target,{label:e.target,size:6,color:c,labelColor:labelColor(c)}); }
+        G.addEdgeWithKey(e.id, e.source, e.target, {
+          size: Math.max(1, Math.min(5, e.weight||1)),
+          color: e.color || traitColor(e.traitCode||0),
+          traitCode: e.traitCode,
+          traitName: e.traitName,
+          traitId: e.traitId,
+          lastSeen: e.lastSeen || 0,
+        });
+      });
+      return G;
+    }
+
+    function mount(G){
+      const container = document.getElementById('container');
+      if (RENDERER) { RENDERER.kill(); RENDERER=null; }
+      GRAPH = G;
+      RENDERER = new SigmaCtor(GRAPH, container, {
+        renderLabels: true,
+        labelDensity: 0.9,
+        labelSize: 10,
+        labelColor: { color: 'data(labelColor)' }
+      });
+
+      document.getElementById('ncount').textContent = String(GRAPH.order);
+      document.getElementById('ecount').textContent = String(GRAPH.size);
+
+      // Hover → parent에 정보 발신
+      RENDERER.on('enterNode', ({node}) => {
+        const attrs = GRAPH.getNodeAttributes(node);
+        const payload = {
+          id: node,
+          label: attrs.label,
+          ropeColor: attrs.color,
+        };
+        window.parent && window.parent.postMessage({type:'node-hover', payload}, '*');
+      });
+      RENDERER.on('leaveNode', () => {
+        window.parent && window.parent.postMessage({type:'node-hover', payload:null}, '*');
+      });
+
+      // Edge hover
+      RENDERER.on('enterEdge', ({edge})=>{
+        const a = GRAPH.getEdgeAttributes(edge);
+        const payload = {
+          id: edge,
+          traitCode: a.traitCode||0,
+          traitName: a.traitName||'',
+          traitId: a.traitId||0,
+          lastSeen: a.lastSeen||0
+        };
+        window.parent && window.parent.postMessage({type:'edge-hover', payload}, '*');
+      });
+      RENDERER.on('leaveEdge', ()=>{
+        window.parent && window.parent.postMessage({type:'edge-hover', payload:null}, '*');
+      });
+
+      // Click → parent에 확장 요청
+      RENDERER.on('clickNode', ({node})=>{
+        window.parent && window.parent.postMessage({type:'node-click', payload:{ id: node }}, '*');
+      });
+    }
+
+    // local 1-hop expansion: 현재 DATA 기준으로 vertex 연결 1-hop 생성
+    function localOneHop(vertexId){
+      if (!DATA) return null;
+      const nbrs = new Set();
+      const edges = [];
+      DATA.edges.forEach(e=>{
+        if (e.source===vertexId){ nbrs.add(e.target); edges.push(e); }
+        else if (e.target===vertexId){ nbrs.add(e.source); edges.push(e); }
+      });
+      const nodes = [];
+      DATA.nodes.forEach(n=>{
+        if (n.id===vertexId || nbrs.has(n.id)) nodes.push(n);
+      });
+      return {
+        meta: { generatedAt: Date.now()/1000|0, graphType: 'expanded', startNode: vertexId, nodeCount: nodes.length, edgeCount: edges.length },
+        nodes, edges,
+        legend: DATA.legend || {traits:{}, ropes:{}}
+      };
+    }
+
+    // 메시지 프로토콜
+    window.addEventListener('message', (ev)=>{
+      const msg = ev.data || {};
+      if (msg.type==='load-graph'){
+        try {
+          const g = buildGraphFromData(msg.payload);
+          mount(g);
+          window.parent && window.parent.postMessage({type:'child-ready', payload:{ ok:true }}, '*');
+        } catch (e){
+          log('load-graph error', e);
+          window.parent && window.parent.postMessage({type:'child-ready', payload:{ ok:false, error: String(e)}}, '*');
+        }
+      }
+      else if (msg.type==='expand'){
+        const v = (msg.payload && msg.payload.vertexId)||'';
+        if (!v) return;
+        if (localExpand){
+          const inc = localOneHop(v);
+          window.parent && window.parent.postMessage({type:'expand-result', payload: inc}, '*');
+        } else {
+          // remote 모드면 parent가 expand-result를 별도로 보낼 것
+        }
+      }
+      else if (msg.type==='apply-graph'){ // parent가 병합 후 완성 그래프를 내려줄 때
+        const g = buildGraphFromData(msg.payload);
+        mount(g);
+      }
+    });
+
+    // 초기 준비 신호
+    window.parent && window.parent.postMessage({type:'child-mounted'}, '*');
+  })();
+  </script>
+</body>
+</html>

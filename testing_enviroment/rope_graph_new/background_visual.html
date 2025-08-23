@@ -1,0 +1,220 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>RopeDB Visualizer</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+    display: grid; grid-template-columns: 60% 40%; grid-template-rows: 60% 40%;
+    gap: 10px; background:#f5f5f5; padding: 10px;
+  }
+  #graph-pane, #search-pane, #legend-pane, #info-pane {
+    background: #fff; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); overflow: hidden;
+  }
+  #graph-pane { grid-column:1; grid-row:1; }
+  #search-pane { grid-column:2; grid-row:1; padding: 16px; }
+  #legend-pane { grid-column:1; grid-row:2; padding: 16px; }
+  #info-pane   { grid-column:2; grid-row:2; padding: 16px; }
+
+  #graph-iframe { width: 100%; height: 100%; border: 0; }
+  .sec h3{ margin:0 0 10px 0; font-size:14px; color:#333;}
+  .row { margin-bottom: 12px; }
+  input[type=text]{
+    width: 100%; padding:10px; border:1px solid #ddd; border-radius:8px; font-size:13px;
+  }
+  button{
+    margin-top:6px; width:100%; padding:10px; border:0; border-radius:8px; cursor:pointer;
+    background:#2f6fed; color:#fff; font-weight:600;
+  }
+  button.green{ background:#28a745; }
+  .legend-item{ display:flex; align-items:center; margin-bottom:6px; }
+  .legend-color{ width:16px; height:16px; border-radius:3px; margin-right:8px;}
+  .kv{ font-size:12px; color:#555;}
+  .kv b{ color:#222;}
+  .muted{ color:#888; font-size:12px;}
+  .mono{ font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+</style>
+</head>
+<body>
+  <section id="graph-pane">
+    <iframe id="graph-iframe" src="graph_frame.html"></iframe>
+  </section>
+
+  <section id="search-pane">
+    <div class="sec">
+      <h3>🔍 Address</h3>
+      <div class="row"><input id="addr-input" type="text" placeholder="0x1234..."></div>
+      <button id="addr-btn">Search</button>
+    </div>
+    <div class="sec" style="margin-top:14px;">
+      <h3>🏷 Trait</h3>
+      <div class="row"><input id="trait-input" type="text" placeholder="TraitApple or 100"></div>
+      <button id="trait-btn">Search</button>
+    </div>
+    <div class="sec" style="margin-top:14px;">
+      <h3>🧵 Rope</h3>
+      <div class="row"><input id="rope-input" type="text" placeholder="Rope ID"></div>
+      <button id="rope-btn">Search</button>
+    </div>
+    <button id="default-btn" class="green" style="margin-top:14px;">🏠 Default</button>
+  </section>
+
+  <section id="legend-pane">
+    <div class="sec">
+      <h3>🎨 Trait Colors</h3>
+      <div id="trait-legend"><div class="legend-item">
+			<div class="legend-color" style="background-color: hsl(60, 70%, 45%)"></div>
+			<span class="legend-name">TraitCharlie</span>
+			<span class="legend-count">2</span>
+		</div><div class="legend-item">
+			<div class="legend-color" style="background-color: hsl(40, 70%, 45%)"></div>
+			<span class="legend-name">TraitBravo</span>
+			<span class="legend-count">2</span>
+		</div><div class="legend-item">
+			<div class="legend-color" style="background-color: hsl(20, 70%, 45%)"></div>
+			<span class="legend-name">TraitApple</span>
+			<span class="legend-count">5</span>
+		</div></div>
+    </div>
+    <div class="sec" style="margin-top:10px;">
+      <h3>🧵 Rope Colors</h3>
+      <div id="rope-legend"><div class="legend-item">
+			<div class="legend-color" style="background-color: hsl(223, 80%, 45%)"></div>
+			<span class="legend-name">Rope 2</span>
+			<span class="legend-count">2</span>
+		</div><div class="legend-item">
+			<div class="legend-color" style="background-color: hsl(41, 70%, 35%)"></div>
+			<span class="legend-name">Rope 4</span>
+			<span class="legend-count">1</span>
+		</div><div class="legend-item">
+			<div class="legend-color" style="background-color: hsl(312, 60%, 50%)"></div>
+			<span class="legend-name">Rope 3</span>
+			<span class="legend-count">2</span>
+		</div><div class="legend-item">
+			<div class="legend-color" style="background-color: hsl(134, 70%, 40%)"></div>
+			<span class="legend-name">Rope 1</span>
+			<span class="legend-count">3</span>
+		</div></div>
+    </div>
+  </section>
+
+  <section id="info-pane">
+    <div class="sec">
+      <h3>ℹ️ Info</h3>
+      <div id="info-box" class="kv">
+        Nodes: <b id="stat-nodes">0</b> | Edges: <b id="stat-edges">0</b><br/>
+        Type: <b id="stat-type">-</b><br/>
+        Start: <span id="stat-start" class="mono muted">-</span>
+      </div>
+    </div>
+    <div class="sec" style="margin-top:10px;">
+      <h3>Node</h3>
+      <div id="node-box" class="kv muted">Hover a node…</div>
+    </div>
+    <div class="sec" style="margin-top:10px;">
+      <h3>Edge</h3>
+      <div id="edge-box" class="kv muted">Hover an edge…</div>
+    </div>
+  </section>
+
+  <script>
+    // 초기 데이터 (서버에서 주입) — child에 최초 로드로 보냄
+    const INITIAL = {"meta":{"generatedAt":1755962121,"nodeCount":8,"edgeCount":9,"graphType":"default","startNode":"0x0000000000000000000000000000000000000001"},"nodes":[{"id":"0x0000000000000000000000000000000000000006","label":"0x00000000...","color":"hsl(312, 60%, 50%)","size":7,"ropeId":3,"ropeName":"Rope 3","traits":[{"traitCode":300,"traitName":"TraitCharlie","partner":"0x0000000000000000000000000000000000000005","traitId":5},{"traitCode":100,"traitName":"TraitApple","partner":"0x000000000000000000000000000000000000000a","traitId":10}]},{"id":"0x0000000000000000000000000000000000000001","label":"0x00000000...","color":"hsl(134, 70%, 40%)","size":6,"ropeId":1,"ropeName":"Rope 1","traits":[{"traitCode":100,"traitName":"TraitApple","partner":"0x0000000000000000000000000000000000000002","traitId":1}]},{"id":"0x0000000000000000000000000000000000000002","label":"0x00000000...","color":"hsl(134, 70%, 40%)","size":8,"ropeId":1,"ropeName":"Rope 1","traits":[{"traitCode":100,"traitName":"TraitApple","partner":"0x0000000000000000000000000000000000000001","traitId":1},{"traitCode":100,"traitName":"TraitApple","partner":"0x0000000000000000000000000000000000000003","traitId":2},{"traitCode":100,"traitName":"TraitApple","partner":"0x000000000000000000000000000000000000000a","traitId":11}]},{"id":"0x0000000000000000000000000000000000000003","label":"0x00000000...","color":"hsl(134, 70%, 40%)","size":10,"ropeId":1,"ropeName":"Rope 1","traits":[{"traitCode":100,"traitName":"TraitApple","partner":"0x0000000000000000000000000000000000000002","traitId":2},{"traitCode":200,"traitName":"TraitBravo","partner":"0x0000000000000000000000000000000000000004","traitId":3},{"traitCode":300,"traitName":"TraitCharlie","partner":"0x0000000000000000000000000000000000000005","traitId":4},{"traitCode":300,"traitName":"TraitCharlie","partner":"0x0000000000000000000000000000000000000004","traitId":8},{"traitCode":100,"traitName":"TraitApple","partner":"0x0000000000000000000000000000000000000007","traitId":12}]},{"id":"0x000000000000000000000000000000000000000a","label":"0x00000000...","color":"hsl(223, 80%, 45%)","size":8,"ropeId":2,"ropeName":"Rope 2","traits":[{"traitCode":200,"traitName":"TraitBravo","partner":"0x0000000000000000000000000000000000000004","traitId":9},{"traitCode":100,"traitName":"TraitApple","partner":"0x0000000000000000000000000000000000000006","traitId":10},{"traitCode":100,"traitName":"TraitApple","partner":"0x0000000000000000000000000000000000000002","traitId":11}]},{"id":"0x0000000000000000000000000000000000000004","label":"0x00000000...","color":"hsl(223, 80%, 45%)","size":8,"ropeId":2,"ropeName":"Rope 2","traits":[{"traitCode":200,"traitName":"TraitBravo","partner":"0x0000000000000000000000000000000000000003","traitId":3},{"traitCode":300,"traitName":"TraitCharlie","partner":"0x0000000000000000000000000000000000000003","traitId":8},{"traitCode":200,"traitName":"TraitBravo","partner":"0x000000000000000000000000000000000000000a","traitId":9}]},{"id":"0x0000000000000000000000000000000000000005","label":"0x00000000...","color":"hsl(312, 60%, 50%)","size":7,"ropeId":3,"ropeName":"Rope 3","traits":[{"traitCode":300,"traitName":"TraitCharlie","partner":"0x0000000000000000000000000000000000000003","traitId":4},{"traitCode":300,"traitName":"TraitCharlie","partner":"0x0000000000000000000000000000000000000006","traitId":5}]},{"id":"0x0000000000000000000000000000000000000007","label":"0x00000000...","color":"hsl(41, 70%, 35%)","size":7,"ropeId":4,"ropeName":"Rope 4","traits":[{"traitCode":100,"traitName":"TraitApple","partner":"0x0000000000000000000000000000000000000008","traitId":6},{"traitCode":100,"traitName":"TraitApple","partner":"0x0000000000000000000000000000000000000003","traitId":12}]}],"edges":[{"id":"e:0x0000000000000000000000000000000000000004|0x000000000000000000000000000000000000000a|200|9","source":"0x0000000000000000000000000000000000000004","target":"0x000000000000000000000000000000000000000a","color":"hsl(40, 70%, 45%)","weight":1,"traitCode":200,"traitName":"TraitBravo","traitId":9,"lastSeen":1755962121},{"id":"e:0x0000000000000000000000000000000000000001|0x0000000000000000000000000000000000000002|100|1","source":"0x0000000000000000000000000000000000000001","target":"0x0000000000000000000000000000000000000002","color":"hsl(20, 70%, 45%)","weight":1,"traitCode":100,"traitName":"TraitApple","traitId":1,"lastSeen":1755962121},{"id":"e:0x0000000000000000000000000000000000000003|0x0000000000000000000000000000000000000004|200|3","source":"0x0000000000000000000000000000000000000003","target":"0x0000000000000000000000000000000000000004","color":"hsl(40, 70%, 45%)","weight":1,"traitCode":200,"traitName":"TraitBravo","traitId":3,"lastSeen":1755962121},{"id":"e:0x0000000000000000000000000000000000000003|0x0000000000000000000000000000000000000005|300|4","source":"0x0000000000000000000000000000000000000003","target":"0x0000000000000000000000000000000000000005","color":"hsl(60, 70%, 45%)","weight":1,"traitCode":300,"traitName":"TraitCharlie","traitId":4,"lastSeen":1755962121},{"id":"e:0x0000000000000000000000000000000000000003|0x0000000000000000000000000000000000000007|100|12","source":"0x0000000000000000000000000000000000000003","target":"0x0000000000000000000000000000000000000007","color":"hsl(20, 70%, 45%)","weight":1,"traitCode":100,"traitName":"TraitApple","traitId":12,"lastSeen":1755962121},{"id":"e:0x0000000000000000000000000000000000000002|0x0000000000000000000000000000000000000003|100|2","source":"0x0000000000000000000000000000000000000002","target":"0x0000000000000000000000000000000000000003","color":"hsl(20, 70%, 45%)","weight":1,"traitCode":100,"traitName":"TraitApple","traitId":2,"lastSeen":1755962121},{"id":"e:0x0000000000000000000000000000000000000002|0x000000000000000000000000000000000000000a|100|11","source":"0x0000000000000000000000000000000000000002","target":"0x000000000000000000000000000000000000000a","color":"hsl(20, 70%, 45%)","weight":1,"traitCode":100,"traitName":"TraitApple","traitId":11,"lastSeen":1755962121},{"id":"e:0x0000000000000000000000000000000000000003|0x0000000000000000000000000000000000000004|300|8","source":"0x0000000000000000000000000000000000000003","target":"0x0000000000000000000000000000000000000004","color":"hsl(60, 70%, 45%)","weight":1,"traitCode":300,"traitName":"TraitCharlie","traitId":8,"lastSeen":1755962121},{"id":"e:0x0000000000000000000000000000000000000006|0x000000000000000000000000000000000000000a|100|10","source":"0x0000000000000000000000000000000000000006","target":"0x000000000000000000000000000000000000000a","color":"hsl(20, 70%, 45%)","weight":1,"traitCode":100,"traitName":"TraitApple","traitId":10,"lastSeen":1755962121}],"legend":{"traits":{"100":{"color":"hsl(20, 70%, 45%)","name":"TraitApple","count":5},"200":{"color":"hsl(40, 70%, 45%)","name":"TraitBravo","count":2},"300":{"color":"hsl(60, 70%, 45%)","name":"TraitCharlie","count":2}},"ropes":{"1":{"color":"hsl(134, 70%, 40%)","name":"Rope 1","count":3},"2":{"color":"hsl(223, 80%, 45%)","name":"Rope 2","count":2},"3":{"color":"hsl(312, 60%, 50%)","name":"Rope 3","count":2},"4":{"color":"hsl(41, 70%, 35%)","name":"Rope 4","count":1}}}};
+
+    const iframe = document.getElementById('graph-iframe');
+    const statNodes = document.getElementById('stat-nodes');
+    const statEdges = document.getElementById('stat-edges');
+    const statType  = document.getElementById('stat-type');
+    const statStart = document.getElementById('stat-start');
+
+    const nodeBox = document.getElementById('node-box');
+    const edgeBox = document.getElementById('edge-box');
+
+    // 상태 반영
+    function syncStats(g){
+      statNodes.textContent = String(g.meta?.nodeCount || (g.nodes?g.nodes.length:0) || 0);
+      statEdges.textContent = String(g.meta?.edgeCount || (g.edges?g.edges.length:0) || 0);
+      statType.textContent  = g.meta?.graphType || '-';
+      statStart.textContent = g.meta?.startNode || '-';
+    }
+    syncStats(INITIAL);
+
+    // 메시지 수신
+    window.addEventListener('message', (ev)=>{
+      const msg = ev.data || {};
+      if (msg.type==='child-mounted'){
+        // child 준비 완료 → 초기 그래프 로드
+        iframe.contentWindow.postMessage({type:'load-graph', payload: INITIAL}, '*');
+      }
+      else if (msg.type==='child-ready'){
+        // ok 여부만 로그
+        // console.log('child-ready', msg.payload);
+      }
+      else if (msg.type==='node-hover'){
+        if (!msg.payload){ nodeBox.textContent='Hover a node…'; nodeBox.classList.add('muted'); return; }
+        nodeBox.classList.remove('muted');
+        nodeBox.innerHTML = 'ID: <span class="mono">'+msg.payload.id+'</span><br/>Label: <b>'+ (msg.payload.label||'') +'</b>';
+      }
+      else if (msg.type==='edge-hover'){
+        if (!msg.payload){ edgeBox.textContent='Hover an edge…'; edgeBox.classList.add('muted'); return; }
+        edgeBox.classList.remove('muted');
+        const p = msg.payload;
+        edgeBox.innerHTML = 'Trait: <b>'+ (p.traitName||('code '+p.traitCode)) +'</b> <span class="mono">#'+(p.traitId||0)+'</span>';
+      }
+      else if (msg.type==='node-click'){
+        // 확장: child에 expand 요청 → child가 local 1hop 계산 후 expand-result 내려줌 (remote로 바꿀 수도 있음)
+        const id = msg.payload && msg.payload.id;
+        if (id){
+          iframe.contentWindow.postMessage({type:'expand', payload:{vertexId:id}}, '*');
+        }
+      }
+      else if (msg.type==='expand-result'){
+        // child가 준 증분 그래프를 parent가 병합해서 다시 apply-graph 로 내려보내도 됨.
+        // 여기서는 간단히 parent-merge 수행:
+        const inc = msg.payload;
+        if (!inc) return;
+        const merged = mergeGraph(INITIAL, inc);
+        Object.assign(INITIAL, merged); // 상태 업데이트
+        syncStats(INITIAL);
+        iframe.contentWindow.postMessage({type:'apply-graph', payload: INITIAL}, '*');
+      }
+    });
+
+    // parent-side 병합 (ConvolutionGraph에 맞춘 단순 JS 버전)
+    function mergeGraph(base, inc){
+      const nodeMap = new Map();
+      (base.nodes||[]).forEach(n=>nodeMap.set(n.id, n));
+      (inc.nodes||[]).forEach(n=>nodeMap.set(n.id, n));
+      const edgeMap = new Map();
+      (base.edges||[]).forEach(e=>edgeMap.set(e.id, e));
+      (inc.edges||[]).forEach(e=>edgeMap.set(e.id, e));
+      const nodes = Array.from(nodeMap.values());
+      const edges = Array.from(edgeMap.values());
+      return {
+        meta: { generatedAt: Math.floor(Date.now()/1000), graphType: 'convolution',
+                startNode: base.meta?.startNode || inc.meta?.startNode || '',
+                nodeCount: nodes.length, edgeCount: edges.length },
+        nodes, edges,
+        legend: base.legend || inc.legend || {traits:{}, ropes:{}}
+      };
+    }
+
+    // 검색 UI (데모: 아직 서버 미연결 → alert만)
+    document.getElementById('default-btn').onclick = ()=>{ iframe.contentWindow.postMessage({type:'load-graph', payload: INITIAL}, '*'); syncStats(INITIAL); };
+    document.getElementById('addr-btn').onclick = ()=>{
+      const v = (document.getElementById('addr-input').value||'').trim();
+      if (!v){ alert('enter address'); return; }
+      // 서버 붙이면 여기서 fetchExpanded + merge 후 apply-graph 하면 됨.
+      iframe.contentWindow.postMessage({type:'expand', payload:{vertexId:v}}, '*');
+    };
+    document.getElementById('trait-btn').onclick = ()=>{
+      alert('Trait search: hook to FetchGraphByTraitCode later');
+    };
+    document.getElementById('rope-btn').onclick = ()=>{
+      alert('Rope search: hook to FetchGraphByRopeID later');
+    };
+  </script>
+</body>
+</html>
