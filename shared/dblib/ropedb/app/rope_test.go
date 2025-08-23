@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -114,11 +115,29 @@ func linksOf(t *testing.T, impl *BadgerRopeDB, a shareddomain.Address) []domain.
 	t.Helper()
 	return impl.getOrCreateVertex(a).Traits
 }
+func clearDir(path string) error {
+	dirEntries, err := os.ReadDir(path)
+	if err != nil {
+		// 디렉토리가 없다면 새로 만들기
+		if os.IsNotExist(err) {
+			return os.MkdirAll(path, 0o755)
+		}
+		return err
+	}
+	for _, entry := range dirEntries {
+		entryPath := filepath.Join(path, entry.Name())
+		if err := os.RemoveAll(entryPath); err != nil {
+			return fmt.Errorf("failed to remove %s: %w", entryPath, err)
+		}
+	}
+	return nil
+}
 
 // --- 시나리오 ---
 
 func TestRopeDB_UseCase_Spec(t *testing.T) {
 	testDir := computation.FindTestingStorageRootPath() + "/rope_visual"
+	clearDir(testDir)
 	db, err := NewRopeDBWithRoot(mode.TestingModeProcess, testDir, "rope_test", TraitLegend, RuleLegend) // 항상 새/빈 디렉터리
 	if err != nil {
 		t.Fatal(err)

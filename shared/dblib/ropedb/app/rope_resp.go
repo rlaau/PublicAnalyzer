@@ -300,8 +300,11 @@ func (b *BadgerRopeDB) traitName(code ropedomain.TraitCode) string {
 }
 
 func (b *BadgerRopeDB) generateTraitColor(code ropedomain.TraitCode) string {
-	h := (int(code) * 137) % 360
-	return fmt.Sprintf("hsl(%d, 70%%, 45%%)", h)
+	// RopeColor와 동일한 방식으로 명확한 색상 구분
+	h := (int(code)*89 + 180) % 360  // RopeColor와 유사하지만 다른 오프셋
+	s := 65 + (int(code)%4)*8        // 65-89% 범위 (4단계)
+	l := 40 + (int(code)%5)*5        // 40-60% 범위 (5단계)
+	return fmt.Sprintf("hsl(%d, %d%%, %d%%)", h, s, l)
 }
 func (b *BadgerRopeDB) generateRopeColor(id ropedomain.RopeID) string {
 	h := (int(id)*89 + 45) % 360
