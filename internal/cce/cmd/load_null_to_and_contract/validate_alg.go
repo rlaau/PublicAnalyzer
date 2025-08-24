@@ -8,17 +8,15 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math/big"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/sha3"
-
 	mmap "github.com/edsrzf/mmap-go"
-	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/cce/algo"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
 
 const (
@@ -129,7 +127,11 @@ func validateFile(path string, perFile int, printGoodBudget int, printedGood *in
 	for _, idx := range indexes {
 		r := readRec(mem, idx)
 
-		pred := predictAddress(r.From, r.Nonce)
+		pred, isOk := algo.TryPredictCreatedContractAddress(r.From, domain.NewNonce(r.Nonce))
+		if !isOk {
+			//이 경우, Create2방식으로 만들어진 컨트렉트임
+			continue
+		}
 
 		sampled++
 		if bytes.Equal(pred[:], r.RCAddr[:]) {
@@ -164,23 +166,6 @@ func readRec(mem []byte, idx int64) Rec {
 	r.Nonce = binary.BigEndian.Uint64(mem[base+offNonc : base+offNonc+8])
 	copy(r.RCAddr[:], mem[base+offRC:base+offRC+20])
 	return r
-}
-
-// PredictContractAddress(from, nonce) with RLP + Legacy Keccak-256
-func predictAddress(from [20]byte, nonce uint64) [20]byte {
-	var buf bytes.Buffer
-	if nonce == 0 {
-		_ = rlp.Encode(&buf, []interface{}{from[:], ""})
-	} else {
-		_ = rlp.Encode(&buf, []interface{}{from[:], new(big.Int).SetUint64(nonce)})
-	}
-	h := sha3.NewLegacyKeccak256()
-	h.Write(buf.Bytes())
-	sum := h.Sum(nil)
-
-	var out [20]byte
-	copy(out[:], sum[12:])
-	return out
 }
 
 // utilities

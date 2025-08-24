@@ -5,14 +5,27 @@ import (
 	"math/big"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
+	"github.com/shopspring/decimal"
 )
 
+type Nonce struct {
+	Valid bool
+	Value uint64
+}
+
+func NewNonce(v uint64) Nonce          { return Nonce{Valid: true, Value: v} }
+func (Nonce) Null() Nonce              { return Nonce{Valid: false} }
+func (n Nonce) Uint64() (uint64, bool) { return n.Value, n.Valid }
+
+// ===================== RawTransaction =====================
 type RawTransaction struct {
-	BlockTime string
-	TxId      string
-	From      string
-	To        string
-	Nonce     string // 트랜잭션 nonce (선택적, 필요시 사용)
+	TxId        string          // 0x + 64 hex
+	Nonce       Nonce           // optional, for CREATE 추적
+	From        string          // 0x + 40 hex
+	To          string          // 0x + 40 hex or ""
+	RCAddr      string          // 0x + 40 hex or "" (receipt_contract_address)
+	ValueOrNull decimal.Decimal // wei 값 (integer)
+	BlockTime   string          // RFC3339 string
 }
 
 // 트랜잭션 구조체
