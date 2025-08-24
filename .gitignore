@@ -7,6 +7,7 @@ testdata/
 *.txt
 *.db
 *.mem
+*.mm
 *.vlog
 *.jsonl
 chainanalyzer

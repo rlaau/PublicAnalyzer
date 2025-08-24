@@ -8,6 +8,7 @@ require (
 	cloud.google.com/go/bigquery v1.69.0
 	github.com/dgraph-io/badger/v4 v4.8.0
 	github.com/edsrzf/mmap-go v1.2.0
+	github.com/ethereum/go-ethereum v1.16.2
 	github.com/go-chi/chi/v5 v5.2.2
 	github.com/segmentio/kafka-go v0.4.48
 	google.golang.org/api v0.246.0
@@ -32,6 +33,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
 	github.com/googleapis/gax-go/v2 v2.15.0 // indirect
+	github.com/holiman/uint256 v1.3.2 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
