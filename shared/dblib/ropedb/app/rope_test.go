@@ -255,17 +255,6 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 	if rc := ropeCountOf(t, impl, addr(3)); rc != 3 {
 		t.Fatalf("vertex(3) rope count want=3 got=%d", rc)
 	}
-	frame := impl.MakeGraphFrameHTML("Rope Graph Viewer")
-
-	// 2) 백그라운드 HTML (내부에서 FetchDefaultGraphJson 호출)
-	bg, err := impl.MakeBackgroundHTML("graph_frame.html")
-	if err != nil {
-		t.Logf("bg warn: %v", err)
-	}
-
-	// 3) 파일로 덤프
-	_ = os.WriteFile(filepath.Join(testDir, "graph_frame.html"), []byte(frame), 0o644)
-	_ = os.WriteFile(filepath.Join(testDir, "index.html"), []byte(bg), 0o644)
 
 	// 필요하면 테스트 로그에 경로 출력
 	t.Log("wrote graph_frame.html & index.html")

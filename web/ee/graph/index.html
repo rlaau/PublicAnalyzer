@@ -14,8 +14,8 @@
   #graph,#search,#legend,#info{background:#fff;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.08);overflow:hidden}
   #graph{grid-column:1;grid-row:1;overflow:hidden;overscroll-behavior:contain}
   #search{grid-column:2;grid-row:1;padding:16px}
-  #legend{grid-column:1;grid-row:2;padding:16px}
-  #info{grid-column:2;grid-row:2;padding:16px}
+  #info{grid-column:1;grid-row:2;padding:16px}
+  #legend{grid-column:2;grid-row:2;padding:16px}
   #f{width:100%;height:100%;border:0;overflow:hidden;display:block}
   .sec h3{margin:0 0 10px 0;font-size:14px;color:#333}
   .row{margin-bottom:12px}
@@ -25,6 +25,11 @@
   .legend-item{display:flex;align-items:center;margin-bottom:6px}
   .legend-color{width:16px;height:16px;border-radius:3px;margin-right:8px}
   .kv{font-size:12px;color:#555}.kv b{color:#222}.muted{color:#888;font-size:12px}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  #info .kv{font-size:15px;font-weight:600;color:#333}
+  #info .kv b{color:#111;font-weight:700}
+  #info .muted{color:#666;font-size:13px;font-weight:500}
+  #info .mono{font-weight:600}
+  #info .sec h3{font-size:16px;font-weight:700;color:#222}
 </style>
 </head>
 <body>
@@ -32,29 +37,24 @@
 
   <section id="search" style="max-height: 90vh; overflow-y: auto; padding-right: 8px;">
     <div class="sec">
-      <h3>🔍 Address</h3>
+      <h3>🔍 Address Search</h3>
       <div class="row"><input id="addr" type="text" placeholder="0x1234..."/></div>
-      <button id="addrBtn">Search (Expand 1-hop)</button>
+      <button id="addrBtn">Search Address + 1-hop</button>
     </div>
     <div class="sec" style="margin-top:14px">
-      <h3>🏷 Trait</h3>
-      <div class="row"><input id="trait" type="text" placeholder="e.g. 100"/></div>
-      <button id="traitBtn">Search by Trait Code</button>
+      <h3>🧵 Rope Search</h3>
+      <div class="row"><input id="rope" type="text" placeholder="Rope ID (e.g. 1, 2, 3)"/></div>
+      <button id="ropeBtn">Search Rope Members + 1-hop</button>
     </div>
-    <div class="sec" style="margin-top:14px">
-      <h3>🧵 Rope</h3>
-      <div class="row"><input id="rope" type="text" placeholder="Rope ID"/></div>
-      <button id="ropeBtn">Search by Rope ID</button>
-    </div>
-    <button id="defBtn" class="green" style="margin-top:14px">🏠 Default</button>
+    <button id="defBtn" class="green" style="margin-top:14px">🏠 Default View</button>
   </section>
 
-  <section id="legend">
+  <section id="legend"  style="overflow-y: auto;">
     <div class="sec"><h3>🎨 Trait Colors</h3><div id="traitLegend"></div></div>
     <div class="sec" style="margin-top:10px"><h3>🧵 Rope Colors</h3><div id="ropeLegend"></div></div>
   </section>
 
-  <section id="info">
+  <section id="info" style="overflow-y:auto;">
     <div class="sec">
       <h3>ℹ️ Info</h3>
       <div id="stat" class="kv">
@@ -85,99 +85,323 @@ function syncStats(g){
   st.textContent = g.meta?.graphType || '-';
   ss.textContent = g.meta?.startNode || '-';
 }
-function mergeGraph(base, inc){
-  const nm = new Map(), em = new Map();
-  (base.nodes||[]).forEach(n=>nm.set(n.id,n));
-  (inc.nodes||[]).forEach(n=>nm.set(n.id,n));
-  (base.edges||[]).forEach(e=>em.set(e.id,e));
-  (inc.edges||[]).forEach(e=>em.set(e.id,e));
-  const nodes=[...nm.values()], edges=[...em.values()];
-  return { meta:{generatedAt:Math.floor(Date.now()/1000),graphType:'convolution',
-           startNode: base.meta?.startNode || inc.meta?.startNode || '',
-           nodeCount:nodes.length,edgeCount:edges.length}, nodes, edges,
-           legend: base.legend || inc.legend || {traits:{},ropes:{}} };
-}
+// mergeGraph() 함수 제거: 순수 DB 기반 아키텍처에서는 브라우저 상태 병합이 불필요함
+// 모든 그래프 작업은 단일 DB 쿼리 결과를 직접 사용
 function renderLegend(legend){
   const t = document.getElementById('traitLegend'), r = document.getElementById('ropeLegend');
   t.innerHTML = ''; r.innerHTML = '';
-  const mk = (color,name,count)=>`<div class="legend-item"><div class="legend-color" style="background:${color}"></div><span>${name}</span><span style="margin-left:auto;color:#888;font-size:11px">${count}</span></div>`;
-  for (const k in (legend.traits||{})) {
-    const it = legend.traits[k]; t.insertAdjacentHTML('beforeend', mk(it.color, it.name, it.count||0));
+  
+  // 클릭 가능한 범례 항목 생성
+  const mk = (color,name,count,traitCode)=>`<div class="legend-item" data-trait="${traitCode||''}" style="cursor:pointer;padding:4px;border-radius:4px;" onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background=''"onclick="toggleTraitHighlight('${traitCode||''}','${color}')"><div class="legend-color" style="background:${color}"></div><span>${name}</span><span style="margin-left:auto;color:#888;font-size:11px">${count}</span></div>`;
+  
+  // Multi-Trait 항목을 맨 위에 추가 (실제 멀티 트레이트 연결된 노드 수 계산)
+  let multiTraitNodes = new Set();
+  // CURRENT 그래프에서 parallelCount > 1인 엣지들의 노드들을 수집
+  if (CURRENT && CURRENT.edges) {
+    CURRENT.edges.forEach(edge => {
+      const cnt = edge.parallelCount || 1;
+      if (cnt > 1) {
+        multiTraitNodes.add(edge.source);
+        multiTraitNodes.add(edge.target);
+      }
+    });
   }
+  const multiTraitCount = multiTraitNodes.size;
+  t.insertAdjacentHTML('beforeend', mk('#000000', 'Multi-Trait', multiTraitCount, 'multi'));
+  
+  // 기존 트레이트들
+  for (const k in (legend.traits||{})) {
+    const it = legend.traits[k]; 
+    t.insertAdjacentHTML('beforeend', mk(it.color, it.name, it.count||0, k));
+  }
+  
   for (const k in (legend.ropes||{})) {
-    const it = legend.ropes[k]; r.insertAdjacentHTML('beforeend', mk(it.color, it.name, it.count||0));
+    const it = legend.ropes[k]; 
+    r.insertAdjacentHTML('beforeend', mk(it.color, it.name, it.count||0));
   }
 }
 
-// 메시지 이벤트(자식 → 부모)
+// 트레이트 하이라이팅 기능
+let currentHighlightTrait = null;
+
+function toggleTraitHighlight(traitCode, color) {
+  if (currentHighlightTrait === traitCode) {
+    // 이미 선택된 트레이트면 하이라이팅 해제
+    currentHighlightTrait = null;
+    f.contentWindow.postMessage({type: 'clear-highlight'}, '*');
+  } else {
+    // 새로운 트레이트 하이라이팅
+    currentHighlightTrait = traitCode;
+    f.contentWindow.postMessage({type: 'highlight-trait', payload: {traitCode, color}}, '*');
+  }
+}
+
+// 메시지(자식 → 부모)
 window.addEventListener('message', (ev)=>{
   const msg = ev.data||{};
   if (msg.type==='child-mounted'){
-    // 초기 로드: 서버에서 기본 그래프 받아서 프레임에 내려보낸다
+    // 초기 로드
     fetch('/api/ee/graph/default').then(r=>r.json()).then(g=>{
       CURRENT = g; syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{},ropes:{}});
       f.contentWindow.postMessage({type:'load-graph', payload: CURRENT}, '*');
-    }).catch(()=>{ /* noop */ });
+    });
   } else if (msg.type==='child-ready'){
     // ok 여부만 확인 가능
   } else if (msg.type==='node-hover'){
     if (!msg.payload){ nodeBox.textContent='Hover a node…'; nodeBox.classList.add('muted'); return; }
     nodeBox.classList.remove('muted');
-    nodeBox.innerHTML = 'ID: <span class="mono">'+msg.payload.id+'</span><br/>Label: <b>'+(msg.payload.label||'')+'</b>';
+    const p = msg.payload;
+    
+    // 기본 정보
+    let html = 'Address: <span class="mono">' + (p.id || '') + '</span>';
+    
+    // 로프 정보
+    if (p.ropeCount > 0) {
+      html += '<br/>Ropes: <b>' + p.ropeCount + '</b>';
+      if (p.ropeName && p.ropeName !== 'Unknown') {
+        html += ' (Primary: ' + p.ropeName + ')';
+      }
+    }
+    
+    // 트레이트 정보
+    if (p.traitCount > 0) {
+      html += '<br/>Traits: <b>' + p.traitCount + '</b>';
+      if (p.traits && p.traits.length > 0) {
+        html += '<br/>Types: ';
+        const traitNames = p.traits.slice(0, 3).map(t => t.traitName || 'code ' + t.traitCode).join(', ');
+        html += '<span class="muted">' + traitNames;
+        if (p.traits.length > 3) {
+          html += ' +' + (p.traits.length - 3) + ' more';
+        }
+        html += '</span>';
+      }
+    }
+    
+    // 정보가 없을 경우
+    if (p.ropeCount === 0 && p.traitCount === 0) {
+      html += '<br/><span class="muted">No connections</span>';
+    }
+    
+    nodeBox.innerHTML = html;
   } else if (msg.type==='edge-hover'){
     if (!msg.payload){ edgeBox.textContent='Hover an edge…'; edgeBox.classList.add('muted'); return; }
     edgeBox.classList.remove('muted');
     const p = msg.payload;
-    edgeBox.innerHTML = 'Trait: <b>'+(p.traitName||('code '+p.traitCode))+'</b> <span class="mono">#'+(p.traitId||0)+'</span>';
+    
+    if (p.isMultiTrait && p.traits) {
+      // 멀티 트레이트 정보 표시
+      let html = '<b>Multi-Trait Connection (' + p.totalTraits + ' traits):</b><br/>';
+      p.traits.forEach((trait, index) => {
+        html += (index > 0 ? '<br/>' : '') + 
+                '• <b>' + (trait.traitName || ('code ' + trait.traitCode)) + '</b> ' +
+                '<span class="mono">#' + (trait.traitId || 0) + '</span>';
+      });
+      edgeBox.innerHTML = html;
+    } else {
+      // 단일 트레이트 정보 표시
+      edgeBox.innerHTML = 'Trait: <b>'+(p.traitName||('code '+p.traitCode))+'</b> <span class="mono">#'+(p.traitId||0)+'</span>';
+    }
   } else if (msg.type==='node-click'){
     const id = msg.payload && msg.payload.id;
     if (!id) return;
-    // ✅ 확장은 이제 서버에게 요청한다
-    fetch('/api/ee/graph/expand?vertex='+encodeURIComponent(id))
-      .then(r=>r.json()).then(inc=>{
-        CURRENT = mergeGraph(CURRENT, inc);
-        syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{},ropes:{}});
-        f.contentWindow.postMessage({type:'apply-graph', payload: CURRENT}, '*');
-      });
+    
+    // 노드 확장 확인 대화상자
+    const shortId = id.length > 10 ? id.substr(0, 6) + '..' + id.substr(-4) : id;
+    const confirmExpand = confirm(`노드 "${shortId}"를 1-hop 확장하시겠습니까?\n\n연결된 노드들이 그래프에 추가됩니다.`);
+    
+    if (confirmExpand) {
+      console.log(`=== NODE EXPANSION (PURE DB MODE): ${shortId} ===`);
+      
+      fetch('/api/ee/graph/expand?v='+encodeURIComponent(id))
+        .then(r=>r.json()).then(expandResult=>{
+          console.log('Pure DB expansion result:', {
+            nodes: expandResult.nodes?.length || 0,
+            edges: expandResult.edges?.length || 0,
+            error: expandResult.error
+          });
+          
+          if (expandResult.error) {
+            console.error(`Expansion failed: ${expandResult.error}`);
+            alert('노드 확장에 실패했습니다: ' + expandResult.error);
+            return;
+          }
+          
+          // 기존 그래프에 확장 결과 추가 (apply-graph 사용)
+          console.log('Adding expansion results to existing graph');
+          const oldCurrent = CURRENT;
+          
+          // CURRENT에 새로운 노드와 엣지 추가 (브라우저 상태 동기화)
+          const nodeMap = new Map();
+          const edgeMap = new Map();
+          
+          // 기존 노드/엣지 추가
+          (CURRENT.nodes || []).forEach(n => nodeMap.set(n.id, n));
+          (CURRENT.edges || []).forEach(e => edgeMap.set(e.id, e));
+          
+          // 확장 결과 노드/엣지 추가
+          (expandResult.nodes || []).forEach(n => nodeMap.set(n.id, n));
+          (expandResult.edges || []).forEach(e => edgeMap.set(e.id, e));
+          
+          // CURRENT 업데이트
+          CURRENT.nodes = [...nodeMap.values()];
+          CURRENT.edges = [...edgeMap.values()];
+          CURRENT.meta = {
+            ...CURRENT.meta,
+            nodeCount: CURRENT.nodes.length,
+            edgeCount: CURRENT.edges.length,
+            generatedAt: Math.floor(Date.now()/1000)
+          };
+          
+          // 범례 업데이트 (확장 결과에 새로운 범례가 있다면)
+          if (expandResult.legend) {
+            CURRENT.legend = expandResult.legend;
+          }
+          
+          console.log('Graph expansion:', { 
+            old: { nodes: oldCurrent.nodes?.length || 0, edges: oldCurrent.edges?.length || 0 },
+            added: { nodes: expandResult.nodes?.length || 0, edges: expandResult.edges?.length || 0 },
+            new: { nodes: CURRENT.nodes.length, edges: CURRENT.edges.length }
+          });
+          
+          syncStats(CURRENT); 
+          renderLegend(CURRENT.legend||{traits:{},ropes:{}});
+          f.contentWindow.postMessage({type:'apply-graph', payload: expandResult}, '*');
+          console.log(`Pure DB expansion completed: ${shortId} (${CURRENT.nodes?.length || 0} nodes, ${CURRENT.edges?.length || 0} edges)`);
+        })
+        .catch(err => {
+          console.error(`Failed to expand node ${shortId}:`, err);
+          alert('노드 확장에 실패했습니다. 다시 시도해주세요.');
+        });
+    }
   }
 });
 
 // 검색 버튼 → 서버 호출
 document.getElementById('defBtn').onclick = ()=>{
+  console.log('Default button clicked');
   fetch('/api/ee/graph/default').then(r=>r.json()).then(g=>{
     CURRENT = g; syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{},ropes:{}});
     f.contentWindow.postMessage({type:'load-graph', payload: CURRENT}, '*');
   });
 };
+
+// 버튼 이벤트 등록 확인
+console.log('=== BUTTON EVENT REGISTRATION ===');
+console.log('addrBtn element:', document.getElementById('addrBtn'));
+console.log('ropeBtn element:', document.getElementById('ropeBtn'));
+console.log('defBtn element:', document.getElementById('defBtn'));
+console.log('=== EVENT HANDLERS REGISTERED ===');
+// 주소 검색: 해당 주소를 중심으로 그래프 초기화 + 1-hop 확장
 document.getElementById('addrBtn').onclick = ()=>{
-  const v=(document.getElementById('addr').value||'').trim();
-  if (!v) return alert('enter address');
-  fetch('/api/ee/graph/expand?vertex='+encodeURIComponent(v))
-    .then(r=>r.json()).then(inc=>{
-      CURRENT = mergeGraph(CURRENT, inc);
-      syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{},ropes:{}});
-      f.contentWindow.postMessage({type:'apply-graph', payload: CURRENT}, '*');
+  console.log('=== ADDRESS SEARCH (RESET MODE) ===');
+  const addr = (document.getElementById('addr').value||'').trim();
+  console.log('Searching address:', addr);
+  
+  if (!addr) {
+    return alert('주소를 입력해주세요 (예: 0x1234...)');
+  }
+  
+  const url = '/api/ee/graph/expand?v='+encodeURIComponent(addr);
+  console.log('Request URL:', url);
+  
+  fetch(url)
+    .then(r => r.json())
+    .then(searchResult => {
+      console.log('Search result:', {
+        nodes: searchResult.nodes?.length || 0,
+        edges: searchResult.edges?.length || 0,
+        error: searchResult.error
+      });
+      
+      if (searchResult.error) {
+        alert('주소 검색 실패: ' + searchResult.error);
+        return;
+      }
+      
+      // 그래프 완전 초기화 (DB 결과로 완전 대체, 병합 없음)
+      console.log('Replacing current graph with pure DB search results (no merge)');
+      CURRENT = searchResult;
+      
+      // 그래프 메타 정보 설정
+      CURRENT.meta = {
+        ...CURRENT.meta,
+        generatedAt: Math.floor(Date.now()/1000),
+        graphType: 'search-address',
+        startNode: addr
+      };
+      
+      syncStats(CURRENT); 
+      renderLegend(CURRENT.legend||{traits:{},ropes:{}});
+      
+      // iframe 새로고침 없이 그래프만 완전 리셋 후 새 데이터 로드
+      console.log('=== RESETTING GRAPH WITHOUT IFRAME RELOAD ===');
+      console.log('New search graph data:', CURRENT);
+      
+      // load-graph 메시지로 완전한 그래프 교체 수행
+      f.contentWindow.postMessage({type:'load-graph', payload: CURRENT}, '*');
+      
+      console.log(`Address search completed: ${addr} (${CURRENT.nodes?.length || 0} nodes, ${CURRENT.edges?.length || 0} edges)`);
+    })
+    .catch(err => {
+      console.error('Address search error:', err);
+      alert('주소 검색 중 오류가 발생했습니다: ' + err.message);
     });
 };
-document.getElementById('traitBtn').onclick = ()=>{
-  const raw=(document.getElementById('trait').value||'').trim();
-  if (!raw) return alert('enter trait code (int)');
-  fetch('/api/ee/graph/trait/'+encodeURIComponent(raw))
-    .then(r=>r.json()).then(g=>{
-      CURRENT = mergeGraph(CURRENT, g);
-      syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{},ropes:{}});
-      f.contentWindow.postMessage({type:'apply-graph', payload: CURRENT}, '*');
-    });
-};
+
+// Rope 검색: 해당 Rope를 중심으로 그래프 초기화 (완전히 DB 기반, 병합 없음)
 document.getElementById('ropeBtn').onclick = ()=>{
-  const raw=(document.getElementById('rope').value||'').trim();
-  if (!raw) return alert('enter rope id');
-  fetch('/api/ee/graph/rope/'+encodeURIComponent(raw))
-    .then(r=>r.json()).then(g=>{
-      CURRENT = mergeGraph(CURRENT, g);
-      syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{},ropes:{}});
-      f.contentWindow.postMessage({type:'apply-graph', payload: CURRENT}, '*');
+  const ropeId = (document.getElementById('rope').value||'').trim();
+  if (!ropeId) return alert('Rope ID를 입력해주세요 (예: 1, 2, 3)');
+  
+  console.log(`=== ROPE SEARCH (PURE DB MODE): ${ropeId} ===`);
+  
+  // 단일 DB 호출: FetchGraphByRopeID는 이미 rope 멤버들 + 1-hop 확장을 DB에서 계산함 (depth=2)
+  const url = '/api/ee/graph/rope/'+encodeURIComponent(ropeId);
+  console.log('Request URL:', url);
+  
+  fetch(url)
+    .then(r => r.json())
+    .then(searchResult => {
+      console.log('Pure DB rope search result:', {
+        nodes: searchResult.nodes?.length || 0,
+        edges: searchResult.edges?.length || 0,
+        error: searchResult.error
+      });
+      
+      if (searchResult.error) {
+        alert('Rope 검색 실패: ' + searchResult.error);
+        return;
+      }
+      
+      // 그래프 완전 초기화 (순수 DB 결과, 브라우저 상태 병합 없음)
+      console.log('Replacing current graph with pure DB rope results (no browser merging)');
+      CURRENT = searchResult;
+      
+      // 그래프 메타 정보 설정
+      CURRENT.meta = {
+        ...CURRENT.meta,
+        generatedAt: Math.floor(Date.now()/1000),
+        graphType: 'search-rope',
+        startNode: `Rope ${ropeId}`
+      };
+      
+      syncStats(CURRENT);
+      renderLegend(CURRENT.legend||{traits:{},ropes:{}});
+      
+      // iframe 새로고침 없이 그래프만 완전 리셋 후 새 데이터 로드
+      console.log('=== RESETTING ROPE GRAPH WITHOUT IFRAME RELOAD ===');
+      console.log('Pure DB rope graph data:', CURRENT);
+      
+      // load-graph 메시지로 완전한 그래프 교체 수행
+      f.contentWindow.postMessage({type:'load-graph', payload: CURRENT}, '*');
+      
+      console.log(`Pure DB rope search completed: ${ropeId} (${CURRENT.nodes?.length || 0} nodes, ${CURRENT.edges?.length || 0} edges)`);
+    })
+    .catch(err => {
+      console.error('Rope search error:', err);
+      alert('Rope 검색 중 오류가 발생했습니다: ' + err.message);
     });
 };
 </script>
-</body></html>
+</body>
+</html>

@@ -27,13 +27,21 @@ type MetaInfo struct {
 	StartNode   string `json:"startNode,omitempty"`
 }
 
+// 모든 로프를 담는 간단 구조 (대표 로프는 NodeInfo.RopeID/RopeName/Color 그대로 유지)
+type RopeBrief struct {
+	ID    ropedomain.RopeID `json:"id"`
+	Name  string            `json:"name"`
+	Color string            `json:"color"`
+}
+
 type NodeInfo struct {
 	ID       string            `json:"id"`
 	Label    string            `json:"label"`
-	Color    string            `json:"color"`
+	Color    string            `json:"color"` // 대표 로프 색
 	Size     int               `json:"size"`
-	RopeID   ropedomain.RopeID `json:"ropeId"`
-	RopeName string            `json:"ropeName"`
+	RopeID   ropedomain.RopeID `json:"ropeId"`   // 대표 로프
+	RopeName string            `json:"ropeName"` // 대표 로프명
+	Ropes    []RopeBrief       `json:"ropes,omitempty"`
 	Traits   []NodeTrait       `json:"traits"`
 }
 
@@ -44,6 +52,7 @@ type NodeTrait struct {
 	TraitID   ropedomain.TraitID   `json:"traitId"`
 }
 
+// EdgeInfo: omitempty 제거 (0도 직렬화되게)
 type EdgeInfo struct {
 	ID        string               `json:"id"`
 	Source    string               `json:"source"`
@@ -54,6 +63,10 @@ type EdgeInfo struct {
 	TraitName string               `json:"traitName"`
 	TraitID   ropedomain.TraitID   `json:"traitId"`
 	LastSeen  int64                `json:"lastSeen"`
+
+	Pair          string `json:"pair"`          // "lo|hi"
+	ParallelIndex int    `json:"parallelIndex"` // 0..(ParallelCount-1)
+	ParallelCount int    `json:"parallelCount"` // 동일 Pair 내 총 개수
 }
 
 type LegendInfo struct {
@@ -118,6 +131,7 @@ func ConvolutionGraph(orig, inc GraphData) GraphData {
 	for _, e := range em {
 		out.Edges = append(out.Edges, e)
 	}
+	out.Edges = annotateParallel(out.Edges) // ★ 여기!
 	// legend
 	if out.Legend.Traits == nil {
 		out.Legend.Traits = map[string]LegendItem{}
@@ -206,13 +220,17 @@ func (b *BadgerRopeDB) buildGraphFromVertex(start shareddomain.Address, depth in
 				}
 				eid := fmt.Sprintf("e:%s|%s|%d|%d", src, dst, tr.Trait, tr.TraitID)
 				if _, ok := edgeMap[eid]; !ok {
-					edgeMap[eid] = b.createEdgeInfo(src, dst, tr, eid)
+					e := b.createEdgeInfo(src, dst, tr, eid)
+					// pair 키 저장(평행 간선 그룹화용)
+					e.Pair = fmt.Sprintf("%s|%s", src, dst)
+					edgeMap[eid] = e
 				}
 			}
 		}
 		q = nxt
 	}
 
+	// materialize
 	nodes := make([]NodeInfo, 0, len(nodeMap))
 	for _, n := range nodeMap {
 		nodes = append(nodes, n)
@@ -220,6 +238,29 @@ func (b *BadgerRopeDB) buildGraphFromVertex(start shareddomain.Address, depth in
 	edges := make([]EdgeInfo, 0, len(edgeMap))
 	for _, e := range edgeMap {
 		edges = append(edges, e)
+	}
+	edges = annotateParallel(edges) // ★ 여기!
+
+	// === 평행 간선 인덱싱 ===
+	groups := map[string][]int{} // pair -> indices
+	for i := range edges {
+		p := edges[i].Pair
+		if p == "" {
+			lo, hi := edges[i].Source, edges[i].Target
+			if hi < lo {
+				lo, hi = hi, lo
+			}
+			p = lo + "|" + hi
+			edges[i].Pair = p
+		}
+		groups[p] = append(groups[p], i)
+	}
+	for _, idxs := range groups {
+		n := len(idxs)
+		for k, i := range idxs {
+			edges[i].ParallelIndex = k
+			edges[i].ParallelCount = n
+		}
 	}
 
 	legend := b.generateLegend(nodes, edges)
@@ -241,10 +282,21 @@ func (b *BadgerRopeDB) buildGraphFromVertex(start shareddomain.Address, depth in
 func (b *BadgerRopeDB) createNodeInfo(v *ropedomain.Vertex) NodeInfo {
 	var ropeID ropedomain.RopeID
 	var ropeColor, ropeName string
-	if len(v.Ropes) > 0 {
-		ropeID = v.Ropes[0].ID
-		ropeColor = b.generateRopeColor(ropeID)
-		ropeName = fmt.Sprintf("Rope %d", ropeID)
+
+	// 모든 로프 수집
+	var allRopes []RopeBrief
+	for _, r := range v.Ropes {
+		allRopes = append(allRopes, RopeBrief{
+			ID:    r.ID,
+			Name:  fmt.Sprintf("Rope %d", r.ID),
+			Color: b.generateRopeColor(r.ID),
+		})
+	}
+	// 대표 로프(첫 번째)로 기본 색/이름 설정
+	if len(allRopes) > 0 {
+		ropeID = allRopes[0].ID
+		ropeName = allRopes[0].Name
+		ropeColor = allRopes[0].Color
 	} else {
 		ropeColor = "#888888"
 		ropeName = "No Rope"
@@ -259,9 +311,26 @@ func (b *BadgerRopeDB) createNodeInfo(v *ropedomain.Vertex) NodeInfo {
 			TraitID:   tr.TraitID,
 		}
 	}
-	label := v.Address.String()
-	if len(label) > 13 {
-		label = label[:10] + "..."
+	// 주소 축약
+	addr := v.Address.String()
+	shortAddr := addr
+	if len(addr) > 13 {
+		shortAddr = addr[:6] + ".." + addr[len(addr)-4:]
+	}
+	
+	// 라벨에 더 많은 정보 포함
+	ropeCount := len(allRopes)
+	traitCount := len(v.Traits)
+	
+	var label string
+	if ropeCount > 0 && traitCount > 0 {
+		label = fmt.Sprintf("%s\nR:%d T:%d", shortAddr, ropeCount, traitCount)
+	} else if ropeCount > 0 {
+		label = fmt.Sprintf("%s\nR:%d", shortAddr, ropeCount)
+	} else if traitCount > 0 {
+		label = fmt.Sprintf("%s\nT:%d", shortAddr, traitCount)
+	} else {
+		label = shortAddr
 	}
 
 	return NodeInfo{
@@ -271,6 +340,7 @@ func (b *BadgerRopeDB) createNodeInfo(v *ropedomain.Vertex) NodeInfo {
 		Size:     5 + len(v.Traits),
 		RopeID:   ropeID,
 		RopeName: ropeName,
+		Ropes:    allRopes,
 		Traits:   traits,
 	}
 }
@@ -301,9 +371,9 @@ func (b *BadgerRopeDB) traitName(code ropedomain.TraitCode) string {
 
 func (b *BadgerRopeDB) generateTraitColor(code ropedomain.TraitCode) string {
 	// RopeColor와 동일한 방식으로 명확한 색상 구분
-	h := (int(code)*89 + 180) % 360  // RopeColor와 유사하지만 다른 오프셋
-	s := 65 + (int(code)%4)*8        // 65-89% 범위 (4단계)
-	l := 40 + (int(code)%5)*5        // 40-60% 범위 (5단계)
+	h := (int(code)*89 + 180) % 360 // RopeColor와 유사하지만 다른 오프셋
+	s := 65 + (int(code)%4)*8       // 65-89% 범위 (4단계)
+	l := 40 + (int(code)%5)*5       // 40-60% 범위 (5단계)
 	return fmt.Sprintf("hsl(%d, %d%%, %d%%)", h, s, l)
 }
 func (b *BadgerRopeDB) generateRopeColor(id ropedomain.RopeID) string {
@@ -319,12 +389,14 @@ func (b *BadgerRopeDB) generateLegend(nodes []NodeInfo, edges []EdgeInfo) Legend
 
 	tcnt := map[ropedomain.TraitCode]int{}
 	rcnt := map[ropedomain.RopeID]int{}
+
 	for _, e := range edges {
 		tcnt[e.TraitCode]++
 	}
+	// ▲ 모든 로프 멤버십을 반영
 	for _, n := range nodes {
-		if n.RopeID != 0 {
-			rcnt[n.RopeID]++
+		for _, rb := range n.Ropes {
+			rcnt[rb.ID]++
 		}
 	}
 

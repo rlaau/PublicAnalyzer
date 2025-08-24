@@ -8,15 +8,25 @@
       height:100%; margin:0;
       overflow:hidden; scrollbar-gutter: stable both-edges; overscroll-behavior:none;
     }
-    #container{position:absolute;inset:0;overflow:hidden;touch-action:none;user-select:none}
-    canvas{display:block}
+    #container{ position:absolute; inset:0; overflow:hidden; touch-action:none; user-select:none }
+    canvas{ display:block }
     #hud{
-      position:absolute;top:10px;left:10px;z-index:10;
-      background:rgba(255,255,255,.92);padding:8px 10px;border-radius:10px;
+      position:absolute; top:10px; left:10px; z-index:10;
+      background:rgba(255,255,255,.92); padding:8px 10px; border-radius:10px;
       font:12px/1.3 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Noto Sans,Arial;
       box-shadow:0 2px 10px rgba(0,0,0,.08)
     }
-    #hud code{padding:2px 6px;background:#eee;border-radius:6px}
+    #hud code{ padding:2px 6px; background:#eee; border-radius:6px }
+    
+    
+    /* 노드 드래그 커서 */
+    .dragging-node {
+      cursor: move !important;
+    }
+    
+    .hovering-node {
+      cursor: grab !important;
+    }
   </style>
   <script src="https://unpkg.com/graphology@0.25.4/dist/graphology.umd.min.js"></script>
   <script src="https://unpkg.com/sigma@2.4.0/build/sigma.min.js"></script>
@@ -34,8 +44,13 @@
 
   let GRAPH = null, RENDERER = null, DATA = null;
   let TRAIT_PALETTE = {};
+  
+  // 더블클릭 관련 변수들
+  let hoveredNode = null;
+  let lastClickTime = 0;
+  let lastClickedNode = null;
 
-  // --- Colors ---
+  // ===== Color helpers =====
   function clamp01(x){ return Math.max(0, Math.min(1, x)); }
   function hslToHex(h, s, l){
     h = ((h%360)+360)%360; s = clamp01(s/100); l = clamp01(l/100);
@@ -85,82 +100,200 @@
     return hslToHex(h, s, l);
   }
 
-  function buildGraphFromData(data){
+  // 오버레이 관련 함수들 제거됨
+
+  // === 굴곡/굵기 튜닝 ===
+  const CURVE_MIN = 40;           // 2개 평행일 때도 확실히 휘도록
+  const CURVE_SCALE = 0.22;       // 거리 비례 가산
+  const WIDTH_BASE = 3.6;         // 굵기 배율(크게)
+  const WIDTH_HOVER_BUMP = 1.35;  // 호버시 가산
+
+  // ===== Graph build / merge =====
+  function addDataToGraph(data){
     DATA = data;
     TRAIT_PALETTE = buildTraitPaletteFromLegend();
 
-    const G = new GraphologyGraph({ type:'undirected', multi:true });
-
     const NODE_COLOR = '#222222';
     const NODE_LABEL = '#ffffff';
-    const N = (data.nodes||[]).length || 1;
-    (data.nodes||[]).forEach((n,i)=>{
-      if (!G.hasNode(n.id)) G.addNode(n.id, {
-        label: n.label || n.id,
-        size: Math.max(4, Math.min(16, n.size||8)),
-        color: NODE_COLOR,
-        labelColor: NODE_LABEL,
-        x: Math.cos(2*Math.PI*i/N)*120,
-        y: Math.sin(2*Math.PI*i/N)*120
+
+    const nodes = data.nodes || [];
+    const edges = data.edges || [];
+    
+    // 그래프 업데이트 후 이벤트 리스너 재등록 방지를 위한 플래그
+    const wasInitialized = RENDERER !== null;
+
+    // 기존 노드들의 위치 정보 수집
+    const existingPositions = {};
+    if (GRAPH) {
+      GRAPH.forEachNode((nodeId) => {
+        const attrs = GRAPH.getNodeAttributes(nodeId);
+        existingPositions[nodeId] = { x: attrs.x, y: attrs.y };
       });
+    }
+
+    // 노드 추가/업데이트
+    const newNodes = [];
+    nodes.forEach((n,i)=>{
+      if (!GRAPH.hasNode(n.id)) {
+        newNodes.push(n.id);
+        // 새 노드 위치 결정: 초기 로딩이면 _initialX/Y 사용, 아니면 임시 위치
+        const x = n._initialX !== undefined ? n._initialX : 0;
+        const y = n._initialY !== undefined ? n._initialY : 0;
+        
+        GRAPH.addNode(n.id, {
+          label: n.label || n.id,
+          size: Math.max(4, Math.min(16, n.size||8)),
+          color: NODE_COLOR,
+          labelColor: NODE_LABEL,
+          x: x,
+          y: y
+        });
+      } else {
+        // 기존 노드는 위치 유지하고 속성만 업데이트
+        GRAPH.mergeNodeAttributes(n.id, {
+          label: n.label || n.id,
+          size: Math.max(4, Math.min(16, n.size||8)),
+        });
+      }
     });
 
-    const pairCount = Object.create(null);
-    const eseen = new Set();
-
-    (data.edges||[]).forEach((e)=>{
-      if (eseen.has(e.id)) return; eseen.add(e.id);
+    // 엣지 추가/업데이트
+    const seen = new Set();
+    edges.forEach((e)=>{
+      if (seen.has(e.id)) return; seen.add(e.id);
       const src = e.source, dst = e.target;
-      if (!G.hasNode(src)) G.addNode(src, { label: src, size: 6, color: NODE_COLOR, labelColor: NODE_LABEL });
-      if (!G.hasNode(dst)) G.addNode(dst, { label: dst, size: 6, color: NODE_COLOR, labelColor: NODE_LABEL });
+      if (!GRAPH.hasNode(src)) GRAPH.addNode(src, { label: src, size: 6, color: NODE_COLOR, labelColor: NODE_LABEL });
+      if (!GRAPH.hasNode(dst)) GRAPH.addNode(dst, { label: dst, size: 6, color: NODE_COLOR, labelColor: NODE_LABEL });
 
-      const lo = src < dst ? src : dst;
-      const hi = src < dst ? dst : src;
-      const key = lo + '|' + hi;
-      const k = (pairCount[key] = (pairCount[key] || 0) + 1);
-
-      const width = Math.max(1, Math.min(5, (e.weight||1) * (1 + (k-1)*0.2)));
       const tc = Number(e.traitCode) || 0;
+      const hex = parseColorToHex(e.color || (traitColorFromLegend(tc, null) || genTraitColor(tc)));
 
-      const hex = parseColorToHex(
-        e.color || (traitColorFromLegend(tc, null) || genTraitColor(tc))
-      );
-
-      G.addEdgeWithKey(e.id, src, dst, {
-        size: width,
+      const attrs = {
+        size: Math.max(3, Math.min(9, (e.weight || 3))), // 기본값 UP
         colorHex: hex,
-        traitCode: e.traitCode, traitName: e.traitName, traitId: e.traitId, lastSeen: e.lastSeen||0
-      });
-    });
+        traitCode: e.traitCode, traitName: e.traitName, traitId: e.traitId, lastSeen: e.lastSeen||0,
+        pair: e.pair || [src, dst].sort().join('|'),
+        parallelIndex: (typeof e.parallelIndex === 'number') ? e.parallelIndex : 0,
+        parallelCount: (typeof e.parallelCount === 'number' && e.parallelCount>0) ? e.parallelCount : 1
+      };
 
-    return G;
+      if (GRAPH.hasEdge(e.id)) {
+        GRAPH.mergeEdgeAttributes(e.id, attrs);
+      } else {
+        GRAPH.addEdgeWithKey(e.id, src, dst, attrs);
+      }
+    });
+    
+    // 새 노드들을 연결된 기존 노드 주변에 배치
+    positionNewNodes(newNodes, edges);
+    
+    // 기존 렌더러가 있을 때만 이벤트 리스너 상태 유지
+    if (wasInitialized && RENDERER) {
+      // 이벤트 상태를 일시적으로 재활성화
+      setTimeout(() => {
+        RENDERER.setSetting('enableEdgeHoverEvents', true);
+        RENDERER.setSetting('enableEdgeClickEvents', true);
+      }, 50);
+    }
+  }
+  
+  // 새 노드들을 원형 기반으로 배치하는 함수
+  function positionNewNodes(newNodes, edges) {
+    if (!GRAPH || newNodes.length === 0) return;
+    
+    // 현재 그래프의 반지름 계산
+    let maxDistance = 120; // 초기 원형 반지름
+    GRAPH.forEachNode(nodeId => {
+      if (!newNodes.includes(nodeId)) {
+        const attrs = GRAPH.getNodeAttributes(nodeId);
+        const distance = Math.sqrt(attrs.x * attrs.x + attrs.y * attrs.y);
+        maxDistance = Math.max(maxDistance, distance);
+      }
+    });
+    
+    // 새 레이어의 반지름 (기존보다 더 멀리)
+    const newRadius = maxDistance + 100;
+    
+    newNodes.forEach((newNodeId, index) => {
+      // 연결된 기존 노드 찾기
+      const connectedNodes = [];
+      edges.forEach(e => {
+        if (e.source === newNodeId && GRAPH.hasNode(e.target) && !newNodes.includes(e.target)) {
+          connectedNodes.push(e.target);
+        } else if (e.target === newNodeId && GRAPH.hasNode(e.source) && !newNodes.includes(e.source)) {
+          connectedNodes.push(e.source);
+        }
+      });
+      
+      let newX, newY;
+      
+      if (connectedNodes.length > 0) {
+        // 연결된 노드의 방향을 기준으로 배치
+        let avgAngle = 0;
+        connectedNodes.forEach(nodeId => {
+          const attrs = GRAPH.getNodeAttributes(nodeId);
+          const angle = Math.atan2(attrs.y, attrs.x);
+          avgAngle += angle;
+        });
+        avgAngle /= connectedNodes.length;
+        
+        // 기존 노드 방향으로 확장 (더 큰 각도 변화)
+        const angleVariation = (Math.random() - 0.5) * 1.0; // ±30도 정도
+        const finalAngle = avgAngle + angleVariation;
+        
+        newX = Math.cos(finalAngle) * newRadius;
+        newY = Math.sin(finalAngle) * newRadius;
+      } else {
+        // 연결된 노드가 없으면 균등하게 배치
+        const angle = (2 * Math.PI * index) / newNodes.length;
+        newX = Math.cos(angle) * newRadius;
+        newY = Math.sin(angle) * newRadius;
+      }
+      
+      // 새 노드 위치 설정
+      GRAPH.setNodeAttribute(newNodeId, 'x', newX);
+      GRAPH.setNodeAttribute(newNodeId, 'y', newY);
+    });
   }
 
-  function mount(G){
+  function mountOnce(initialData){
     const container = document.getElementById('container');
-    if (RENDERER) { RENDERER.kill(); RENDERER = null; }
-    GRAPH = G;
+    GRAPH = new GraphologyGraph({ type:'undirected', multi:true });
+    
+    // 초기 그래프는 원형 배치 사용
+    const nodes = initialData.nodes || [];
+    const N = nodes.length || 1;
+    nodes.forEach((n, i) => {
+      n._initialX = Math.cos(2*Math.PI*i/N)*120;
+      n._initialY = Math.sin(2*Math.PI*i/N)*120;
+    });
+    // 오버레이 초기화 제거됨
 
-    const BIG_EDGE_THRESHOLD = 4000;
-    const hideOnMove = GRAPH.size > BIG_EDGE_THRESHOLD;
     RENDERER = new SigmaCtor(GRAPH, container, {
-      renderLabels: true,
-      labelDensity: 0.85,
-      labelSize: 10,
-      labelColor: { color: 'data(labelColor)' },
+       renderLabels: true,
+    //   labelDensity: 0.9,
+    //   labelSize: 10,
+    //   labelColor: { color: 'data(labelColor)' },
       edgeColor:'data',
       color: 'data',
       enableEdgeHoverEvents: true,
       edgeHoverPrecision: 80,
-      hideEdgesOnMove: hideOnMove,
-      enableEdgeClickEvents: false,
+      hideEdgesOnMove: false,            // 계속 보여주고 오버레이만 재그림
+      enableEdgeClickEvents: true,
       edgeReducer: (edge, data) => {
-        let w = Math.max(4, Math.min(7, data.size || 2));
-        if (data.hovered || GRAPH.getEdgeAttribute(edge, '__hover__')) w = Math.max(w, 7);
-        return { ...data, color: data.colorHex || '#9aa0a6', size: w };
+        // 모든 간선을 단일 엣지로 통일 처리
+        const cnt = data.parallelCount || 1;
+        let w = Math.max(2.5, (data.size || 3) * 1.8);
+        const hovered = GRAPH.getEdgeAttribute(edge, '__hover__');
+        if (hovered) w *= 1.15;
+        
+        // 멀티 트레이트 연결 시 검정색, 단일 트레이트는 기존 색상
+        const color = (cnt > 1) ? '#000000' : (data.colorHex || '#9aa0a6');
+        return { ...data, color, size: w };
       },
     });
 
+    // 캡터 hover 안정화
     const captor = RENDERER.getMouseCaptor();
     let hoverDisabled = false;
     const setHover = (on) => {
@@ -171,52 +304,446 @@
     captor.on('mousedown', () => setHover(false));
     captor.on('drag',     () => setHover(false));
     captor.on('mouseup',  () => setHover(true));
-    RENDERER.getCamera().on('updated', () => {
-      clearTimeout(RENDERER.__hoverTimer);
-      RENDERER.__hoverTimer = setTimeout(()=>setHover(true), 120);
-    });
+    // 카메라 업데이트 시 오버레이 렌더링 제거됨
 
-    document.getElementById('ncount').textContent = String(GRAPH.order);
-    document.getElementById('ecount').textContent = String(GRAPH.size);
-
+    // 이벤트(노드/엣지)
     RENDERER.on('enterNode', ({ node }) => {
+      hoveredNode = node;
+      
+      // 커서 변경
+      document.body.classList.add('hovering-node');
+      
       const attrs = GRAPH.getNodeAttributes(node);
-      const payload = { id: node, label: attrs.label || '', ropeColor: attrs.color };
-      window.parent && window.parent.postMessage({ type: 'node-hover', payload }, '*');
-    });
-    RENDERER.on('leaveNode', () => {
-      window.parent && window.parent.postMessage({ type: 'node-hover', payload: null }, '*');
-    });
-    RENDERER.on('enterEdge', ({ edge }) => {
-      const a = GRAPH.getEdgeAttributes(edge);
-      window.parent && window.parent.postMessage({ type:'edge-hover', payload:{
-        id: edge, traitCode: a.traitCode||0, traitName: a.traitName||'', traitId: a.traitId||0, lastSeen: a.lastSeen||0
+      
+      // 노드의 추가 정보를 백엔드 데이터에서 찾기
+      let nodeDetails = null;
+      if (DATA && DATA.nodes) {
+        nodeDetails = DATA.nodes.find(n => n.id === node);
+      }
+      
+      window.parent && window.parent.postMessage({ type: 'node-hover', payload:{
+        id: node, 
+        label: attrs.label || '', 
+        ropeColor: attrs.color,
+        ropeCount: nodeDetails ? nodeDetails.ropes?.length || 0 : 0,
+        traitCount: nodeDetails ? nodeDetails.traits?.length || 0 : 0,
+        ropeName: nodeDetails ? nodeDetails.ropeName || 'Unknown' : 'Unknown',
+        traits: nodeDetails ? nodeDetails.traits || [] : []
       }}, '*');
     });
-    RENDERER.on('leaveEdge', () => {
+    
+    RENDERER.on('leaveNode', () => {
+      hoveredNode = null;
+      
+      // 커서 복원
+      document.body.classList.remove('hovering-node');
+      
+      window.parent && window.parent.postMessage({ type: 'node-hover', payload: null }, '*');
+    });
+
+    RENDERER.on('enterEdge', ({ edge }) => {
+      GRAPH.setEdgeAttribute(edge, '__hover__', true);
+      const a = GRAPH.getEdgeAttributes(edge);
+      
+      // 멀티 엣지인지 확인하고 모든 관련 트레이트 정보 수집
+      const parallelCount = a.parallelCount || 1;
+      if (parallelCount > 1) {
+        // 같은 노드 쌍의 모든 엣지 찾기
+        const src = GRAPH.source(edge);
+        const dst = GRAPH.target(edge);
+        const allTraits = [];
+        
+        GRAPH.forEachEdge((edgeKey, attrs) => {
+          const eSrc = GRAPH.source(edgeKey);
+          const eDst = GRAPH.target(edgeKey);
+          
+          // 같은 노드 쌍인지 확인 (양방향 고려)
+          if ((eSrc === src && eDst === dst) || (eSrc === dst && eDst === src)) {
+            allTraits.push({
+              traitCode: attrs.traitCode || 0,
+              traitName: attrs.traitName || '',
+              traitId: attrs.traitId || 0,
+              lastSeen: attrs.lastSeen || 0
+            });
+          }
+        });
+        
+        // 멀티 트레이트 정보 전송
+        window.parent && window.parent.postMessage({ type:'edge-hover', payload:{
+          id: edge, 
+          isMultiTrait: true,
+          traits: allTraits,
+          totalTraits: allTraits.length
+        }}, '*');
+      } else {
+        // 단일 트레이트 엣지
+        window.parent && window.parent.postMessage({ type:'edge-hover', payload:{
+          id: edge, 
+          traitCode: a.traitCode||0, 
+          traitName: a.traitName||'', 
+          traitId: a.traitId||0, 
+          lastSeen: a.lastSeen||0,
+          isMultiTrait: false
+        }}, '*');
+      }
+    });
+    RENDERER.on('leaveEdge', ({ edge }) => {
+      GRAPH.removeEdgeAttribute(edge, '__hover__');
       window.parent && window.parent.postMessage({ type:'edge-hover', payload:null }, '*');
     });
-    RENDERER.on('clickNode', ({ node }) => {
-      window.parent && window.parent.postMessage({ type:'node-click', payload:{ id: node }}, '*');
+    // 노드 드래그 기능
+    let draggedNode = null;
+    let isDragging = false;
+    let dragStartTime = 0;
+    
+    // 클릭 vs 드래그 구분을 위한 변수들
+    let dragStartX = 0;
+    let dragStartY = 0;
+    const DRAG_THRESHOLD = 5; // 5픽셀 이상 움직이면 드래그로 간주
+
+    RENDERER.on('downNode', ({ node, captor, event }) => {
+      draggedNode = node;
+      isDragging = false;
+      dragStartTime = Date.now();
+      
+      // 드래그 시작 위치 기록
+      dragStartX = event.original.clientX;
+      dragStartY = event.original.clientY;
+      
+      // 노드 드래그 시 화면 이동 방지
+      captor.isDragging = true; // Sigma.js에 드래그 중임을 알림
+      
+      // 카메라 완전 비활성화
+      RENDERER.getCamera().disable();
+      
+      // 드래그 중 다른 이벤트들과 카메라 이동 비활성화
+      RENDERER.setSetting('enableEdgeHoverEvents', false);
+      
+      // 이벤트 전파 중단
+      event.preventSigmaDefault();
+      event.original.preventDefault();
+      event.original.stopPropagation();
     });
+    
+    RENDERER.getMouseCaptor().on('mousemove', (event) => {
+      if (draggedNode) {
+        // 드래그 거리 계산
+        const currentX = event.original.clientX;
+        const currentY = event.original.clientY;
+        const dragDistance = Math.sqrt(
+          Math.pow(currentX - dragStartX, 2) + Math.pow(currentY - dragStartY, 2)
+        );
+        
+        // 임계값을 넘었을 때만 실제 드래그 시작
+        if (dragDistance > DRAG_THRESHOLD) {
+          isDragging = true;
+          
+          // 드래그 시작 시 커서 변경 (여기서 처음 변경)
+          if (!document.body.classList.contains('dragging-node')) {
+            document.body.classList.remove('hovering-node');
+            document.body.classList.add('dragging-node');
+          }
+          
+          // 마우스 좌표를 그래프 좌표로 변환
+          const pos = RENDERER.viewportToGraph(event);
+          
+          // 노드 위치 업데이트
+          GRAPH.setNodeAttribute(draggedNode, 'x', pos.x);
+          GRAPH.setNodeAttribute(draggedNode, 'y', pos.y);
+          
+          // 렌더러 새로고침 (엣지가 자동으로 따라옴)
+          RENDERER.refresh();
+        }
+        
+        // 이벤트 전파 중단 (화면 이동 방지)
+        event.preventSigmaDefault();
+        event.original.preventDefault();
+        event.original.stopPropagation();
+      }
+    });
+    
+    RENDERER.getMouseCaptor().on('mouseup', () => {
+      if (draggedNode) {
+        const captor = RENDERER.getMouseCaptor();
+        captor.isDragging = false; // 드래그 상태 해제
+        
+        // 카메라 다시 활성화
+        RENDERER.getCamera().enable();
+        
+        // 클릭 vs 드래그 구분
+        if (!isDragging) {
+          // 클릭으로 판단 - 확장 요청
+          console.log(`Node clicked (not dragged): ${draggedNode}`);
+          window.parent && window.parent.postMessage({ type:'node-click', payload:{ id: draggedNode }}, '*');
+        } else {
+          // 드래그로 판단 - 노드 이동 완료
+          console.log(`Node dragged: ${draggedNode}`);
+        }
+        
+        // 상태 초기화
+        document.body.classList.remove('dragging-node');
+        document.body.classList.remove('hovering-node');
+        
+        draggedNode = null;
+        isDragging = false;
+        
+        // 이벤트 재활성화
+        setTimeout(() => {
+          RENDERER.setSetting('enableEdgeHoverEvents', true);
+        }, 100);
+      }
+    });
+
+    // 최초 데이터 주입
+    addDataToGraph(initialData);
+    updateHud();
+
+    // 디버깅 핸들
+    window.__GRAPH = GRAPH;
+    window.__RENDERER = RENDERER;
   }
 
+  function updateHud(){
+    document.getElementById('ncount').textContent = String(GRAPH.order);
+    document.getElementById('ecount').textContent = String(GRAPH.size);
+  }
+
+  // 오버레이 렌더링 함수들 제거됨
+
+  // ===== 트레이트 하이라이팅 =====
+  let originalNodeColors = new Map();
+  let originalEdgeColors = new Map();
+  let isHighlighted = false;
+  
+  function restoreOriginalColors() {
+    if (!GRAPH || !RENDERER) return;
+    
+    console.log('Restoring original colors...');
+    
+    // 원본 색상이 저장되어 있다면 복원
+    if (originalNodeColors.size > 0) {
+      originalNodeColors.forEach((color, node) => {
+        if (GRAPH.hasNode(node)) {
+          GRAPH.setNodeAttribute(node, 'color', color);
+        }
+      });
+    }
+    
+    if (originalEdgeColors.size > 0) {
+      originalEdgeColors.forEach((color, edge) => {
+        if (GRAPH.hasEdge(edge)) {
+          GRAPH.setEdgeAttribute(edge, 'colorHex', color);
+        }
+      });
+    }
+    
+    // 원본 색상 맵 초기화
+    originalNodeColors.clear();
+    originalEdgeColors.clear();
+    isHighlighted = false;
+    
+    RENDERER.refresh();
+  }
+  
+  function highlightTraitInGraph(traitCode, highlightColor) {
+    if (!GRAPH || !RENDERER) return;
+    
+    // 먼저 원상복구
+    restoreOriginalColors();
+    
+    // HSL 색상을 HEX로 변환
+    const processedColor = parseColorToHex(highlightColor);
+    console.log(`Highlighting trait: ${traitCode} with color: ${highlightColor} -> ${processedColor}`);
+    
+    // 원본 색상 저장
+    GRAPH.forEachNode((node) => {
+      originalNodeColors.set(node, GRAPH.getNodeAttribute(node, 'color'));
+    });
+    
+    GRAPH.forEachEdge((edge) => {
+      const attrs = GRAPH.getEdgeAttributes(edge);
+      const cnt = attrs.parallelCount || 1;
+      
+      if (cnt > 1) {
+        // 멀티 엣지의 경우 원본 트레이트 색상 저장 (검정색이 아닌 실제 트레이트 색상)
+        const tc = Number(attrs.traitCode) || 0;
+        const originalTraitColor = traitColorFromLegend(tc) || genTraitColor(tc);
+        originalEdgeColors.set(edge, originalTraitColor);
+      } else {
+        // 단일 엣지는 현재 색상 저장
+        originalEdgeColors.set(edge, attrs.colorHex);
+      }
+    });
+    
+    console.log(`Saved colors: ${originalNodeColors.size} nodes, ${originalEdgeColors.size} edges`);
+    
+    // 모든 노드와 엣지를 옅은 회색으로 변경
+    GRAPH.forEachNode((node) => {
+      GRAPH.setNodeAttribute(node, 'color', '#dddddd');
+    });
+    
+    GRAPH.forEachEdge((edge) => {
+      GRAPH.setEdgeAttribute(edge, 'colorHex', '#dddddd');
+    });
+    
+    // 선택된 트레이트에 해당하는 엣지와 연결 노드를 하이라이팅
+    const highlightedNodes = new Set();
+    
+    if (traitCode === 'multi') {
+      // Multi-Trait 하이라이팅 (parallelCount > 1) - 검정색으로 하이라이팅
+      GRAPH.forEachEdge((edge, attrs) => {
+        const cnt = attrs.parallelCount || 1;
+        if (cnt > 1) {
+          GRAPH.setEdgeAttribute(edge, 'colorHex', '#000000');
+          // 연결된 노드들도 하이라이팅
+          const src = GRAPH.source(edge);
+          const dst = GRAPH.target(edge);
+          highlightedNodes.add(src);
+          highlightedNodes.add(dst);
+        }
+      });
+      // 하이라이트된 노드들을 검정색으로
+      highlightedNodes.forEach(node => {
+        GRAPH.setNodeAttribute(node, 'color', '#000000');
+      });
+    } else {
+      // 특정 트레이트 하이라이팅 - 범례 색상 사용
+      GRAPH.forEachEdge((edge, attrs) => {
+        if (String(attrs.traitCode) === String(traitCode)) {
+          GRAPH.setEdgeAttribute(edge, 'colorHex', processedColor);
+          // 연결된 노드들 수집
+          const src = GRAPH.source(edge);
+          const dst = GRAPH.target(edge);
+          highlightedNodes.add(src);
+          highlightedNodes.add(dst);
+        }
+      });
+      // 하이라이트된 노드들을 범례 색상으로
+      highlightedNodes.forEach(node => {
+        GRAPH.setNodeAttribute(node, 'color', processedColor);
+      });
+    }
+    
+    isHighlighted = true;
+    RENDERER.refresh();
+  }
+  
+  function clearHighlightInGraph() {
+    restoreOriginalColors();
+  }
+
+  // 그래프 완전 초기화 함수 (검색용)
+  function resetAndLoadGraph(newData) {
+    console.log('=== RESETTING GRAPH ===');
+    console.log('New graph data:', {
+      nodes: newData.nodes?.length || 0,
+      edges: newData.edges?.length || 0,
+      startNode: newData.meta?.startNode
+    });
+    
+    if (!GRAPH || !RENDERER) {
+      console.log('No existing graph, using mountOnce');
+      return mountOnce(newData);
+    }
+    
+    // 기존 그래프 완전 클리어
+    GRAPH.clear();
+    console.log('Graph cleared');
+    
+    // 새 데이터로 그래프 재구성
+    DATA = newData;
+    TRAIT_PALETTE = buildTraitPaletteFromLegend();
+    
+    const nodes = newData.nodes || [];
+    const edges = newData.edges || [];
+    const N = nodes.length || 1;
+    
+    // 노드들을 원형으로 배치 (초기 로딩처럼)
+    nodes.forEach((n, i) => {
+      const x = Math.cos(2*Math.PI*i/N)*120;
+      const y = Math.sin(2*Math.PI*i/N)*120;
+      
+      GRAPH.addNode(n.id, {
+        label: n.label || n.id,
+        size: Math.max(4, Math.min(16, n.size||8)),
+        color: '#222222',
+        labelColor: '#ffffff',
+        x: x,
+        y: y
+      });
+    });
+    
+    // 엣지 추가
+    const seen = new Set();
+    edges.forEach((e)=>{
+      if (seen.has(e.id)) return; seen.add(e.id);
+      const src = e.source, dst = e.target;
+      
+      // 노드가 없으면 기본 노드 추가
+      if (!GRAPH.hasNode(src)) GRAPH.addNode(src, { label: src, size: 6, color: '#222222', labelColor: '#ffffff', x: 0, y: 0 });
+      if (!GRAPH.hasNode(dst)) GRAPH.addNode(dst, { label: dst, size: 6, color: '#222222', labelColor: '#ffffff', x: 0, y: 0 });
+
+      const tc = Number(e.traitCode) || 0;
+      const hex = parseColorToHex(e.color || (traitColorFromLegend(tc, null) || genTraitColor(tc)));
+
+      const attrs = {
+        size: Math.max(3, Math.min(9, (e.weight || 3))),
+        colorHex: hex,
+        traitCode: e.traitCode, traitName: e.traitName, traitId: e.traitId, lastSeen: e.lastSeen||0,
+        pair: e.pair || [src, dst].sort().join('|'),
+        parallelIndex: (typeof e.parallelIndex === 'number') ? e.parallelIndex : 0,
+        parallelCount: (typeof e.parallelCount === 'number' && e.parallelCount>0) ? e.parallelCount : 1
+      };
+
+      GRAPH.addEdgeWithKey(e.id, src, dst, attrs);
+    });
+    
+    console.log('New graph loaded:', {
+      nodes: GRAPH.order,
+      edges: GRAPH.size
+    });
+    
+    // 렌더러 새로고침
+    RENDERER.refresh();
+  }
+
+  // ===== Messaging =====
   window.addEventListener('message', (ev)=>{
     const msg = ev.data||{};
+    console.log('=== FRAME RECEIVED MESSAGE ===');
+    console.log('Message type:', msg.type);
+    console.log('Message payload nodes:', msg.payload?.nodes?.length || 0);
+    console.log('Message payload edges:', msg.payload?.edges?.length || 0);
+    
     if (msg.type==='load-graph'){
       try {
-        const g=buildGraphFromData(msg.payload);
-        mount(g);
+        if (RENDERER === null) {
+          // 최초 로딩
+          mountOnce(msg.payload);
+        } else {
+          // 검색 등으로 인한 그래프 완전 교체
+          resetAndLoadGraph(msg.payload);
+        }
         window.parent && window.parent.postMessage({type:'child-ready', payload:{ok:true}}, '*');
       } catch(e){
+        console.error('Load graph error:', e);
         window.parent && window.parent.postMessage({type:'child-ready', payload:{ok:false, error:String(e)}}, '*');
       }
     } else if (msg.type==='apply-graph'){
-      const g = buildGraphFromData(msg.payload);
-      mount(g);
+      // 렌더러/그래프 kill 없이 증분 반영만
+      addDataToGraph(msg.payload);
+      updateHud();
+    } else if (msg.type==='highlight-trait'){
+      // 트레이트 하이라이팅
+      const {traitCode, color} = msg.payload;
+      highlightTraitInGraph(traitCode, color);
+    } else if (msg.type==='clear-highlight'){
+      // 하이라이팅 해제
+      clearHighlightInGraph();
     }
   });
 
+  // 초기 준비 신호
   window.parent && window.parent.postMessage({type:'child-mounted'}, '*');
 })();
 </script>
