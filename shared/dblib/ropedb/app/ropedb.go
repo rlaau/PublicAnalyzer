@@ -111,7 +111,7 @@ func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, t
 		ctx: ctx, cancel: cancel,
 		traitLegend: traitLegend,
 		ruleLegend:  ruleLegend,
-		busRope: busR, busTrait: busT,
+		busRope:     busR, busTrait: busT,
 	}
 
 	// 워커 가동
@@ -597,7 +597,7 @@ func (b *BadgerRopeDB) ViewAllTraitMarkByCode(t domain.TraitCode) ([]domain.Trai
 		itOpts := badger.DefaultIteratorOptions
 		it := txn.NewIterator(itOpts)
 		defer it.Close()
-		
+
 		pfx := []byte(kT) // "t:" prefix for trait marks
 		for it.Seek(pfx); it.ValidForPrefix(pfx); it.Next() {
 			item := it.Item()
@@ -629,10 +629,26 @@ func (b *BadgerRopeDB) ViewAllTraitMarkByString(s string) ([]domain.TraitMark, e
 			break
 		}
 	}
-	
+
 	if !found {
 		return []domain.TraitMark{}, nil // return empty slice if string not found in legend
 	}
-	
+
 	return b.ViewAllTraitMarkByCode(targetCode)
+}
+
+// TODO 테스트 용으로 퍼블릭하게 만들다보니 의도치 않게 전환해버림... 추후 리팩토링 할 것
+func (b *BadgerRopeDB) GetOrCreateVertex(a shareddomain.Address) *domain.Vertex {
+	return b.getOrCreateVertex(a)
+}
+
+// TODO 테스트 용으로 퍼블릭하게 만들다보니 의도치 않게 전환해버림... 추후 리팩토링 할 것
+func (b *BadgerRopeDB) RopeIDByTrait(v *domain.Vertex, t domain.TraitCode) (domain.RopeID, bool) {
+	return b.ropeIDByTrait(v, t)
+}
+
+// TODO 테스트 용으로 퍼블릭하게 만들다보니 의도치 않게 전환해버림... 추후 리팩토링 할 것
+
+func (b *BadgerRopeDB) GetRopeMark(rid domain.RopeID) domain.RopeMark {
+	return b.getRopeMark(rid)
 }

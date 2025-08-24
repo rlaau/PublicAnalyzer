@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/hex"
+	"fmt"
 	"math/big"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
@@ -26,6 +27,18 @@ type RawTransaction struct {
 	RCAddr      string          // 0x + 40 hex or "" (receipt_contract_address)
 	ValueOrNull decimal.Decimal // wei 값 (integer)
 	BlockTime   string          // RFC3339 string
+}
+
+func (r RawTransaction) String() string {
+	return fmt.Sprintf(`
+	TxID: %v
+	Nonce: %v
+	From: %v
+	To: %v
+	RcAddr: %v
+	ValueOrNull: %v
+	BlockTime: %v
+	`, r.TxId, r.Nonce, r.From, r.To, r.RCAddr, r.ValueOrNull, r.BlockTime)
 }
 
 // 트랜잭션 구조체

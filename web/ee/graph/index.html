@@ -1,0 +1,183 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>RopeDB Visualizer</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100vh;scrollbar-gutter:stable both-edges}
+  body{
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;
+    display:grid;grid-template-columns:60% 40%;grid-template-rows:60% 40%;
+    gap:10px;background:#f5f5f5;padding:10px
+  }
+  #graph,#search,#legend,#info{background:#fff;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.08);overflow:hidden}
+  #graph{grid-column:1;grid-row:1;overflow:hidden;overscroll-behavior:contain}
+  #search{grid-column:2;grid-row:1;padding:16px}
+  #legend{grid-column:1;grid-row:2;padding:16px}
+  #info{grid-column:2;grid-row:2;padding:16px}
+  #f{width:100%;height:100%;border:0;overflow:hidden;display:block}
+  .sec h3{margin:0 0 10px 0;font-size:14px;color:#333}
+  .row{margin-bottom:12px}
+  input[type=text]{width:100%;padding:10px;border:1px solid #ddd;border-radius:8px;font-size:13px}
+  button{margin-top:6px;width:100%;padding:10px;border:0;border-radius:8px;cursor:pointer;background:#2f6fed;color:#fff;font-weight:600}
+  button.green{background:#28a745}
+  .legend-item{display:flex;align-items:center;margin-bottom:6px}
+  .legend-color{width:16px;height:16px;border-radius:3px;margin-right:8px}
+  .kv{font-size:12px;color:#555}.kv b{color:#222}.muted{color:#888;font-size:12px}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+</style>
+</head>
+<body>
+  <section id="graph"><iframe id="f" src="/ui/ee/graph/frame" scrolling="no"></iframe></section>
+
+  <section id="search" style="max-height: 90vh; overflow-y: auto; padding-right: 8px;">
+    <div class="sec">
+      <h3>🔍 Address</h3>
+      <div class="row"><input id="addr" type="text" placeholder="0x1234..."/></div>
+      <button id="addrBtn">Search (Expand 1-hop)</button>
+    </div>
+    <div class="sec" style="margin-top:14px">
+      <h3>🏷 Trait</h3>
+      <div class="row"><input id="trait" type="text" placeholder="e.g. 100"/></div>
+      <button id="traitBtn">Search by Trait Code</button>
+    </div>
+    <div class="sec" style="margin-top:14px">
+      <h3>🧵 Rope</h3>
+      <div class="row"><input id="rope" type="text" placeholder="Rope ID"/></div>
+      <button id="ropeBtn">Search by Rope ID</button>
+    </div>
+    <button id="defBtn" class="green" style="margin-top:14px">🏠 Default</button>
+  </section>
+
+  <section id="legend">
+    <div class="sec"><h3>🎨 Trait Colors</h3><div id="traitLegend"></div></div>
+    <div class="sec" style="margin-top:10px"><h3>🧵 Rope Colors</h3><div id="ropeLegend"></div></div>
+  </section>
+
+  <section id="info">
+    <div class="sec">
+      <h3>ℹ️ Info</h3>
+      <div id="stat" class="kv">
+        Nodes: <b id="sn">0</b> | Edges: <b id="se">0</b><br/>
+        Type: <b id="st">-</b><br/>
+        Start: <span id="ss" class="mono muted">-</span>
+      </div>
+    </div>
+    <div class="sec" style="margin-top:10px">
+      <h3>Node</h3>
+      <div id="nodeBox" class="kv muted">Hover a node…</div>
+    </div>
+    <div class="sec" style="margin-top:10px">
+      <h3>Edge</h3>
+      <div id="edgeBox" class="kv muted">Hover an edge…</div>
+    </div>
+  </section>
+
+<script>
+const f = document.getElementById('f');
+const sn=document.getElementById('sn'), se=document.getElementById('se'), st=document.getElementById('st'), ss=document.getElementById('ss');
+const nodeBox=document.getElementById('nodeBox'), edgeBox=document.getElementById('edgeBox');
+let CURRENT = { meta:{}, nodes:[], edges:[], legend:{traits:{}, ropes:{}} };
+
+function syncStats(g){
+  sn.textContent = String(g.meta?.nodeCount || (g.nodes?g.nodes.length:0) || 0);
+  se.textContent = String(g.meta?.edgeCount || (g.edges?g.edges.length:0) || 0);
+  st.textContent = g.meta?.graphType || '-';
+  ss.textContent = g.meta?.startNode || '-';
+}
+function mergeGraph(base, inc){
+  const nm = new Map(), em = new Map();
+  (base.nodes||[]).forEach(n=>nm.set(n.id,n));
+  (inc.nodes||[]).forEach(n=>nm.set(n.id,n));
+  (base.edges||[]).forEach(e=>em.set(e.id,e));
+  (inc.edges||[]).forEach(e=>em.set(e.id,e));
+  const nodes=[...nm.values()], edges=[...em.values()];
+  return { meta:{generatedAt:Math.floor(Date.now()/1000),graphType:'convolution',
+           startNode: base.meta?.startNode || inc.meta?.startNode || '',
+           nodeCount:nodes.length,edgeCount:edges.length}, nodes, edges,
+           legend: base.legend || inc.legend || {traits:{},ropes:{}} };
+}
+function renderLegend(legend){
+  const t = document.getElementById('traitLegend'), r = document.getElementById('ropeLegend');
+  t.innerHTML = ''; r.innerHTML = '';
+  const mk = (color,name,count)=>`<div class="legend-item"><div class="legend-color" style="background:${color}"></div><span>${name}</span><span style="margin-left:auto;color:#888;font-size:11px">${count}</span></div>`;
+  for (const k in (legend.traits||{})) {
+    const it = legend.traits[k]; t.insertAdjacentHTML('beforeend', mk(it.color, it.name, it.count||0));
+  }
+  for (const k in (legend.ropes||{})) {
+    const it = legend.ropes[k]; r.insertAdjacentHTML('beforeend', mk(it.color, it.name, it.count||0));
+  }
+}
+
+// 메시지 이벤트(자식 → 부모)
+window.addEventListener('message', (ev)=>{
+  const msg = ev.data||{};
+  if (msg.type==='child-mounted'){
+    // 초기 로드: 서버에서 기본 그래프 받아서 프레임에 내려보낸다
+    fetch('/api/ee/graph/default').then(r=>r.json()).then(g=>{
+      CURRENT = g; syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{},ropes:{}});
+      f.contentWindow.postMessage({type:'load-graph', payload: CURRENT}, '*');
+    }).catch(()=>{ /* noop */ });
+  } else if (msg.type==='child-ready'){
+    // ok 여부만 확인 가능
+  } else if (msg.type==='node-hover'){
+    if (!msg.payload){ nodeBox.textContent='Hover a node…'; nodeBox.classList.add('muted'); return; }
+    nodeBox.classList.remove('muted');
+    nodeBox.innerHTML = 'ID: <span class="mono">'+msg.payload.id+'</span><br/>Label: <b>'+(msg.payload.label||'')+'</b>';
+  } else if (msg.type==='edge-hover'){
+    if (!msg.payload){ edgeBox.textContent='Hover an edge…'; edgeBox.classList.add('muted'); return; }
+    edgeBox.classList.remove('muted');
+    const p = msg.payload;
+    edgeBox.innerHTML = 'Trait: <b>'+(p.traitName||('code '+p.traitCode))+'</b> <span class="mono">#'+(p.traitId||0)+'</span>';
+  } else if (msg.type==='node-click'){
+    const id = msg.payload && msg.payload.id;
+    if (!id) return;
+    // ✅ 확장은 이제 서버에게 요청한다
+    fetch('/api/ee/graph/expand?vertex='+encodeURIComponent(id))
+      .then(r=>r.json()).then(inc=>{
+        CURRENT = mergeGraph(CURRENT, inc);
+        syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{},ropes:{}});
+        f.contentWindow.postMessage({type:'apply-graph', payload: CURRENT}, '*');
+      });
+  }
+});
+
+// 검색 버튼 → 서버 호출
+document.getElementById('defBtn').onclick = ()=>{
+  fetch('/api/ee/graph/default').then(r=>r.json()).then(g=>{
+    CURRENT = g; syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{},ropes:{}});
+    f.contentWindow.postMessage({type:'load-graph', payload: CURRENT}, '*');
+  });
+};
+document.getElementById('addrBtn').onclick = ()=>{
+  const v=(document.getElementById('addr').value||'').trim();
+  if (!v) return alert('enter address');
+  fetch('/api/ee/graph/expand?vertex='+encodeURIComponent(v))
+    .then(r=>r.json()).then(inc=>{
+      CURRENT = mergeGraph(CURRENT, inc);
+      syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{},ropes:{}});
+      f.contentWindow.postMessage({type:'apply-graph', payload: CURRENT}, '*');
+    });
+};
+document.getElementById('traitBtn').onclick = ()=>{
+  const raw=(document.getElementById('trait').value||'').trim();
+  if (!raw) return alert('enter trait code (int)');
+  fetch('/api/ee/graph/trait/'+encodeURIComponent(raw))
+    .then(r=>r.json()).then(g=>{
+      CURRENT = mergeGraph(CURRENT, g);
+      syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{},ropes:{}});
+      f.contentWindow.postMessage({type:'apply-graph', payload: CURRENT}, '*');
+    });
+};
+document.getElementById('ropeBtn').onclick = ()=>{
+  const raw=(document.getElementById('rope').value||'').trim();
+  if (!raw) return alert('enter rope id');
+  fetch('/api/ee/graph/rope/'+encodeURIComponent(raw))
+    .then(r=>r.json()).then(g=>{
+      CURRENT = mergeGraph(CURRENT, g);
+      syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{},ropes:{}});
+      f.contentWindow.postMessage({type:'apply-graph', payload: CURRENT}, '*');
+    });
+};
+</script>
+</body></html>

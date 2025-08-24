@@ -42,9 +42,29 @@ func (h *EEAPIHandler) RegisterRoutes(router *chi.Mux) error {
 		r.Get("/dual-manager/window-stats", h.handleWindowStats)
 
 		// 그래프 DB 관련 엔드포인트들 (조회용)
+		// ✅ 그래프 JSON 엔드포인트
+		r.Get("/graph/default", h.handleGraphDefault)
+		r.Get("/graph/expand", h.handleGraphExpand) // ?v=<address>
+		r.Get("/graph/trait", h.handleGraphByTrait) // ?code=<traitCode>
+		r.Get("/graph/rope", h.handleGraphByRope)   // ?id=<ropeId>
 		r.Get("/graph/stats", h.handleGraphStats)
 	})
+	router.Route("/api/ee/graph", func(r chi.Router) {
+		// GET /api/ee/graph/default
+		r.Get("/default", h.handleGraphDefault)
 
+		// GET /api/ee/graph/expand?vertex=0x...&depth=1
+		r.Get("/expand", h.handleGraphExpand)
+
+		// GET /api/ee/graph/trait/{code}
+		r.Get("/trait/{code}", h.handleGraphByTrait)
+
+		// GET /api/ee/graph/rope/{id}
+		r.Get("/rope/{id}", h.handleGraphByRope)
+
+		// GET /api/ee/graph/stats
+		r.Get("/stats", h.handleGraphStats)
+	})
 	// 페이지 라우팅 - HTML 페이지 서빙
 	router.Route("/ui/ee", func(r chi.Router) {
 		// EE 모듈 메인 페이지
@@ -70,6 +90,18 @@ func (h *EEAPIHandler) RegisterRoutes(router *chi.Mux) error {
 		})
 	})
 
+	// UI 페이지 (정적 파일 서빙; webDir/ee/graph/*.html 가정)
+	router.Route("/ui/ee/graph", func(r chi.Router) {
+		// 부모(Background)
+		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFile(w, r, filepath.Join(webDir, "ee", "graph", "index.html"))
+		})
+		// 자식(Frame/Sigma)
+		r.Get("/frame", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFile(w, r, filepath.Join(webDir, "ee", "graph", "frame.html"))
+		})
+	})
+
 	// 역호환성을 위한 기존 API 엔드포인트 리다이렉트
 	router.Get("/ee/statistics", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/api/ee/statistics", http.StatusMovedPermanently)
@@ -92,6 +124,22 @@ func (h *EEAPIHandler) RegisterRoutes(router *chi.Mux) error {
 
 // handleGetStatistics 분석기 통계 조회
 func (h *EEAPIHandler) handleGetStatistics(w http.ResponseWriter, r *http.Request) {
+	if h.analyzer == nil {
+		writeJSONResponse(w, map[string]any{
+			"processed_transactions": 0, "success_rate": 0.0, "tps": 0.0,
+			"status": "analyzer_not_initialized",
+		})
+		return
+	}
+	// 혹시 모를 패닉까지도 흡수
+	defer func() {
+		if rec := recover(); rec != nil {
+			writeJSONResponse(w, map[string]any{
+				"processed_transactions": 0, "success_rate": 0.0, "tps": 0.0,
+				"status": "stats_unavailable",
+			})
+		}
+	}()
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -156,7 +204,15 @@ func (h *EEAPIHandler) handleChannelStatus(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
+	if h.analyzer == nil {
+		writeJSONResponse(w, map[string]any{"usage": 0, "capacity": 1, "usage_percent": 0.0})
+		return
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			writeJSONResponse(w, map[string]any{"usage": 0, "capacity": 1, "usage_percent": 0.0})
+		}
+	}()
 	usage, capacity := h.analyzer.GetChannelStatus()
 	usagePercent := float64(usage) / float64(capacity) * 100
 
@@ -176,21 +232,18 @@ func (h *EEAPIHandler) handleWindowStats(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
-	// SimpleEOAAnalyzer에서 DualManager에 접근
-	if analyzer, ok := h.analyzer.(*app.SimpleEOAAnalyzer); ok {
-		dualManager := analyzer.GetDualManager()
-		windowStats := dualManager.GetWindowStats()
-
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(windowStats); err != nil {
-			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	// ✅ SimpleEOAAnalyzer가 아니거나 DualManager가 nil이면 503 대신 “빈 정상응답”으로
+	if sa, ok := h.analyzer.(*app.SimpleEOAAnalyzer); ok {
+		if dm := sa.GetDualManager(); dm != nil {
+			ws := dm.GetWindowStats()
+			writeJSONResponse(w, ws)
 			return
 		}
-	} else {
-		http.Error(w, "DualManager not accessible", http.StatusServiceUnavailable)
-		return
 	}
+	// 빈 구조를 반환(프론트가 안전하게 처리)
+	writeJSONResponse(w, map[string]any{
+		"message": "dual manager not initialized", "ok": false,
+	})
 }
 
 // handleGraphStats 그래프 DB 통계 조회

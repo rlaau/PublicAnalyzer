@@ -1,5 +1,4 @@
-// domain/adapter.go
-package domain
+package txstreamer
 
 import (
 	"encoding/binary"

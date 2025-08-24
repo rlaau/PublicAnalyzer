@@ -1,4 +1,4 @@
-package app
+package app_test
 
 import (
 	"encoding/binary"
@@ -8,8 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/api"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/app"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
+	"github.com/rlaaudgjs5638/chainAnalyzer/server"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
+	. "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
@@ -85,10 +90,10 @@ func waitRopeMembers(t *testing.T, impl *BadgerRopeDB, a shareddomain.Address, t
 	t.Helper()
 	deadline := time.Now().Add(8 * time.Second) // 여유 있게
 	for {
-		v := impl.getOrCreateVertex(a)
-		rid, ok := impl.ropeIDByTrait(v, trait)
+		v := impl.GetOrCreateVertex(a)
+		rid, ok := impl.RopeIDByTrait(v, trait)
 		if ok {
-			rm := impl.getRopeMark(rid)
+			rm := impl.GetRopeMark(rid)
 			if rm.ID != 0 && len(rm.Members) == expectCount && containsAll(rm.Members, expectMembers...) {
 				return
 			}
@@ -108,12 +113,12 @@ func waitRopeMembers(t *testing.T, impl *BadgerRopeDB, a shareddomain.Address, t
 
 func ropeCountOf(t *testing.T, impl *BadgerRopeDB, a shareddomain.Address) int {
 	t.Helper()
-	return len(impl.getOrCreateVertex(a).Ropes)
+	return len(impl.GetOrCreateVertex(a).Ropes)
 }
 
 func linksOf(t *testing.T, impl *BadgerRopeDB, a shareddomain.Address) []domain.TraitRef {
 	t.Helper()
-	return impl.getOrCreateVertex(a).Traits
+	return impl.GetOrCreateVertex(a).Traits
 }
 func clearDir(path string) error {
 	dirEntries, err := os.ReadDir(path)
@@ -136,6 +141,7 @@ func clearDir(path string) error {
 // --- 시나리오 ---
 
 func TestRopeDB_UseCase_Spec(t *testing.T) {
+
 	testDir := computation.FindTestingStorageRootPath() + "/rope_visual"
 	clearDir(testDir)
 	db, err := NewRopeDBWithRoot(mode.TestingModeProcess, testDir, "rope_test", TraitLegend, RuleLegend) // 항상 새/빈 디렉터리
@@ -145,7 +151,26 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 	defer db.Close()
 
 	impl := db.(*BadgerRopeDB)
-
+	monitoringServer := server.NewServer(":8080")
+	monitoringServer.SetupBasicRoutes()
+	//TODO 그냥 서버용 API가 필요했기에 만듦.
+	eoaInfra := infra.TotalEOAAnalyzerInfra{
+		GraphRepo: db,
+	}
+	analyzer := &app.SimpleEOAAnalyzer{}
+	analyzer.NullButAddInfra(eoaInfra)
+	eeAPI := api.NewEEAPIHandler(analyzer) // analyzer.GraphDB()가 BadgerRopeDB를 물고 있어야 함
+	if err := monitoringServer.RegisterModule(eeAPI); err != nil {
+		fmt.Printf("   ❌ Failed to register EE API: %v\n", err)
+	} else {
+		fmt.Printf("   ✅ EE Analyzer API registered successfully\n")
+	}
+	go func() {
+		fmt.Printf("   🌐 Starting API server on :8080\n")
+		if err := monitoringServer.Start(); err != nil {
+			fmt.Printf("   ⚠️ API server stopped: %v\n", err)
+		}
+	}()
 	// 초기 그래프 구성
 	link(t, db, addr(1), addr(2), TraitApple)
 	link(t, db, addr(2), addr(3), TraitApple)
@@ -244,5 +269,5 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 
 	// 필요하면 테스트 로그에 경로 출력
 	t.Log("wrote graph_frame.html & index.html")
-
+	time.Sleep(10 * time.Minute)
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
+	ropeapp "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/app"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 )
@@ -36,6 +37,7 @@ type EOAAnalyzer interface {
 	//근데 이거 고치려면 또 리팩토링 해야함. 또!!!
 	//그건 나중에 하자고.
 	GraphDB() *badger.DB
+	RopeDB() ropeapp.RopeDB
 	GetRopeDBStats() map[string]any
 
 	// 리소스 관리
@@ -121,6 +123,11 @@ func (a *SimpleEOAAnalyzer) GraphDB() *badger.DB {
 		return p.RawBadgerDB()
 	}
 	return nil
+}
+
+func (a *SimpleEOAAnalyzer) RopeDB() ropeapp.RopeDB {
+	db := a.infra.GraphRepo
+	return db
 }
 
 // Start 분석기 시작
@@ -537,4 +544,17 @@ func (a *SimpleEOAAnalyzer) Close() error {
 	}
 
 	return a.Stop()
+}
+
+// TODO 추후 삭제할 것. 어쩌다 프로세스 도중에 DB바꿀 일이 있고, 하필 그게 테스트코드라 일다 놔뒀음
+// TODO 추후 ropeDB테스트 리팩토링 후 제거할 것
+// !!프로덕션 환경에선 절대절대 쓰지 말겄!!!
+func (a *SimpleEOAAnalyzer) NullButAddDB(db ropeapp.RopeDB) {
+	a.infra.GraphRepo = db
+}
+
+// TODO 추후 ropeDB테스트 리팩토링 후 제거할 것
+// !!프로덕션 환경에선 절대절대 쓰지 말겄!!!
+func (a *SimpleEOAAnalyzer) NullButAddInfra(infra infra.TotalEOAAnalyzerInfra) {
+	a.infra = infra
 }
