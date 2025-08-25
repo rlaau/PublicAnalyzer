@@ -282,6 +282,7 @@ func (a *SimpleEOAAnalyzer) processTransactionParrell(messages []kafka.Message[*
 
 // analyzeTransactionResult 트랜잭션 결과 분석
 func (a *SimpleEOAAnalyzer) analyzeTransactionResult(tx *shareddomain.MarkedTransaction) {
+	isDebug := false
 	depositDetected := false
 
 	// 처음 5개 트랜잭션의 CEX 체크 과정을 자세히 로깅
@@ -294,21 +295,21 @@ func (a *SimpleEOAAnalyzer) analyzeTransactionResult(tx *shareddomain.MarkedTran
 			processedCount, tx.To.String(), isCEX)
 	}
 
-	if isCEX {
+	if isCEX && isDebug {
 		depositCount := atomic.AddInt64(&a.stats.DepositDetections, 1)
 		depositDetected = true
-		log.Printf("🎯 DEPOSIT DETECTED #%d: From: %s → CEX: %s",
-			depositCount, tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
+		log.Printf("🎯 DEPOSIT DETECTED #%d: From: %s → CEX: %s", depositCount, tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
 	}
 
 	// 그래프/윈도우 업데이트 분류
-	if a.infra.GroundKnowledge.IsDepositAddress(tx.To) {
+	if a.infra.GroundKnowledge.IsDepositAddress(tx.To) && isDebug {
 		graphCount := atomic.AddInt64(&a.stats.GraphUpdates, 1)
 		log.Printf("📊 GRAPH UPDATE #%d: From: %s → Deposit: %s",
 			graphCount, tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
 	} else {
+
 		windowCount := atomic.AddInt64(&a.stats.WindowUpdates, 1)
-		if depositDetected {
+		if depositDetected && isDebug {
 			log.Printf("📈 WINDOW UPDATE #%d (with deposit): From: %s → To: %s",
 				windowCount, tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")
 		}

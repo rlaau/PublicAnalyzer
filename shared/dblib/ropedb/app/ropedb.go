@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
@@ -78,6 +80,11 @@ type BadgerRopeDB struct {
 	// 비동기 쓰기 버스
 	busRope  *eventbus.EventBus[domain.RopeMarkUpsert]
 	busTrait *eventbus.EventBus[domain.TraitMarkUpsert]
+
+	// GC 관련
+	gcTicker       *time.Ticker
+	gcRunning      sync.Mutex
+	publishCounter int64 // 발행 이벤트 카운터
 }
 
 // NewRopeDBWithRoot: 모드(true=test, false=prod)로 루트 분기
@@ -114,10 +121,14 @@ func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, t
 		busRope:     busR, busTrait: busT,
 	}
 
+	// GC 스케쥴러 설정
+	b.startGC()
+
 	// 워커 가동
-	b.wg.Add(2)
+	b.wg.Add(3) // GC 워커 추가로 3개
 	go b.traitWorker()
 	go b.ropeWorker()
+	go b.gcWorker()
 	return b, nil
 }
 func (b *BadgerRopeDB) RawBadgerDB() *badger.DB {
@@ -126,6 +137,10 @@ func (b *BadgerRopeDB) RawBadgerDB() *badger.DB {
 
 func (b *BadgerRopeDB) Close() error {
 	b.cancel()
+	// GC 타이머 정지
+	if b.gcTicker != nil {
+		b.gcTicker.Stop()
+	}
 	// 이벤트버스: pending 저장 & 채널 close
 	b.busTrait.Close()
 	b.busRope.Close()
@@ -138,6 +153,18 @@ func (b *BadgerRopeDB) Close() error {
 // ------------------------------------------------------------
 
 func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
+	debugEnabled := true
+	if b.publishCounter%10 == 0 && debugEnabled {
+		fmt.Printf(`
+		========ev정보=========
+		Trait: %v,
+		AddressA: %v,
+		RuleA: %v,
+		AddressB: %v,
+		RuleB: %v, 
+		`, b.traitLegend[ev.Trait], ev.AddressA.String(),
+			b.ruleLegend[ev.RuleA], ev.AddressB.String(), b.ruleLegend[ev.RuleB])
+	}
 	a1 := ev.AddressA
 	a2 := ev.AddressB
 	if shareddomain.IsNullAddress(a1) || shareddomain.IsNullAddress(a2) {
@@ -252,6 +279,10 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 	// --- 5) Vertex 동기 저장
 	b.putVertex(v1)
 	b.putVertex(v2)
+
+	// --- 6) publish 카운터 증가
+	atomic.AddInt64(&b.publishCounter, 1)
+
 	_ = created // created 여부는 외부로 굳이 노출하지 않음
 	return nil
 }
@@ -651,4 +682,237 @@ func (b *BadgerRopeDB) RopeIDByTrait(v *domain.Vertex, t domain.TraitCode) (doma
 
 func (b *BadgerRopeDB) GetRopeMark(rid domain.RopeID) domain.RopeMark {
 	return b.getRopeMark(rid)
+}
+
+// ------------------------------------------------------------
+// 9) GC (Garbage Collection) 관련 로직
+// ------------------------------------------------------------
+
+const (
+	gcInterval       = 10 * time.Minute // GC 체크 주기 (짧게 조정)
+	gcThreshold      = 0.4              // GC 임계값 (0.4 = 40%)
+	gcPublishTrigger = 50_000           // publish 10000번마다 GC 트리거
+	//gcBatchSize      = 1000             // 배치 단위로 정리
+	//gcLowVolumeLimit = 5                // 낮은 볼륨 임계값
+	//gcLowScoreLimit  = 1.0              // 낮은 스코어 임계값
+)
+
+// startGC: GC 스케쥴러 시작
+func (b *BadgerRopeDB) startGC() {
+	b.gcTicker = time.NewTicker(gcInterval)
+}
+
+// gcWorker: GC 워커 - 주기적으로 GC 조건 체크 및 실행
+func (b *BadgerRopeDB) gcWorker() {
+	defer b.wg.Done()
+	for {
+		select {
+		case <-b.gcTicker.C:
+			if b.shouldRunGC() {
+				b.runGC()
+			}
+		case <-b.ctx.Done():
+			return
+		}
+	}
+}
+
+// shouldRunGC: GC 실행 조건 체크
+func (b *BadgerRopeDB) shouldRunGC() bool {
+	// 이미 GC가 실행 중이면 건너뛰기
+	if !b.gcRunning.TryLock() {
+		return false
+	}
+	defer b.gcRunning.Unlock()
+
+	// publish 카운터 체크 (주요 트리거)
+	publishCount := atomic.LoadInt64(&b.publishCounter)
+	if publishCount >= gcPublishTrigger {
+		// 카운터 리셋
+		atomic.StoreInt64(&b.publishCounter, 0)
+		return true
+	}
+
+	// Badger DB 상태 체크 (보조 트리거)
+	lsm, vlog := b.db.Size()
+	totalSize := lsm + vlog
+
+	// 간단한 크기 기반 트리거 (100MB 초과시)
+	if totalSize > 100*1024*1024 {
+		return true
+	}
+
+	return false
+}
+
+// runGC: 실제 GC 실행
+func (b *BadgerRopeDB) runGC() {
+	b.gcRunning.Lock()
+	defer b.gcRunning.Unlock()
+
+	startTime := time.Now()
+
+	// // 1. 오래된 Trait 정리
+	//TODO 이상적인 GC모델에선 아래 주석처럼 논리적인 GC도 하겠지만, 우선은 그냥 badger thombstone기반 GC만 실행함
+	// cleanedTraits := b.cleanOldTraits()
+
+	// // 2. 빈 Rope 정리
+	// cleanedRopes := b.cleanEmptyRopes()
+
+	// // 3. 고아 Vertex 정리
+	// cleanedVertices := b.cleanOrphanVertices()
+
+	// 4. Badger 내장 GC 실행
+	b.runBadgerGC()
+
+	duration := time.Since(startTime)
+
+	// GC 통계 로깅 (프로덕션에서는 적절한 로거 사용)
+	if !b.isTest {
+		fmt.Printf("GC completed in %v\n",
+			duration)
+	}
+}
+
+// // cleanOldTraits: 낮은 볼륨과 스코어의 Trait 정리
+// func (b *BadgerRopeDB) cleanOldTraits() int {
+// 	var cleaned int
+
+// 	_ = b.db.Update(func(txn *badger.Txn) error {
+// 		opts := badger.DefaultIteratorOptions
+// 		it := txn.NewIterator(opts)
+// 		defer it.Close()
+
+// 		prefix := []byte(kT) // "t:" prefix for traits
+// 		var keysToDelete [][]byte
+
+// 		for it.Seek(prefix); it.ValidForPrefix(prefix) && len(keysToDelete) < gcBatchSize; it.Next() {
+// 			item := it.Item()
+// 			var tm domain.TraitMark
+
+// 			err := item.Value(func(val []byte) error {
+// 				return json.Unmarshal(val, &tm)
+// 			})
+
+// 			if err != nil {
+// 				continue
+// 			}
+
+// 			// 조건: 볼륨이 낮고 스코어가 낮은 경우만 정리
+// 			if tm.Volume < gcLowVolumeLimit && tm.Score < gcLowScoreLimit {
+// 				key := make([]byte, len(item.Key()))
+// 				copy(key, item.Key())
+// 				keysToDelete = append(keysToDelete, key)
+// 			}
+// 		}
+
+// 		// 배치 삭제
+// 		for _, key := range keysToDelete {
+// 			_ = txn.Delete(key)
+// 			cleaned++
+// 		}
+
+// 		return nil
+// 	})
+
+// 	return cleaned
+// }
+
+// // cleanEmptyRopes: 멤버가 없거나 낮은 볼륨의 Rope 정리
+// func (b *BadgerRopeDB) cleanEmptyRopes() int {
+// 	var cleaned int
+
+// 	_ = b.db.Update(func(txn *badger.Txn) error {
+// 		opts := badger.DefaultIteratorOptions
+// 		it := txn.NewIterator(opts)
+// 		defer it.Close()
+
+// 		prefix := []byte(kR) // "r:" prefix for ropes
+// 		var keysToDelete [][]byte
+
+// 		for it.Seek(prefix); it.ValidForPrefix(prefix) && len(keysToDelete) < gcBatchSize; it.Next() {
+// 			item := it.Item()
+// 			var rm domain.RopeMark
+
+// 			err := item.Value(func(val []byte) error {
+// 				return json.Unmarshal(val, &rm)
+// 			})
+
+// 			if err != nil {
+// 				continue
+// 			}
+
+// 			// 조건: 멤버가 없거나, 매우 낮은 볼륨
+// 			if len(rm.Members) == 0 || rm.Volume < 3 {
+// 				key := make([]byte, len(item.Key()))
+// 				copy(key, item.Key())
+// 				keysToDelete = append(keysToDelete, key)
+// 			}
+// 		}
+
+// 		// 배치 삭제
+// 		for _, key := range keysToDelete {
+// 			_ = txn.Delete(key)
+// 			cleaned++
+// 		}
+
+// 		return nil
+// 	})
+
+// 	return cleaned
+// }
+
+// // cleanOrphanVertices: 고아 Vertex 정리 (Rope나 Trait 참조가 없는 경우)
+// func (b *BadgerRopeDB) cleanOrphanVertices() int {
+// 	var cleaned int
+
+// 	_ = b.db.Update(func(txn *badger.Txn) error {
+// 		opts := badger.DefaultIteratorOptions
+// 		it := txn.NewIterator(opts)
+// 		defer it.Close()
+
+// 		prefix := []byte(kV) // "v:" prefix for vertices
+// 		var keysToDelete [][]byte
+
+// 		for it.Seek(prefix); it.ValidForPrefix(prefix) && len(keysToDelete) < gcBatchSize; it.Next() {
+// 			item := it.Item()
+// 			var v domain.Vertex
+
+// 			err := item.Value(func(val []byte) error {
+// 				return json.Unmarshal(val, &v)
+// 			})
+
+// 			if err != nil {
+// 				continue
+// 			}
+
+// 			// 조건: Rope나 Trait 참조가 전혀 없는 고아 Vertex
+// 			if len(v.Ropes) == 0 && len(v.Traits) == 0 {
+// 				key := make([]byte, len(item.Key()))
+// 				copy(key, item.Key())
+// 				keysToDelete = append(keysToDelete, key)
+// 			}
+// 		}
+
+// 		// 배치 삭제
+// 		for _, key := range keysToDelete {
+// 			_ = txn.Delete(key)
+// 			cleaned++
+// 		}
+
+// 		return nil
+// 	})
+
+// 	return cleaned
+// }
+
+// runBadgerGC: Badger 내장 GC 실행
+func (b *BadgerRopeDB) runBadgerGC() {
+	// Badger의 내장 GC 실행 (반환값은 GC가 실제로 실행되었는지 여부)
+	for {
+		err := b.db.RunValueLogGC(0.4) // 40% 임계값으로 value log GC
+		if err != nil {
+			break
+		}
+	}
 }

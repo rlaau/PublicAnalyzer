@@ -248,13 +248,9 @@ func (r *FFBadgerPendingRelationRepo) AddToPendingRelations(toAddr domain.Addres
 		return err
 	}
 
-	// 트랜잭션 밖에서 value log GC 시도
+	// 트랜잭션 밖에서 value log GC 시도 (비동기)
 	if needGC {
-		for {
-			if err := r.db.RunValueLogGC(gcDiscardRatio); err != nil {
-				break // reclaim 없음 혹은 에러 → 중단
-			}
-		}
+		go r.runGC() // 고루틴으로 비동기 실행
 	}
 	return nil
 }
@@ -272,4 +268,18 @@ func (r *FFBadgerPendingRelationRepo) CountPendingRelations() int {
 		return math.MaxInt
 	}
 	return int(v)
+}
+
+// runGC: Badger GC 실행 (비동기)
+func (r *FFBadgerPendingRelationRepo) runGC() {
+	fmt.Printf("Running GC for pending relation repository (delete count reached %d)\n", gcDeleteTriggerN)
+	
+	// Badger의 내장 GC 실행
+	for {
+		if err := r.db.RunValueLogGC(gcDiscardRatio); err != nil {
+			break // reclaim 없음 혹은 에러 → 중단
+		}
+	}
+	
+	fmt.Println("Pending relation repository GC completed")
 }

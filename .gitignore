@@ -9,6 +9,7 @@ testdata/
 *.mem
 *.mm
 *.vlog
+*.sst
 *.jsonl
 chainanalyzer
 /debug_test_data

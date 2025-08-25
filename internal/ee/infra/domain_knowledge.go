@@ -73,7 +73,8 @@ func (gk *DomainKnowledge) IsDepositAddress(addr domain.Address) bool {
 // TODO 얘도 고칠꺼 짱 많음
 // TODO 1. 디포짓 관리는 EEC에 2.시간은 인자로 받는 것이지, Now로 하는 것이 아님!! 정 상태가 필요하면 체인타이머를 받고
 func (gk *DomainKnowledge) DetectNewDepositAddress(fromAddr, cexAddr domain.Address) error {
-	fmt.Printf("   🔍 DetectNewDepositAddress: %s → CEX %s\n", fromAddr.String()[:10]+"...", cexAddr.String()[:10]+"...")
+
+	//fmt.Printf("   🔍 DetectNewDepositAddress: %s → CEX %s\n", fromAddr.String()[:10]+"...", cexAddr.String()[:10]+"...")
 
 	gk.mutex.Lock()
 	defer gk.mutex.Unlock()
@@ -86,11 +87,11 @@ func (gk *DomainKnowledge) DetectNewDepositAddress(fromAddr, cexAddr domain.Addr
 		return gk.depositRepository.UpdateTxCount(fromAddr, existing.TxCount)
 	}
 
-	fmt.Printf("   ✨ New deposit address detected\n")
+	//fmt.Printf("   ✨ New deposit address detected\n")
 
 	// Add new detection to in-memory set
 	gk.detectedDepositSet.Add(fromAddr, cexAddr)
-	fmt.Printf("   💾 Added to in-memory set (size: %d)\n", gk.detectedDepositSet.Size())
+	//fmt.Printf("   💾 Added to in-memory set (size: %d)\n", gk.detectedDepositSet.Size())
 
 	// Persist new detection to storage
 	deposit := &localdomain.DetectedDepositWithEvidence{
@@ -101,13 +102,13 @@ func (gk *DomainKnowledge) DetectNewDepositAddress(fromAddr, cexAddr domain.Addr
 		TxCount:    1,
 	}
 
-	fmt.Printf("   💽 Saving to persistent storage...\n")
+	//fmt.Printf("   💽 Saving to persistent storage...\n")
 	err := gk.depositRepository.SaveDetectedDeposit(deposit)
 	if err != nil {
 		fmt.Printf("   ❌ SaveDetectedDeposit failed: %v\n", err)
 		return err
 	}
-	fmt.Printf("   ✅ SaveDetectedDeposit succeeded\n")
+	//fmt.Printf("   ✅ SaveDetectedDeposit succeeded\n")
 
 	return nil
 }

@@ -158,13 +158,16 @@ func (dm *DualManager) handleExceptionalAddress(_ domain.Address, _ string) erro
 // handleDepositDetection handles detection of new deposit addresses
 func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Address, tx *domain.MarkedTransaction, time chaintimer.ChainTime) error {
 	//fmt.Printf("💰 handleDepositDetection: %s → CEX %s\n", depositAddr.String()[:10]+"...", cexAddr.String()[:10]+"...")
-
+	debugEnabled := false
 	// 1. 새로운 입금주소를 detectedDepositAddress에 추가
 	if err := dm.infra.GroundKnowledge.DetectNewDepositAddress(depositAddr, cexAddr); err != nil {
 		fmt.Printf("   ❌ DetectNewDepositAddress failed: %v\n", err)
 		return err
 	}
-	fmt.Printf("   ✅ DetectNewDepositAddress succeeded\n")
+	if debugEnabled {
+
+		fmt.Printf("   ✅ DetectNewDepositAddress succeeded\n")
+	}
 	// CEX와 Deposit의 연결을 그래프DB에 추가
 	if err := dm.saveCexAndDepositToGraphDB(cexAddr, depositAddr, tx.TxID, time); err != nil {
 		fmt.Printf("Cex, Deposit연결을 그래프DB저장하려던 중 에러남")
@@ -254,10 +257,11 @@ func (dm *DualManager) AddToWindowBuffer(tx *domain.MarkedTransaction) (*domain.
 	txTime := tx.BlockTime
 	toAddr := tx.To
 	fromAddr := tx.From
+	debugEnabled := false
 
 	// 디버깅: 매 50 트랜잭션마다 시간 로깅 (10분×50=8.3시간마다)
 	static_counter++
-	if static_counter%50 == 0 || static_counter <= 20 {
+	if (static_counter%50 == 0 || static_counter <= 20) && debugEnabled {
 		fmt.Printf("⏰ TX #%d time: %s (1주=1008분=약17tx, 21개 버킷=357tx에서 순환)\n",
 			static_counter, txTime.Format("2006-01-02 15:04:05"))
 	}
@@ -372,7 +376,7 @@ func (dm *DualManager) addNewTimeBucket(txTime chaintimer.ChainTime) int {
 		dm.rearIndex = newRearIndex
 		dm.bucketCount++
 
-		fmt.Printf("🪣 New bucket added at index %d: %s - %s (front:%d, rear:%d, count:%d)\n",
+		fmt.Printf("🪣 New bucket toat index %d: %s - %s (front:%d, rear:%d, count:%d)\n",
 			newRearIndex,
 			weekStart.Format("2006-01-02 15:04:05"),
 			weekStart.Add(SlideInterval).Format("2006-01-02 15:04:05"),
