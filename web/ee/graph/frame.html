@@ -36,6 +36,7 @@
     <div>nodes: <code id="ncount">0</code> | edges: <code id="ecount">0</code></div>
   </div>
   <div id="container"></div>
+</body>
 
 <script>
 (function(){
@@ -44,6 +45,9 @@
 
   let GRAPH = null, RENDERER = null, DATA = null;
   let TRAIT_PALETTE = {};
+  let isHighlighted = false;  // 하이라이팅 상태를 전역으로 이동
+  let currentTraitHighlight = null;  // 현재 활성화된 트레이트 하이라이팅 {code, color}
+  let currentRuleHighlight = null;   // 현재 활성화된 룰 하이라이팅 {id, color}
   
   // 더블클릭 관련 변수들
   let hoveredNode = null;
@@ -118,6 +122,14 @@
 
     const nodes = data.nodes || [];
     const edges = data.edges || [];
+    
+    // 디버깅: 받은 데이터에서 멀티 트레이트 엣지 확인
+    console.log('=== Incoming data check ===');
+    const multiTraitEdges = edges.filter(e => e.parallelCount && e.parallelCount > 1);
+    console.log(`Total edges in data: ${edges.length}, Multi-trait edges: ${multiTraitEdges.length}`);
+    if (multiTraitEdges.length > 0) {
+      console.log('Sample multi-trait edges:', multiTraitEdges.slice(0, 3));
+    }
     
     // 그래프 업데이트 후 이벤트 리스너 재등록 방지를 위한 플래그
     const wasInitialized = RENDERER !== null;
@@ -287,8 +299,20 @@
         const hovered = GRAPH.getEdgeAttribute(edge, '__hover__');
         if (hovered) w *= 1.15;
         
-        // 멀티 트레이트 연결 시 검정색, 단일 트레이트는 기존 색상
-        const color = (cnt > 1) ? '#000000' : (data.colorHex || '#9aa0a6');
+        // colorHex가 명시적으로 설정되어 있으면 그것을 사용 (하이라이팅 시)
+        // 그렇지 않으면 멀티 트레이트는 검정색, 단일 트레이트는 기본 색상
+        let color = data.colorHex;
+        if (!isHighlighted) {
+          // 하이라이팅 중이 아닐 때만 기본 색상 규칙 적용
+          color = (cnt > 1) ? '#000000' : (data.colorHex || '#9aa0a6');
+        } else {
+          // 하이라이팅 중일 때는 colorHex 그대로 사용
+          color = data.colorHex || '#9aa0a6';
+          // 디버깅: 멀티 트레이트 엣지 색상 확인
+          if (cnt > 1) {
+            console.log(`Multi-trait edge [${edge}]: isHighlighted=${isHighlighted}, colorHex=${data.colorHex}, final color=${color}`);
+          }
+        }
         return { ...data, color, size: w };
       },
     });
@@ -321,15 +345,22 @@
         nodeDetails = DATA.nodes.find(n => n.id === node);
       }
       
-      window.parent && window.parent.postMessage({ type: 'node-hover', payload:{
+      const payload = {
         id: node, 
         label: attrs.label || '', 
         ropeColor: attrs.color,
         ropeCount: nodeDetails ? nodeDetails.ropes?.length || 0 : 0,
         traitCount: nodeDetails ? nodeDetails.traits?.length || 0 : 0,
         ropeName: nodeDetails ? nodeDetails.ropeName || 'Unknown' : 'Unknown',
+        ropeId: nodeDetails ? nodeDetails.ropeId || 0 : 0,
+        ropes: nodeDetails ? nodeDetails.ropes || [] : [],
         traits: nodeDetails ? nodeDetails.traits || [] : []
-      }}, '*');
+      };
+      
+      console.log('Node hover payload:', payload);
+      console.log('NodeDetails:', nodeDetails);
+      
+      window.parent && window.parent.postMessage({ type: 'node-hover', payload}, '*');
     });
     
     RENDERER.on('leaveNode', () => {
@@ -513,7 +544,6 @@
   // ===== 트레이트 하이라이팅 =====
   let originalNodeColors = new Map();
   let originalEdgeColors = new Map();
-  let isHighlighted = false;
   
   function restoreOriginalColors() {
     if (!GRAPH || !RENDERER) return;
@@ -548,89 +578,186 @@
   function highlightTraitInGraph(traitCode, highlightColor) {
     if (!GRAPH || !RENDERER) return;
     
-    // 먼저 원상복구
-    restoreOriginalColors();
+    // 트레이트 하이라이팅 상태 업데이트
+    if (traitCode === null) {
+      currentTraitHighlight = null;
+    } else {
+      const processedColor = parseColorToHex(highlightColor);
+      currentTraitHighlight = {code: traitCode, color: processedColor};
+      console.log(`Highlighting trait: ${traitCode} with color: ${highlightColor} -> ${processedColor}`);
+    }
     
-    // HSL 색상을 HEX로 변환
-    const processedColor = parseColorToHex(highlightColor);
-    console.log(`Highlighting trait: ${traitCode} with color: ${highlightColor} -> ${processedColor}`);
+    // 통합 하이라이팅 적용
+    applyHighlighting();
+  }
+  
+  function highlightRuleInGraph(ruleId, highlightColor) {
+    if (!GRAPH || !RENDERER) return;
     
-    // 원본 색상 저장
-    GRAPH.forEachNode((node) => {
-      originalNodeColors.set(node, GRAPH.getNodeAttribute(node, 'color'));
-    });
+    // 룰 하이라이팅 상태 업데이트
+    if (ruleId === null) {
+      currentRuleHighlight = null;
+    } else {
+      const processedColor = parseColorToHex(highlightColor);
+      currentRuleHighlight = {id: ruleId, color: processedColor};
+      console.log(`Highlighting rule: ${ruleId} with color: ${highlightColor} -> ${processedColor}`);
+    }
     
-    GRAPH.forEachEdge((edge) => {
-      const attrs = GRAPH.getEdgeAttributes(edge);
-      const cnt = attrs.parallelCount || 1;
+    // 통합 하이라이팅 적용
+    applyHighlighting();
+  }
+
+  // 통합 하이라이팅 적용 함수
+  function applyHighlighting() {
+    if (!GRAPH || !RENDERER) return;
+
+    // 하이라이팅이 없으면 원상복구
+    if (!currentTraitHighlight && !currentRuleHighlight) {
+      isHighlighted = false;
+      restoreOriginalColors();
+      return;
+    }
+
+    // 원본 색상 저장 (처음에만)
+    if (!isHighlighted) {
+      GRAPH.forEachNode((node) => {
+        originalNodeColors.set(node, GRAPH.getNodeAttribute(node, 'color'));
+      });
       
-      if (cnt > 1) {
-        // 멀티 엣지의 경우 원본 트레이트 색상 저장 (검정색이 아닌 실제 트레이트 색상)
-        const tc = Number(attrs.traitCode) || 0;
-        const originalTraitColor = traitColorFromLegend(tc) || genTraitColor(tc);
-        originalEdgeColors.set(edge, originalTraitColor);
-      } else {
-        // 단일 엣지는 현재 색상 저장
-        originalEdgeColors.set(edge, attrs.colorHex);
-      }
-    });
-    
-    console.log(`Saved colors: ${originalNodeColors.size} nodes, ${originalEdgeColors.size} edges`);
-    
-    // 모든 노드와 엣지를 옅은 회색으로 변경
+      GRAPH.forEachEdge((edge) => {
+        const attrs = GRAPH.getEdgeAttributes(edge);
+        const cnt = attrs.parallelCount || 1;
+        
+        if (cnt > 1) {
+          originalEdgeColors.set(edge, '#000000');
+        } else {
+          originalEdgeColors.set(edge, attrs.colorHex);
+        }
+      });
+    }
+
+    isHighlighted = true;
+
+    // 먼저 모든 요소를 회색으로 변경
     GRAPH.forEachNode((node) => {
       GRAPH.setNodeAttribute(node, 'color', '#dddddd');
     });
     
     GRAPH.forEachEdge((edge) => {
+      const attrs = GRAPH.getEdgeAttributes(edge);
+      const cnt = attrs.parallelCount || 1;
       GRAPH.setEdgeAttribute(edge, 'colorHex', '#dddddd');
     });
-    
-    // 선택된 트레이트에 해당하는 엣지와 연결 노드를 하이라이팅
+
+    // 하이라이팅된 요소들 수집
     const highlightedNodes = new Set();
     
-    if (traitCode === 'multi') {
-      // Multi-Trait 하이라이팅 (parallelCount > 1) - 검정색으로 하이라이팅
-      GRAPH.forEachEdge((edge, attrs) => {
-        const cnt = attrs.parallelCount || 1;
-        if (cnt > 1) {
-          GRAPH.setEdgeAttribute(edge, 'colorHex', '#000000');
-          // 연결된 노드들도 하이라이팅
+    // 트레이트 하이라이팅 처리
+    if (currentTraitHighlight) {
+      const traitCode = currentTraitHighlight.code;
+      const processedColor = currentTraitHighlight.color;
+      
+      if (traitCode === 'multi') {
+        // Multi-Trait 하이라이팅
+        GRAPH.forEachEdge((edge, attrs) => {
+          const cnt = attrs.parallelCount || 1;
+          if (cnt > 1) {
+            GRAPH.setEdgeAttribute(edge, 'colorHex', '#000000');
+            const src = GRAPH.source(edge);
+            const dst = GRAPH.target(edge);
+            highlightedNodes.add(src);
+            highlightedNodes.add(dst);
+          }
+        });
+      } else {
+        // 특정 트레이트 하이라이팅
+        const edgePairs = new Map();
+        
+        GRAPH.forEachEdge((edge) => {
           const src = GRAPH.source(edge);
           const dst = GRAPH.target(edge);
-          highlightedNodes.add(src);
-          highlightedNodes.add(dst);
-        }
-      });
-      // 하이라이트된 노드들을 검정색으로
+          const key = src < dst ? `${src}|${dst}` : `${dst}|${src}`;
+          if (!edgePairs.has(key)) {
+            edgePairs.set(key, []);
+          }
+          edgePairs.get(key).push(edge);
+        });
+        
+        edgePairs.forEach((edges) => {
+          let hasTargetTrait = false;
+          edges.forEach(edge => {
+            const attrs = GRAPH.getEdgeAttributes(edge);
+            if (String(attrs.traitCode) === String(traitCode)) {
+              hasTargetTrait = true;
+            }
+          });
+          
+          if (hasTargetTrait) {
+            edges.forEach(edge => {
+              GRAPH.setEdgeAttribute(edge, 'colorHex', processedColor);
+              const src = GRAPH.source(edge);
+              const dst = GRAPH.target(edge);
+              highlightedNodes.add(src);
+              highlightedNodes.add(dst);
+            });
+          }
+        });
+      }
+    }
+
+    // 룰 하이라이팅 처리 (노드)
+    if (currentRuleHighlight) {
+      const ruleId = currentRuleHighlight.id;
+      const processedColor = currentRuleHighlight.color;
+      
+      if (DATA && DATA.nodes) {
+        DATA.nodes.forEach(nodeData => {
+          if (nodeData.traits && Array.isArray(nodeData.traits)) {
+            const hasTargetRule = nodeData.traits.some(trait => String(trait.ruleCode) === String(ruleId));
+            
+            if (hasTargetRule && GRAPH.hasNode(nodeData.id)) {
+              highlightedNodes.add(nodeData.id);
+            }
+          }
+        });
+      }
+    }
+
+    // 트레이트 하이라이팅 색상 적용
+    if (currentTraitHighlight) {
       highlightedNodes.forEach(node => {
-        GRAPH.setNodeAttribute(node, 'color', '#000000');
-      });
-    } else {
-      // 특정 트레이트 하이라이팅 - 범례 색상 사용
-      GRAPH.forEachEdge((edge, attrs) => {
-        if (String(attrs.traitCode) === String(traitCode)) {
-          GRAPH.setEdgeAttribute(edge, 'colorHex', processedColor);
-          // 연결된 노드들 수집
-          const src = GRAPH.source(edge);
-          const dst = GRAPH.target(edge);
-          highlightedNodes.add(src);
-          highlightedNodes.add(dst);
-        }
-      });
-      // 하이라이트된 노드들을 범례 색상으로
-      highlightedNodes.forEach(node => {
-        GRAPH.setNodeAttribute(node, 'color', processedColor);
+        GRAPH.setNodeAttribute(node, 'color', currentTraitHighlight.color);
       });
     }
     
-    isHighlighted = true;
+    // 룰 하이라이팅 색상 적용 (덮어쓰기)
+    if (currentRuleHighlight) {
+      const ruleId = currentRuleHighlight.id;
+      const processedColor = currentRuleHighlight.color;
+      
+      if (DATA && DATA.nodes) {
+        DATA.nodes.forEach(nodeData => {
+          if (nodeData.traits && Array.isArray(nodeData.traits)) {
+            const hasTargetRule = nodeData.traits.some(trait => String(trait.ruleCode) === String(ruleId));
+            
+            if (hasTargetRule && GRAPH.hasNode(nodeData.id)) {
+              GRAPH.setNodeAttribute(nodeData.id, 'color', processedColor);
+            }
+          }
+        });
+      }
+    }
+
     RENDERER.refresh();
   }
   
   function clearHighlightInGraph() {
+    currentTraitHighlight = null;
+    currentRuleHighlight = null;
     restoreOriginalColors();
   }
+
+
 
   // 그래프 완전 초기화 함수 (검색용)
   function resetAndLoadGraph(newData) {
@@ -737,6 +864,10 @@
       // 트레이트 하이라이팅
       const {traitCode, color} = msg.payload;
       highlightTraitInGraph(traitCode, color);
+    } else if (msg.type==='highlight-rule'){
+      // Rule 하이라이팅
+      const {ruleId, color} = msg.payload;
+      highlightRuleInGraph(ruleId, color);
     } else if (msg.type==='clear-highlight'){
       // 하이라이팅 해제
       clearHighlightInGraph();

@@ -50,6 +50,7 @@ type NodeTrait struct {
 	TraitName string               `json:"traitName"`
 	Partner   string               `json:"partner"`
 	TraitID   ropedomain.TraitID   `json:"traitId"`
+	RuleCode  ropedomain.RuleCode  `json:"ruleCode"`
 }
 
 // EdgeInfo: omitempty 제거 (0도 직렬화되게)
@@ -72,6 +73,7 @@ type EdgeInfo struct {
 type LegendInfo struct {
 	Traits map[string]LegendItem `json:"traits"`
 	Ropes  map[string]LegendItem `json:"ropes"`
+	Rules  map[string]LegendItem `json:"rules"`
 }
 
 type LegendItem struct {
@@ -168,15 +170,95 @@ func (b *BadgerRopeDB) FetchGraphByTraitCode(code ropedomain.TraitCode) (GraphDa
 
 // 9) 로프ID 기반 로드 (간단 버전)
 func (b *BadgerRopeDB) FetchGraphByRopeID(id ropedomain.RopeID) (GraphData, error) {
-	r, err := b.ViewRope(id)
-	if err != nil {
-		return GraphData{}, err
+	// 1. RopeMark로 모든 멤버 가져오기
+	ropeMark := b.getRopeMark(id)
+	if ropeMark.ID == 0 {
+		return GraphData{}, fmt.Errorf("rope not found: %d", id)
 	}
-	if r == nil || len(r.Nodes) == 0 {
-		return GraphData{Meta: MetaInfo{GeneratedAt: time.Now().Unix(), GraphType: "rope"}}, fmt.Errorf("rope not found or empty: %d", id)
+	if len(ropeMark.Members) == 0 {
+		return GraphData{Meta: MetaInfo{GeneratedAt: time.Now().Unix(), GraphType: "rope"}}, fmt.Errorf("rope %d has no members", id)
 	}
-	start := r.Nodes[0].Address
-	return b.buildGraphFromVertex(start, 2, r.Trait, "rope")
+
+	nodeMap := map[string]NodeInfo{}
+	edgeMap := map[string]EdgeInfo{}
+	traitIDSet := map[ropedomain.TraitID]bool{}
+
+	// 2. 각 멤버 버텍스 조회 및 노드 생성
+	for _, memberAddr := range ropeMark.Members {
+		vertex := b.getOrCreateVertex(memberAddr)
+		nodeInfo := b.createNodeInfo(vertex)
+		nodeMap[nodeInfo.ID] = nodeInfo
+
+		// 3. 각 멤버의 트레이트 ID 수집
+		for _, trait := range vertex.Traits {
+			traitIDSet[trait.TraitID] = true
+		}
+	}
+
+	// 4. 수집된 트레이트 ID 기반으로 트레이트 조회 및 엣지 생성
+	for traitID := range traitIDSet {
+		traitMark := b.getTraitMark(traitID)
+		if traitMark.ID == 0 {
+			continue
+		}
+
+		// 양 끝 노드가 모두 Rope 멤버에 포함된 경우만 엣지 추가
+		addrA := traitMark.AddressA.String()
+		addrB := traitMark.AddressB.String()
+
+		if _, hasA := nodeMap[addrA]; !hasA {
+			continue
+		}
+		if _, hasB := nodeMap[addrB]; !hasB {
+			continue
+		}
+
+		// 엣지 생성
+		edgeID := fmt.Sprintf("%s_%s_%d", addrA, addrB, traitMark.Trait)
+		if _, exists := edgeMap[edgeID]; !exists {
+			edgeInfo := EdgeInfo{
+				ID:        edgeID,
+				Source:    addrA,
+				Target:    addrB,
+				TraitCode: traitMark.Trait,
+				TraitName: b.traitName(traitMark.Trait),
+				TraitID:   traitID,
+				Color:     b.generateTraitColor(traitMark.Trait),
+				Weight:    int(traitMark.Volume),
+				LastSeen:  traitMark.LastSeen.Unix(),
+			}
+			edgeMap[edgeID] = edgeInfo
+		}
+	}
+
+	// 병렬 엣지 처리
+	edges := make([]EdgeInfo, 0, len(edgeMap))
+	for _, edge := range edgeMap {
+		edges = append(edges, edge)
+	}
+	edges = annotateParallel(edges)
+
+	// 노드 배열 생성
+	nodes := make([]NodeInfo, 0, len(nodeMap))
+	for _, node := range nodeMap {
+		nodes = append(nodes, node)
+	}
+
+	// 범례 생성
+	legend := b.generateLegend(nodes, edges)
+
+	return GraphData{
+		Nodes:  nodes,
+		Edges:  edges,
+		Legend: legend,
+		Meta: MetaInfo{
+			GeneratedAt: time.Now().Unix(),
+			NodeCount:   len(nodes),
+			EdgeCount:   len(edges),
+			GraphType:   "rope",
+			StartNode:   "", // 시작 노드 개념 없음
+		},
+	}, nil
 }
 
 // ===== 내부 구현 =====
@@ -304,11 +386,25 @@ func (b *BadgerRopeDB) createNodeInfo(v *ropedomain.Vertex) NodeInfo {
 
 	traits := make([]NodeTrait, len(v.Traits))
 	for i, tr := range v.Traits {
+		// TraitMark를 조회해서 실제 RuleCode 가져오기
+		tm := b.getTraitMark(tr.TraitID)
+		
+		// 현재 노드 주소에 해당하는 Rule 결정
+		var ruleCode ropedomain.RuleCode
+		if tm.AddressA == v.Address {
+			ruleCode = tm.RuleA
+		} else if tm.AddressB == v.Address {
+			ruleCode = tm.RuleB
+		} else {
+			ruleCode = 0 // 기본값
+		}
+		
 		traits[i] = NodeTrait{
 			TraitCode: tr.Trait,
 			TraitName: b.traitName(tr.Trait),
 			Partner:   tr.Partner.String(),
 			TraitID:   tr.TraitID,
+			RuleCode:  ruleCode,
 		}
 	}
 	// 주소 축약
@@ -343,6 +439,32 @@ func (b *BadgerRopeDB) createNodeInfo(v *ropedomain.Vertex) NodeInfo {
 		Ropes:    allRopes,
 		Traits:   traits,
 	}
+}
+
+// GetRopeInfo returns detailed information about a specific rope
+func (b *BadgerRopeDB) GetRopeInfo(id ropedomain.RopeID) (map[string]interface{}, error) {
+	ropeMark := b.getRopeMark(id)
+	if ropeMark.ID == 0 {
+		return nil, fmt.Errorf("rope not found: %d", id)
+	}
+	
+	// 멤버 주소를 문자열로 변환
+	memberStrs := make([]string, len(ropeMark.Members))
+	for i, addr := range ropeMark.Members {
+		memberStrs[i] = addr.String()
+	}
+	
+	info := map[string]interface{}{
+		"id":       int64(ropeMark.ID),
+		"trait":    int64(ropeMark.Trait),
+		"size":     int64(ropeMark.Size),
+		"volume":   int64(ropeMark.Volume),
+		"lastSeen": ropeMark.LastSeen.Unix(),
+		"members":  memberStrs,
+		"traitName": b.traitName(ropeMark.Trait),
+	}
+	
+	return info, nil
 }
 
 func (b *BadgerRopeDB) createEdgeInfo(src, dst string, tr ropedomain.TraitRef, id string) EdgeInfo {
@@ -383,12 +505,31 @@ func (b *BadgerRopeDB) generateRopeColor(id ropedomain.RopeID) string {
 	return fmt.Sprintf("hsl(%d, %d%%, %d%%)", h, s, l)
 }
 
+func (b *BadgerRopeDB) generateRuleColor(ruleCode ropedomain.RuleCode) string {
+	// Rule별 고유 색상 생성 (Trait, Rope와 구별되는 색상 범위)
+	h := (int(ruleCode)*73 + 270) % 360 // 다른 오프셋으로 색상 충돌 방지
+	s := 70 + (int(ruleCode)%3)*10      // 70-90% 범위
+	l := 45 + (int(ruleCode)%4)*5       // 45-60% 범위
+	return fmt.Sprintf("hsl(%d, %d%%, %d%%)", h, s, l)
+}
+
+func (b *BadgerRopeDB) ruleName(ruleCode ropedomain.RuleCode) string {
+	if b != nil && b.ruleLegend != nil {
+		if n, ok := b.ruleLegend[ruleCode]; ok {
+			return n
+		}
+	}
+	return fmt.Sprintf("Rule %d", ruleCode)
+}
+
 func (b *BadgerRopeDB) generateLegend(nodes []NodeInfo, edges []EdgeInfo) LegendInfo {
 	traits := map[string]LegendItem{}
 	ropes := map[string]LegendItem{}
+	rules := map[string]LegendItem{}
 
 	tcnt := map[ropedomain.TraitCode]int{}
 	rcnt := map[ropedomain.RopeID]int{}
+	ruleCnt := map[ropedomain.RuleCode]int{}
 
 	for _, e := range edges {
 		tcnt[e.TraitCode]++
@@ -397,6 +538,12 @@ func (b *BadgerRopeDB) generateLegend(nodes []NodeInfo, edges []EdgeInfo) Legend
 	for _, n := range nodes {
 		for _, rb := range n.Ropes {
 			rcnt[rb.ID]++
+		}
+		// RuleCode 추출
+		for _, trait := range n.Traits {
+			if trait.RuleCode != 0 {
+				ruleCnt[trait.RuleCode]++
+			}
 		}
 	}
 
@@ -414,7 +561,14 @@ func (b *BadgerRopeDB) generateLegend(nodes []NodeInfo, edges []EdgeInfo) Legend
 			Count: c,
 		}
 	}
-	return LegendInfo{Traits: traits, Ropes: ropes}
+	for ruleCode, c := range ruleCnt {
+		rules[fmt.Sprintf("%d", ruleCode)] = LegendItem{
+			Color: b.generateRuleColor(ruleCode),
+			Name:  b.ruleName(ruleCode),
+			Count: c,
+		}
+	}
+	return LegendInfo{Traits: traits, Ropes: ropes, Rules: rules}
 }
 
 // 내부: RopeMark 중 최대 Volume 선택(동률이면 Size, 그 다음 LastSeen)

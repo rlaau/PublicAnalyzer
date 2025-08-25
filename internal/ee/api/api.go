@@ -48,6 +48,9 @@ func (h *EEAPIHandler) RegisterRoutes(router *chi.Mux) error {
 		r.Get("/graph/trait", h.handleGraphByTrait) // ?code=<traitCode>
 		r.Get("/graph/rope", h.handleGraphByRope)   // ?id=<ropeId>
 		r.Get("/graph/stats", h.handleGraphStats)
+		
+		// 로프 메타데이터 엔드포인트
+		r.Get("/rope-info", h.handleRopeInfo) // ?id=<ropeId>
 	})
 	router.Route("/api/ee/graph", func(r chi.Router) {
 		// GET /api/ee/graph/default
@@ -64,6 +67,9 @@ func (h *EEAPIHandler) RegisterRoutes(router *chi.Mux) error {
 
 		// GET /api/ee/graph/stats
 		r.Get("/stats", h.handleGraphStats)
+		
+		// GET /api/ee/graph/rope-info/{id}
+		r.Get("/rope-info/{id}", h.handleRopeInfo)
 	})
 	// 페이지 라우팅 - HTML 페이지 서빙
 	router.Route("/ui/ee", func(r chi.Router) {

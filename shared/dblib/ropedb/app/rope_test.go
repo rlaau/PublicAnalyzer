@@ -44,19 +44,29 @@ var TraitLegend = map[domain.TraitCode]string{
 const (
 	RuleCustomer domain.RuleCode = 1
 	RuleDeposit  domain.RuleCode = 2
+	RuleCEX      domain.RuleCode = 3
+	//이 밑으로 추가만!!
 )
 
 // 룰 코드 → 이름 매핑
 var RuleLegend = map[domain.RuleCode]string{
 	RuleCustomer: "RuleCustomer",
 	RuleDeposit:  "RuleDeposit",
+	RuleCEX:      "RuleCex",
 }
 
 func link(t *testing.T, db RopeDB, a1, a2 shareddomain.Address, trait domain.TraitCode) {
 	t.Helper()
+	cexOrDeposit := uint16(trait)%3 == 0
+	var rc domain.RuleCode
+	if cexOrDeposit {
+		rc = RuleCustomer
+	} else {
+		rc = RuleCEX
+	}
 	ev := domain.NewTraitEvent(trait, domain.AddressAndRule{
 		Address: a1,
-		Rule:    RuleCustomer,
+		Rule:    rc,
 	}, domain.AddressAndRule{
 		Address: a2,
 		Rule:    RuleDeposit,

@@ -30,6 +30,50 @@
   #info .muted{color:#666;font-size:13px;font-weight:500}
   #info .mono{font-weight:600}
   #info .sec h3{font-size:16px;font-weight:700;color:#222}
+  
+  /* 알림 메시지 스타일 */
+  .notification {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(47, 111, 237, 0.95);
+    color: white;
+    padding: 12px 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    font-size: 14px;
+    font-weight: 600;
+    z-index: 1000;
+    animation: slideDown 0.3s ease-out;
+    max-width: 500px;
+  }
+  
+  @keyframes slideDown {
+    from {
+      transform: translateX(-50%) translateY(-100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+  }
+  
+  @keyframes slideUp {
+    from {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+    to {
+      transform: translateX(-50%) translateY(-100%);
+      opacity: 0;
+    }
+  }
+  
+  .notification.hiding {
+    animation: slideUp 0.3s ease-out;
+  }
 </style>
 </head>
 <body>
@@ -45,13 +89,33 @@
       <h3>🧵 Rope Search</h3>
       <div class="row"><input id="rope" type="text" placeholder="Rope ID (e.g. 1, 2, 3)"/></div>
       <button id="ropeBtn">Search Rope Members + 1-hop</button>
+      
+      <!-- 로프 정보 표시 영역 -->
+      <div id="ropeInfoPanel" style="margin-top:10px; display:none; padding:8px; background:#f8f9fa; border-radius:6px; border:1px solid #e9ecef;">
+        <h4 style="margin:0 0 8px 0; font-size:12px; color:#495057;">📋 Rope Information</h4>
+        <div id="ropeInfoContent" class="kv" style="font-size:11px; line-height:1.3;">
+          <!-- 로프 정보가 여기에 표시됩니다 -->
+        </div>
+      </div>
     </div>
     <button id="defBtn" class="green" style="margin-top:14px">🏠 Default View</button>
   </section>
 
   <section id="legend"  style="overflow-y: auto;">
-    <div class="sec"><h3>🎨 Trait Colors</h3><div id="traitLegend"></div></div>
-    <div class="sec" style="margin-top:10px"><h3>🧵 Rope Colors</h3><div id="ropeLegend"></div></div>
+    <div class="sec">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+        <h3 style="margin: 0;">🎨 Trait Colors</h3>
+        <button onclick="recoverTrait()" style="background: #ff9800; color: white; border: none; padding: 3px 6px; border-radius: 3px; font-size: 10px; cursor: pointer;" onmouseover="this.style.background='#f57c00'" onmouseout="this.style.background='#ff9800'">Trait 해제</button>
+      </div>
+      <div id="traitLegend"></div>
+    </div>
+    <div class="sec" style="margin-top:10px">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+        <h3 style="margin: 0;">📋 Rule Colors</h3>
+        <button onclick="recoverRule()" style="background: #2196f3; color: white; border: none; padding: 3px 6px; border-radius: 3px; font-size: 10px; cursor: pointer;" onmouseover="this.style.background='#1976d2'" onmouseout="this.style.background='#2196f3'">Rule 해제</button>
+      </div>
+      <div id="ruleLegend"></div>
+    </div>
   </section>
 
   <section id="info" style="overflow-y:auto;">
@@ -77,7 +141,100 @@
 const f = document.getElementById('f');
 const sn=document.getElementById('sn'), se=document.getElementById('se'), st=document.getElementById('st'), ss=document.getElementById('ss');
 const nodeBox=document.getElementById('nodeBox'), edgeBox=document.getElementById('edgeBox');
-let CURRENT = { meta:{}, nodes:[], edges:[], legend:{traits:{}, ropes:{}} };
+let CURRENT = { meta:{}, nodes:[], edges:[], legend:{traits:{}, rules:{}} };
+
+// Info 패널 초기화 함수
+function resetInfoPanel() {
+  nodeBox.textContent = 'Hover a node…';
+  nodeBox.classList.add('muted');
+  edgeBox.textContent = 'Hover an edge…';
+  edgeBox.classList.add('muted');
+}
+
+// 로프 정보 패널 관련 함수들
+function showRopeInfo(ropeInfo) {
+  const panel = document.getElementById('ropeInfoPanel');
+  const content = document.getElementById('ropeInfoContent');
+  
+  if (!ropeInfo) {
+    panel.style.display = 'none';
+    return;
+  }
+  
+  // 시간 포맷팅 함수
+  const formatTime = (timestamp) => {
+    const date = new Date(timestamp * 1000);
+    return date.toLocaleString();
+  };
+  
+  // 멤버 주소들을 짧게 표시
+  const formatMembers = (members) => {
+    if (!members || members.length === 0) return 'None';
+    const shortMembers = members.map(addr => {
+      if (addr.length > 13) {
+        return addr.substring(0, 6) + '..' + addr.substring(addr.length - 4);
+      }
+      return addr;
+    });
+    return shortMembers.join(', ');
+  };
+  
+  let html = '';
+  html += '<div><b>ID:</b> ' + (ropeInfo.id || 'N/A') + '</div>';
+  html += '<div><b>Trait:</b> ' + (ropeInfo.trait || 'N/A') + ' (' + (ropeInfo.traitName || 'Unknown') + ')</div>';
+  html += '<div><b>Size:</b> ' + (ropeInfo.size || 'N/A') + '</div>';
+  html += '<div><b>Volume:</b> ' + (ropeInfo.volume || 'N/A') + '</div>';
+  html += '<div><b>Last Seen:</b> ' + (ropeInfo.lastSeen ? formatTime(ropeInfo.lastSeen) : 'N/A') + '</div>';
+  html += '<div><b>Members:</b><br/><span style="font-family:monospace; font-size:10px;">' + formatMembers(ropeInfo.members) + '</span></div>';
+  
+  content.innerHTML = html;
+  panel.style.display = 'block';
+}
+
+function hideRopeInfo() {
+  const panel = document.getElementById('ropeInfoPanel');
+  panel.style.display = 'none';
+}
+
+function loadRopeInfo(ropeId) {
+  console.log('Loading rope info for rope:', ropeId);
+  
+  const url = '/api/ee/graph/rope-info/' + encodeURIComponent(ropeId);
+  
+  fetch(url)
+    .then(r => r.json())
+    .then(ropeInfo => {
+      console.log('Rope info loaded:', ropeInfo);
+      showRopeInfo(ropeInfo);
+    })
+    .catch(err => {
+      console.error('Failed to load rope info:', err);
+      hideRopeInfo();
+    });
+}
+
+// 알림 메시지 표시 함수
+function showNotification(message, duration = 2000) {
+  // 기존 알림 제거
+  const existing = document.querySelector('.notification');
+  if (existing) {
+    existing.remove();
+  }
+  
+  // 새 알림 생성
+  const notification = document.createElement('div');
+  notification.className = 'notification';
+  notification.innerHTML = message;
+  document.body.appendChild(notification);
+  
+  // 지정된 시간 후 제거
+  setTimeout(() => {
+    notification.classList.add('hiding');
+    setTimeout(() => {
+      notification.remove();
+    }, 300);
+  }, duration);
+}
 
 function syncStats(g){
   sn.textContent = String(g.meta?.nodeCount || (g.nodes?g.nodes.length:0) || 0);
@@ -85,14 +242,127 @@ function syncStats(g){
   st.textContent = g.meta?.graphType || '-';
   ss.textContent = g.meta?.startNode || '-';
 }
-// mergeGraph() 함수 제거: 순수 DB 기반 아키텍처에서는 브라우저 상태 병합이 불필요함
-// 모든 그래프 작업은 단일 DB 쿼리 결과를 직접 사용
-function renderLegend(legend){
-  const t = document.getElementById('traitLegend'), r = document.getElementById('ropeLegend');
-  t.innerHTML = ''; r.innerHTML = '';
+// Rule 색상 생성 함수
+function generateRuleColor(ruleId) {
+  // Rule별로 고유한 색상 생성 (트레이트와 다른 색상 범위 사용)
+  const h = (ruleId * 137 + 30) % 360;  // 137은 황금비에 가까운 소수
+  const s = 55 + (ruleId % 3) * 10;     // 55-75% 채도
+  const l = 45 + (ruleId % 4) * 5;      // 45-60% 명도
+  return `hsl(${h}, ${s}%, ${l}%)`;
+}
+
+// 범례 병합 함수: 기존 범례 색상을 유지하면서 새로운 데이터 추가
+function mergeLegends(existingLegend, newLegend) {
+  const merged = {
+    traits: { ...existingLegend.traits },
+    rules: { ...existingLegend.rules }
+  };
   
-  // 클릭 가능한 범례 항목 생성
-  const mk = (color,name,count,traitCode)=>`<div class="legend-item" data-trait="${traitCode||''}" style="cursor:pointer;padding:4px;border-radius:4px;" onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background=''"onclick="toggleTraitHighlight('${traitCode||''}','${color}')"><div class="legend-color" style="background:${color}"></div><span>${name}</span><span style="margin-left:auto;color:#888;font-size:11px">${count}</span></div>`;
+  // 새로운 트레이트들 추가 (색상은 기존 것 우선)
+  if (newLegend.traits) {
+    for (const [key, item] of Object.entries(newLegend.traits)) {
+      if (!merged.traits[key]) {
+        merged.traits[key] = item;
+      }
+      // 기존 트레이트는 색상 유지 (count는 나중에 재계산)
+    }
+  }
+  
+  // 새로운 Rule들 추가 (색상은 기존 것 우선)
+  if (newLegend.rules) {
+    for (const [key, item] of Object.entries(newLegend.rules)) {
+      if (!merged.rules[key]) {
+        merged.rules[key] = item;
+      }
+    }
+  }
+  
+  return merged;
+}
+
+// 현재 그래프 상태를 기반으로 범례 카운트 재계산
+function recalculateLegendCounts(legend, nodes, edges) {
+  const updated = {
+    traits: { ...legend.traits },
+    rules: {}
+  };
+  
+  // 모든 카운트 초기화
+  Object.keys(updated.traits).forEach(key => {
+    updated.traits[key] = { ...updated.traits[key], count: 0 };
+  });
+  
+  // 엣지에서 트레이트 카운트 계산
+  edges.forEach(edge => {
+    const traitKey = String(edge.traitCode || 0);
+    if (updated.traits[traitKey]) {
+      updated.traits[traitKey].count++;
+    }
+  });
+  
+  // Rule 범례 보존 및 카운트 계산 (기존 색상/이름 유지)
+  const ruleCount = {};
+  console.log('=== Rule Legend Debug ===');
+  console.log(`Total nodes to process: ${nodes.length}`);
+  
+  // 기존 Rule 범례 복사 (색상과 이름 보존)
+  if (legend.rules) {
+    Object.keys(legend.rules).forEach(ruleId => {
+      updated.rules[ruleId] = { 
+        ...legend.rules[ruleId], 
+        count: 0 
+      };
+    });
+  }
+  
+  nodes.forEach((node, index) => {
+    console.log(`Node ${index}:`, node.id, 'traits:', node.traits?.length || 0);
+    
+    // 노드의 traits에서 실제 RuleCode 추출
+    if (node.traits && Array.isArray(node.traits)) {
+      // 각 노드에 대해 해당 노드가 가진 Rule들을 수집
+      const nodeRules = new Set();
+      
+      node.traits.forEach((trait, traitIndex) => {
+        const ruleCode = trait.ruleCode;
+        console.log(`  Trait ${traitIndex}:`, trait.traitCode, 'ruleCode:', ruleCode);
+        if (ruleCode && ruleCode > 0) {
+          nodeRules.add(ruleCode);
+          console.log(`    Added rule: ${ruleCode}`);
+        }
+      });
+      
+      // 실제 RuleCode들을 범례에 추가 (기존 색상/이름 우선)
+      nodeRules.forEach(ruleCode => {
+        const ruleKey = String(ruleCode);
+        if (!updated.rules[ruleKey]) {
+          // 새로운 룰이면 새로 생성
+          updated.rules[ruleKey] = {
+            count: 0,
+            name: `Rule ${ruleCode}`, // 백엔드에서 실제 이름 받아올 때까지 임시
+            color: generateRuleColor(ruleCode)
+          };
+        }
+        updated.rules[ruleKey].count++;
+      });
+    }
+  });
+  
+  console.log('Final updated rules:', updated.rules);
+  
+  return updated;
+}
+function renderLegend(legend){
+  const t = document.getElementById('traitLegend');
+  const r = document.getElementById('ruleLegend');
+  t.innerHTML = '';
+  r.innerHTML = '';
+  
+  // 클릭 가능한 트레이트 범례 항목 생성
+  const mkTrait = (color,name,count,traitCode)=>`<div class="legend-item" data-trait="${traitCode||''}" style="cursor:pointer;padding:4px;border-radius:4px;" onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background=''"onclick="toggleTraitHighlight('${traitCode||''}','${color}')"><div class="legend-color" style="background:${color}"></div><span>${name}</span><span style="margin-left:auto;color:#888;font-size:11px">${count}</span></div>`;
+  
+  // 클릭 가능한 룰 범례 항목 생성
+  const mkRule = (color,name,count,ruleId)=>`<div class="legend-item" data-rule="${ruleId||''}" style="cursor:pointer;padding:4px;border-radius:4px;" onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background=''"onclick="toggleRuleHighlight('${ruleId||''}','${color}')"><div class="legend-color" style="background:${color}"></div><span>${name}</span><span style="margin-left:auto;color:#888;font-size:11px">${count}</span></div>`;
   
   // Multi-Trait 항목을 맨 위에 추가 (실제 멀티 트레이트 연결된 노드 수 계산)
   let multiTraitNodes = new Set();
@@ -107,33 +377,83 @@ function renderLegend(legend){
     });
   }
   const multiTraitCount = multiTraitNodes.size;
-  t.insertAdjacentHTML('beforeend', mk('#000000', 'Multi-Trait', multiTraitCount, 'multi'));
+  t.insertAdjacentHTML('beforeend', mkTrait('#000000', 'Multi-Trait', multiTraitCount, 'multi'));
   
   // 기존 트레이트들
   for (const k in (legend.traits||{})) {
     const it = legend.traits[k]; 
-    t.insertAdjacentHTML('beforeend', mk(it.color, it.name, it.count||0, k));
+    t.insertAdjacentHTML('beforeend', mkTrait(it.color, it.name, it.count||0, k));
   }
   
-  for (const k in (legend.ropes||{})) {
-    const it = legend.ropes[k]; 
-    r.insertAdjacentHTML('beforeend', mk(it.color, it.name, it.count||0));
+  // Rule 범례들
+  for (const k in (legend.rules||{})) {
+    const it = legend.rules[k]; 
+    r.insertAdjacentHTML('beforeend', mkRule(it.color, it.name, it.count||0, k));
   }
 }
 
-// 트레이트 하이라이팅 기능
+// 하이라이팅 상태 관리
 let currentHighlightTrait = null;
+let currentHighlightRule = null;
 
 function toggleTraitHighlight(traitCode, color) {
   if (currentHighlightTrait === traitCode) {
     // 이미 선택된 트레이트면 하이라이팅 해제
     currentHighlightTrait = null;
-    f.contentWindow.postMessage({type: 'clear-highlight'}, '*');
+    f.contentWindow.postMessage({type: 'highlight-trait', payload: {traitCode: null}}, '*');
   } else {
     // 새로운 트레이트 하이라이팅
     currentHighlightTrait = traitCode;
     f.contentWindow.postMessage({type: 'highlight-trait', payload: {traitCode, color}}, '*');
   }
+}
+
+function toggleRuleHighlight(ruleId, color) {
+  // 우선순위 제약 제거 - 트레이트 하이라이팅 상태와 무관하게 작동
+  if (currentHighlightRule === ruleId) {
+    // 이미 선택된 Rule이면 하이라이팅 해제
+    currentHighlightRule = null;
+    f.contentWindow.postMessage({type: 'highlight-rule', payload: {ruleId: null}}, '*');
+  } else {
+    // 새로운 Rule 하이라이팅
+    currentHighlightRule = ruleId;
+    f.contentWindow.postMessage({type: 'highlight-rule', payload: {ruleId, color}}, '*');
+  }
+}
+
+function getCurrentRuleColor(ruleId) {
+  if (CURRENT && CURRENT.legend && CURRENT.legend.rules && CURRENT.legend.rules[ruleId]) {
+    return CURRENT.legend.rules[ruleId].color;
+  }
+  return generateRuleColor(ruleId);
+}
+
+// Trait 하이라이팅만 해제
+function recoverTrait() {
+  console.log('Recovering trait highlighting...');
+  
+  // Trait 하이라이팅 상태만 초기화
+  currentHighlightTrait = null;
+  
+  // 프레임에 Trait 해제 신호 전송
+  f.contentWindow.postMessage({type: 'highlight-trait', payload: {traitCode: null}}, '*');
+  
+  // 알림 표시
+  showNotification('Trait 하이라이팅이 해제되었습니다', 'info');
+}
+
+// Rule 하이라이팅만 해제
+function recoverRule() {
+  console.log('Recovering rule highlighting...');
+  
+  // Rule 하이라이팅 상태만 초기화
+  currentHighlightRule = null;
+  
+  // 프레임에 Rule 해제 신호 전송
+  f.contentWindow.postMessage({type: 'highlight-rule', payload: {ruleId: null}}, '*');
+  
+  // 알림 표시
+  showNotification('Rule 하이라이팅이 해제되었습니다', 'info');
 }
 
 // 메시지(자식 → 부모)
@@ -142,24 +462,52 @@ window.addEventListener('message', (ev)=>{
   if (msg.type==='child-mounted'){
     // 초기 로드
     fetch('/api/ee/graph/default').then(r=>r.json()).then(g=>{
-      CURRENT = g; syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{},ropes:{}});
+      CURRENT = g; syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{}, rules:{}});
+      resetInfoPanel(); // Info 패널 초기화
+      hideRopeInfo(); // 로프 정보 숨김
       f.contentWindow.postMessage({type:'load-graph', payload: CURRENT}, '*');
     });
   } else if (msg.type==='child-ready'){
     // ok 여부만 확인 가능
   } else if (msg.type==='node-hover'){
-    if (!msg.payload){ nodeBox.textContent='Hover a node…'; nodeBox.classList.add('muted'); return; }
+    // Payload가 없으면 정보를 유지 (마우스가 leave해도 계속 표시)
+    if (!msg.payload) { return; }
+    
+    console.log('Received node-hover payload:', msg.payload);
+    console.log('ropes array:', msg.payload.ropes);
+    console.log('ropeId:', msg.payload.ropeId);
+    console.log('ropeCount:', msg.payload.ropeCount);
+    
     nodeBox.classList.remove('muted');
     const p = msg.payload;
     
     // 기본 정보
     let html = 'Address: <span class="mono">' + (p.id || '') + '</span>';
     
-    // 로프 정보
+    // 로프 정보 - 모든 로프 ID를 표시
+    console.log('Checking if ropeCount > 0:', p.ropeCount, '>', 0, '=', p.ropeCount > 0);
     if (p.ropeCount > 0) {
       html += '<br/>Ropes: <b>' + p.ropeCount + '</b>';
-      if (p.ropeName && p.ropeName !== 'Unknown') {
-        html += ' (Primary: ' + p.ropeName + ')';
+      
+      console.log('Checking ropes condition:');
+      console.log('p.ropes:', p.ropes);
+      console.log('p.ropes.length:', p.ropes ? p.ropes.length : 'undefined');
+      console.log('p.ropeId:', p.ropeId);
+      
+      // 모든 로프 ID 표시
+      if (p.ropes && p.ropes.length > 0) {
+        console.log('Using ropes array');
+        // ropes 배열이 있는 경우 모든 ID 표시
+        html += '<br/>IDs: ';
+        const ropeIds = p.ropes.map(rope => '#' + rope.id).join(', ');
+        html += '<span class="mono">' + ropeIds + '</span>';
+        console.log('Generated ropeIds:', ropeIds);
+      } else if (p.ropeId && p.ropeId !== 0) {
+        console.log('Using fallback ropeId');
+        // 기존 방식 호환성 (ropes 배열이 없는 경우) - 최소한 primary ID는 표시
+        html += '<br/>IDs: <span class="mono">#' + p.ropeId + '</span>';
+      } else {
+        console.log('No rope IDs to display');
       }
     }
     
@@ -184,7 +532,8 @@ window.addEventListener('message', (ev)=>{
     
     nodeBox.innerHTML = html;
   } else if (msg.type==='edge-hover'){
-    if (!msg.payload){ edgeBox.textContent='Hover an edge…'; edgeBox.classList.add('muted'); return; }
+    // Payload가 없으면 정보를 유지 (마우스가 leave해도 계속 표시)
+    if (!msg.payload) { return; }
     edgeBox.classList.remove('muted');
     const p = msg.payload;
     
@@ -228,7 +577,21 @@ window.addEventListener('message', (ev)=>{
           
           // 기존 그래프에 확장 결과 추가 (apply-graph 사용)
           console.log('Adding expansion results to existing graph');
-          const oldCurrent = CURRENT;
+          
+          // 업데이트 전에 기존 노드/엣지 ID 저장 (비교용)
+          const existingNodeIds = new Set((CURRENT.nodes || []).map(n => n.id));
+          const existingEdgeIds = new Set((CURRENT.edges || []).map(e => e.id));
+          
+          // 실제로 새로 추가될 노드와 엣지 미리 계산
+          const trulyNewNodes = (expandResult.nodes || []).filter(n => !existingNodeIds.has(n.id));
+          const trulyNewEdges = (expandResult.edges || []).filter(e => !existingEdgeIds.has(e.id));
+          
+          console.log('Truly new elements:', {
+            newNodes: trulyNewNodes.length,
+            newEdges: trulyNewEdges.length,
+            existingNodes: existingNodeIds.size,
+            existingEdges: existingEdgeIds.size
+          });
           
           // CURRENT에 새로운 노드와 엣지 추가 (브라우저 상태 동기화)
           const nodeMap = new Map();
@@ -252,20 +615,61 @@ window.addEventListener('message', (ev)=>{
             generatedAt: Math.floor(Date.now()/1000)
           };
           
-          // 범례 업데이트 (확장 결과에 새로운 범례가 있다면)
+          // 범례 병합 및 재계산 (기존 범례 색상을 유지하면서 새로운 데이터 추가 후 카운트 재계산)
           if (expandResult.legend) {
-            CURRENT.legend = expandResult.legend;
+            // 1단계: 범례 병합 (색상 일관성 유지)
+            CURRENT.legend = mergeLegends(CURRENT.legend || {traits:{}, rules:{}}, expandResult.legend);
+            // 2단계: 현재 그래프 상태 기반으로 카운트 재계산
+            CURRENT.legend = recalculateLegendCounts(CURRENT.legend, CURRENT.nodes, CURRENT.edges);
           }
           
-          console.log('Graph expansion:', { 
-            old: { nodes: oldCurrent.nodes?.length || 0, edges: oldCurrent.edges?.length || 0 },
-            added: { nodes: expandResult.nodes?.length || 0, edges: expandResult.edges?.length || 0 },
-            new: { nodes: CURRENT.nodes.length, edges: CURRENT.edges.length }
+          console.log('Graph expansion completed:', { 
+            before: { nodes: existingNodeIds.size, edges: existingEdgeIds.size },
+            received: { nodes: expandResult.nodes?.length || 0, edges: expandResult.edges?.length || 0 },
+            added: { nodes: trulyNewNodes.length, edges: trulyNewEdges.length },
+            after: { nodes: CURRENT.nodes.length, edges: CURRENT.edges.length }
           });
           
+          const addedNodes = trulyNewNodes.length;
+          const addedEdges = trulyNewEdges.length;
+          
+          // 확장 결과 알림 메시지 생성
+          if (addedNodes > 0 || addedEdges > 0) {
+            let notificationMsg = `✅ 확장 완료: ${addedNodes}개 노드, ${addedEdges}개 연결 추가`;
+            
+            // 실제로 추가된 노드 주소 표시 (최대 3개)
+            if (trulyNewNodes.length > 0) {
+              const newAddresses = trulyNewNodes
+                .filter(n => n.id !== id) // 클릭한 노드 제외
+                .slice(0, 3)
+                .map(n => {
+                  const addr = n.id;
+                  return addr.length > 10 ? addr.substr(0, 6) + '..' + addr.substr(-4) : addr;
+                });
+              
+              if (newAddresses.length > 0) {
+                notificationMsg += '<br/>새 노드: ' + newAddresses.join(', ');
+                const remainingCount = trulyNewNodes.filter(n => n.id !== id).length - 3;
+                if (remainingCount > 0) {
+                  notificationMsg += ` 외 ${remainingCount}개`;
+                }
+              }
+            }
+            
+            showNotification(notificationMsg, 2500);
+          } else {
+            showNotification('ℹ️ 이미 모든 연결이 표시되고 있습니다', 2000);
+          }
+          
           syncStats(CURRENT); 
-          renderLegend(CURRENT.legend||{traits:{},ropes:{}});
-          f.contentWindow.postMessage({type:'apply-graph', payload: expandResult}, '*');
+          renderLegend(CURRENT.legend||{traits:{}, rules:{}});
+          
+          // 프레임에 증분 데이터와 함께 업데이트된 범례 전송
+          const incrementalUpdate = {
+            ...expandResult,
+            legend: CURRENT.legend  // 병합된 범례 사용
+          };
+          f.contentWindow.postMessage({type:'apply-graph', payload: incrementalUpdate}, '*');
           console.log(`Pure DB expansion completed: ${shortId} (${CURRENT.nodes?.length || 0} nodes, ${CURRENT.edges?.length || 0} edges)`);
         })
         .catch(err => {
@@ -280,7 +684,9 @@ window.addEventListener('message', (ev)=>{
 document.getElementById('defBtn').onclick = ()=>{
   console.log('Default button clicked');
   fetch('/api/ee/graph/default').then(r=>r.json()).then(g=>{
-    CURRENT = g; syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{},ropes:{}});
+    CURRENT = g; syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{}, rules:{}});
+    resetInfoPanel(); // Info 패널 초기화
+    hideRopeInfo(); // 로프 정보 숨김
     f.contentWindow.postMessage({type:'load-graph', payload: CURRENT}, '*');
   });
 };
@@ -331,7 +737,9 @@ document.getElementById('addrBtn').onclick = ()=>{
       };
       
       syncStats(CURRENT); 
-      renderLegend(CURRENT.legend||{traits:{},ropes:{}});
+      renderLegend(CURRENT.legend||{traits:{}, rules:{}});
+      resetInfoPanel(); // Info 패널 초기화
+      hideRopeInfo(); // 로프 정보 숨김
       
       // iframe 새로고침 없이 그래프만 완전 리셋 후 새 데이터 로드
       console.log('=== RESETTING GRAPH WITHOUT IFRAME RELOAD ===');
@@ -386,7 +794,8 @@ document.getElementById('ropeBtn').onclick = ()=>{
       };
       
       syncStats(CURRENT);
-      renderLegend(CURRENT.legend||{traits:{},ropes:{}});
+      renderLegend(CURRENT.legend||{traits:{}, rules:{}});
+      resetInfoPanel(); // Info 패널 초기화
       
       // iframe 새로고침 없이 그래프만 완전 리셋 후 새 데이터 로드
       console.log('=== RESETTING ROPE GRAPH WITHOUT IFRAME RELOAD ===');
@@ -394,6 +803,9 @@ document.getElementById('ropeBtn').onclick = ()=>{
       
       // load-graph 메시지로 완전한 그래프 교체 수행
       f.contentWindow.postMessage({type:'load-graph', payload: CURRENT}, '*');
+      
+      // 로프 정보 로드
+      loadRopeInfo(ropeId);
       
       console.log(`Pure DB rope search completed: ${ropeId} (${CURRENT.nodes?.length || 0} nodes, ${CURRENT.edges?.length || 0} edges)`);
     })
