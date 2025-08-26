@@ -29,30 +29,59 @@ func addr(n int) shareddomain.Address {
 }
 
 const (
-	TraitApple   domain.TraitCode = 100
-	TraitBravo   domain.TraitCode = 200
-	TraitCharlie domain.TraitCode = 300
+	//* EOA-EOA표현
+	TraitCexAndDeposit domain.TraitCode = 1
+	TraitDepostAndUser domain.TraitCode = 2
+	TraitSomeOther     domain.TraitCode = 3
+	//* EOA-Cont표현
+	TraitCreatorAndCreated domain.TraitCode = 4
+	TraitAnother           domain.TraitCode = 5
 )
+
+var (
+	PolyTraitSameCluster domain.PolyTraitCode = 1
+	PolyTraitOthers      domain.PolyTraitCode = 2
+)
+var PolyTraitLegend = map[domain.PolyTraitCode]domain.PolyNameAndTraits{
+	PolyTraitSameCluster: {
+		Name:   "PolyTraitSameCluster",
+		Traits: []domain.TraitCode{TraitDepostAndUser, TraitCreatorAndCreated},
+	},
+	PolyTraitOthers: {
+		Name:   "PolyTraitOthers",
+		Traits: []domain.TraitCode{TraitAnother, TraitSomeOther},
+	},
+}
 
 // 트레이트 코드 → 이름 매핑
 var TraitLegend = map[domain.TraitCode]string{
-	TraitApple:   "TraitApple",
-	TraitBravo:   "TraitBravo",
-	TraitCharlie: "TraitCharlie",
+	TraitCexAndDeposit:     "TraitCexAndDeposit",
+	TraitDepostAndUser:     "TraitDepositAndUser",
+	TraitCreatorAndCreated: "TraitCreatorAndCreated",
+	TraitSomeOther:         "TraitSomeother",
+	TraitAnother:           "TraitAnother",
 }
 
 const (
-	RuleCustomer domain.RuleCode = 1
-	RuleDeposit  domain.RuleCode = 2
-	RuleCEX      domain.RuleCode = 3
+	RuleUser    domain.RuleCode = 1
+	RuleDeposit domain.RuleCode = 2
+	RuleCEX     domain.RuleCode = 3
 	//이 밑으로 추가만!!
+	RuleCreator  domain.RuleCode = 4
+	RuleCreated  domain.RuleCode = 5
+	RuleAnother  domain.RuleCode = 6
+	RuleTheother domain.RuleCode = 7
 )
 
 // 룰 코드 → 이름 매핑
 var RuleLegend = map[domain.RuleCode]string{
-	RuleCustomer: "RuleCustomer",
+	RuleUser:     "RuleCustomer",
 	RuleDeposit:  "RuleDeposit",
 	RuleCEX:      "RuleCex",
+	RuleCreator:  "RuleCreator",
+	RuleCreated:  "RuleCreated",
+	RuleAnother:  "RuleAnother",
+	RuleTheother: "RuleTheother",
 }
 
 func link(t *testing.T, db RopeDB, a1, a2 shareddomain.Address, trait domain.TraitCode) {
@@ -60,7 +89,7 @@ func link(t *testing.T, db RopeDB, a1, a2 shareddomain.Address, trait domain.Tra
 	cexOrDeposit := uint16(trait)%3 == 0
 	var rc domain.RuleCode
 	if cexOrDeposit {
-		rc = RuleCustomer
+		rc = RuleUser
 	} else {
 		rc = RuleCEX
 	}
@@ -154,7 +183,7 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 
 	testDir := computation.FindTestingStorageRootPath() + "/rope_visual"
 	clearDir(testDir)
-	db, err := NewRopeDBWithRoot(mode.TestingModeProcess, testDir, "rope_test", TraitLegend, RuleLegend) // 항상 새/빈 디렉터리
+	db, err := NewRopeDBWithRoot(mode.TestingModeProcess, testDir, "rope_test", TraitLegend, RuleLegend, PolyTraitLegend) // 항상 새/빈 디렉터리
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,37 +211,41 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 		}
 	}()
 	// 초기 그래프 구성
-	link(t, db, addr(1), addr(2), TraitApple)
-	link(t, db, addr(2), addr(3), TraitApple)
+	link(t, db, addr(1), addr(2), TraitCexAndDeposit)
+	link(t, db, addr(2), addr(3), TraitCexAndDeposit)
 
-	link(t, db, addr(3), addr(4), TraitBravo)
+	link(t, db, addr(3), addr(4), TraitDepostAndUser)
 
-	link(t, db, addr(3), addr(5), TraitCharlie)
-	link(t, db, addr(5), addr(6), TraitCharlie)
+	link(t, db, addr(3), addr(5), TraitCreatorAndCreated)
+	link(t, db, addr(5), addr(6), TraitCreatorAndCreated)
 
-	link(t, db, addr(7), addr(8), TraitApple)
-	link(t, db, addr(8), addr(9), TraitApple)
+	link(t, db, addr(7), addr(8), TraitCexAndDeposit)
+	link(t, db, addr(8), addr(9), TraitCexAndDeposit)
+
+	link(t, db, addr(11), addr(12), TraitSomeOther)
+	link(t, db, addr(12), addr(13), TraitAnother)
+	link(t, db, addr(11), addr(10), TraitSomeOther)
 	// 10은 독립
 
 	// 초기 안정화(개별 대기)
-	waitRopeMembers(t, impl, addr(1), TraitApple, 3, addr(1), addr(2), addr(3))
-	waitRopeMembers(t, impl, addr(3), TraitBravo, 2, addr(3), addr(4))
-	waitRopeMembers(t, impl, addr(3), TraitCharlie, 3, addr(3), addr(5), addr(6))
-	waitRopeMembers(t, impl, addr(7), TraitApple, 3, addr(7), addr(8), addr(9))
+	waitRopeMembers(t, impl, addr(1), TraitCexAndDeposit, 3, addr(1), addr(2), addr(3))
+	waitRopeMembers(t, impl, addr(3), TraitDepostAndUser, 2, addr(3), addr(4))
+	waitRopeMembers(t, impl, addr(3), TraitCreatorAndCreated, 3, addr(3), addr(5), addr(6))
+	waitRopeMembers(t, impl, addr(7), TraitCexAndDeposit, 3, addr(7), addr(8), addr(9))
 
 	// 액션1: 3-4를 traitC로 연결 → C 로프가 [3,4,5,6]
-	link(t, db, addr(3), addr(4), TraitCharlie)
-	waitRopeMembers(t, impl, addr(3), TraitCharlie, 4, addr(3), addr(4), addr(5), addr(6))
+	link(t, db, addr(3), addr(4), TraitCreatorAndCreated)
+	waitRopeMembers(t, impl, addr(3), TraitCreatorAndCreated, 4, addr(3), addr(4), addr(5), addr(6))
 
 	// 4: 파트너링크 2개(3과 B,C), 로프 개수 2개(B,C)
 	{
 		links := linksOf(t, impl, addr(4))
 		hasB, hasC := false, false
 		for _, l := range links {
-			if l.Partner == addr(3) && l.Trait == TraitBravo {
+			if l.Partner == addr(3) && l.Trait == TraitDepostAndUser {
 				hasB = true
 			}
-			if l.Partner == addr(3) && l.Trait == TraitCharlie {
+			if l.Partner == addr(3) && l.Trait == TraitCreatorAndCreated {
 				hasC = true
 			}
 		}
@@ -231,27 +264,27 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 	}
 
 	// 액션2: 10-4 traitB → B 로프가 [3,4,10]
-	link(t, db, addr(10), addr(4), TraitBravo)
-	waitRopeMembers(t, impl, addr(4), TraitBravo, 3, addr(3), addr(4), addr(10))
+	link(t, db, addr(10), addr(4), TraitDepostAndUser)
+	waitRopeMembers(t, impl, addr(4), TraitDepostAndUser, 3, addr(3), addr(4), addr(10))
 
 	// 액션3: 10-6 traitA → 새 A 로프 [6,10]
-	link(t, db, addr(10), addr(6), TraitApple)
-	waitRopeMembers(t, impl, addr(10), TraitApple, 2, addr(6), addr(10))
+	link(t, db, addr(10), addr(6), TraitCexAndDeposit)
+	waitRopeMembers(t, impl, addr(10), TraitCexAndDeposit, 2, addr(6), addr(10))
 
 	// 액션4: 10-2 traitA → (6,10) 가 (1,2,3) 로프와 병합 → [1,2,3,6,10]
-	link(t, db, addr(10), addr(2), TraitApple)
-	waitRopeMembers(t, impl, addr(2), TraitApple, 5, addr(1), addr(2), addr(3), addr(6), addr(10))
+	link(t, db, addr(10), addr(2), TraitCexAndDeposit)
+	waitRopeMembers(t, impl, addr(2), TraitCexAndDeposit, 5, addr(1), addr(2), addr(3), addr(6), addr(10))
 
 	// 액션5: 3-7 traitA → 위 로프와 (7,8,9) 로프 병합 → [1,2,3,6,7,8,9,10]
-	link(t, db, addr(3), addr(7), TraitApple)
-	waitRopeMembers(t, impl, addr(3), TraitApple, 8, addr(1), addr(2), addr(3), addr(6), addr(7), addr(8), addr(9), addr(10))
+	link(t, db, addr(3), addr(7), TraitCexAndDeposit)
+	waitRopeMembers(t, impl, addr(3), TraitCexAndDeposit, 8, addr(1), addr(2), addr(3), addr(6), addr(7), addr(8), addr(9), addr(10))
 
 	// 3-7 사이 traitA 링크 존재
 	{
 		links3 := linksOf(t, impl, addr(3))
 		ok := false
 		for _, l := range links3 {
-			if l.Partner == addr(7) && l.Trait == TraitApple {
+			if l.Partner == addr(7) && l.Trait == TraitCexAndDeposit {
 				ok = true
 				break
 			}
@@ -265,6 +298,45 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 	if rc := ropeCountOf(t, impl, addr(3)); rc != 3 {
 		t.Fatalf("vertex(3) rope count want=3 got=%d", rc)
 	}
+
+	// PolyTrait 테스트 - PolyTraitSameCluster는 TraitDepostAndUser(2)와 TraitCreatorAndCreated(4)를 포함
+	t.Log("=== PolyTrait 테스트 시작 ===")
+
+	// PolyRope 안정화 대기 (비동기 처리이므로 시간 필요)
+
+	// addr(10)과 addr(5)는 PolyTrait로 같은 로프여야 함
+	// 연결 경로: 10-4(TraitDepostAndUser) → 4-3(TraitDepostAndUser) → 3-5(TraitCreatorAndCreated)
+	inSame10_5, err := db.ViewInSameRopeByPolyTrait(addr(10), addr(5), PolyTraitSameCluster)
+	if err != nil {
+		t.Fatalf("ViewInSameRopeByPolyTrait(10, 5) error: %v", err)
+	}
+	if !inSame10_5 {
+		t.Fatalf("addr(10) and addr(5) should be in same PolyRope for PolyTraitSameCluster")
+	}
+	t.Logf("✅ addr(10) and addr(5) are in same PolyRope: %v", inSame10_5)
+
+	// addr(10)과 addr(2)는 PolyTrait로 다른 로프여야 함
+	// addr(2)는 TraitCexAndDeposit(1)로만 연결되어 PolyTrait에 속하지 않음
+	inSame10_2, err := db.ViewInSameRopeByPolyTrait(addr(10), addr(2), PolyTraitSameCluster)
+	if err != nil {
+		t.Fatalf("ViewInSameRopeByPolyTrait(10, 2) error: %v", err)
+	}
+	if inSame10_2 {
+		t.Fatalf("addr(10) and addr(2) should NOT be in same PolyRope for PolyTraitSameCluster")
+	}
+	t.Logf("✅ addr(10) and addr(2) are in different PolyRope groups: %v", inSame10_2)
+
+	// addr(5)와 addr(2)는 PolyTrait로 다른 로프여야 함 (addr(2)는 PolyTrait 없음)
+	inSame5_2, err := db.ViewInSameRopeByPolyTrait(addr(5), addr(2), PolyTraitSameCluster)
+	if err != nil {
+		t.Fatalf("ViewInSameRopeByPolyTrait(5, 2) error: %v", err)
+	}
+	if inSame5_2 {
+		t.Fatalf("addr(5) and addr(2) should NOT be in same PolyRope for PolyTraitSameCluster")
+	}
+	t.Logf("✅ addr(5) and addr(2) are in different PolyRope groups: %v", inSame5_2)
+
+	t.Log("=== PolyTrait 테스트 완료 ===")
 
 	// 필요하면 테스트 로그에 경로 출력
 	t.Log("wrote graph_frame.html & index.html")

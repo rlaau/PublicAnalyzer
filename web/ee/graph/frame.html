@@ -48,6 +48,7 @@
   let isHighlighted = false;  // 하이라이팅 상태를 전역으로 이동
   let currentTraitHighlight = null;  // 현재 활성화된 트레이트 하이라이팅 {code, color}
   let currentRuleHighlight = null;   // 현재 활성화된 룰 하이라이팅 {id, color}
+  let currentPolyTraitHighlight = null;  // 현재 활성화된 PolyTrait 하이라이팅 {code, color}
   
   // 더블클릭 관련 변수들
   let hoveredNode = null;
@@ -606,13 +607,53 @@
     // 통합 하이라이팅 적용
     applyHighlighting();
   }
+  
+  function highlightPolyTraitInGraph(polyTraitCode, highlightColor, polyTraitData) {
+    if (!GRAPH || !RENDERER) return;
+    
+    console.log('=== highlightPolyTraitInGraph called ===');
+    console.log('polyTraitCode:', polyTraitCode);
+    console.log('highlightColor:', highlightColor);
+    console.log('polyTraitData:', polyTraitData);
+    
+    // PolyTrait 하이라이팅 상태 업데이트
+    if (polyTraitCode === null) {
+      console.log('Clearing PolyTrait highlight');
+      currentPolyTraitHighlight = null;
+    } else {
+      const processedColor = parseColorToHex(highlightColor);
+      currentPolyTraitHighlight = {
+        code: polyTraitCode, 
+        color: processedColor,
+        data: polyTraitData
+      };
+      console.log(`Setting PolyTrait highlight: ${polyTraitCode} with color: ${highlightColor} -> ${processedColor}`);
+    }
+    
+    console.log('Current highlight state:', {
+      trait: currentTraitHighlight?.code || null,
+      rule: currentRuleHighlight?.id || null,
+      polyTrait: currentPolyTraitHighlight?.code || null
+    });
+    
+    // 통합 하이라이팅 적용
+    applyHighlighting();
+  }
 
   // 통합 하이라이팅 적용 함수
   function applyHighlighting() {
     if (!GRAPH || !RENDERER) return;
 
+    console.log('=== applyHighlighting called ===');
+    console.log('Highlight states:', {
+      trait: currentTraitHighlight?.code || null,
+      rule: currentRuleHighlight?.id || null,  
+      polyTrait: currentPolyTraitHighlight?.code || null
+    });
+
     // 하이라이팅이 없으면 원상복구
-    if (!currentTraitHighlight && !currentRuleHighlight) {
+    if (!currentTraitHighlight && !currentRuleHighlight && !currentPolyTraitHighlight) {
+      console.log('No highlighting active, restoring original colors');
       isHighlighted = false;
       restoreOriginalColors();
       return;
@@ -638,19 +679,26 @@
 
     isHighlighted = true;
 
+    console.log('Setting all elements to gray...');
     // 먼저 모든 요소를 회색으로 변경
+    let nodeCount = 0, edgeCount = 0;
     GRAPH.forEachNode((node) => {
       GRAPH.setNodeAttribute(node, 'color', '#dddddd');
+      nodeCount++;
     });
     
     GRAPH.forEachEdge((edge) => {
       const attrs = GRAPH.getEdgeAttributes(edge);
       const cnt = attrs.parallelCount || 1;
       GRAPH.setEdgeAttribute(edge, 'colorHex', '#dddddd');
+      edgeCount++;
     });
+    
+    console.log(`Set ${nodeCount} nodes and ${edgeCount} edges to gray`);
 
     // 하이라이팅된 요소들 수집
     const highlightedNodes = new Set();
+    console.log('Starting to collect highlighted elements...');
     
     // 트레이트 하이라이팅 처리
     if (currentTraitHighlight) {
@@ -723,6 +771,95 @@
       }
     }
 
+    // PolyTrait 하이라이팅 처리 (기존 Trait 하이라이팅 로직을 OR 조건으로 재활용)
+    if (currentPolyTraitHighlight) {
+      const polyTraitCode = currentPolyTraitHighlight.code;
+      const processedColor = currentPolyTraitHighlight.color;
+      const polyTraitData = currentPolyTraitHighlight.data;
+      
+      console.log(`Processing PolyTrait highlight: ${polyTraitCode}`);
+      console.log('Using passed polyTraitData:', polyTraitData);
+      
+      // PolyTrait에 포함된 Trait들 가져오기 (메시지로 전달받은 데이터 사용)
+      let polyTraitTraits = [];
+      
+      console.log('polyTraitData type:', typeof polyTraitData);
+      console.log('polyTraitData keys:', polyTraitData ? Object.keys(polyTraitData) : 'no data');
+      console.log(`Looking for polyTraitCode: ${polyTraitCode} (type: ${typeof polyTraitCode})`);
+      
+      if (polyTraitData && polyTraitData[polyTraitCode]) {
+        const polyData = polyTraitData[polyTraitCode];
+        console.log(`PolyTrait ${polyTraitCode} data from message:`, polyData);
+        
+        polyTraitTraits = polyData.Traits || polyData.traits || [];
+        console.log(`PolyTrait ${polyTraitCode} contains traits:`, polyTraitTraits);
+      } else {
+        console.warn(`PolyTrait ${polyTraitCode} not found in passed data`);
+        console.warn('Available PolyTrait codes:', polyTraitData ? Object.keys(polyTraitData) : 'no data');
+        console.warn('Exact comparison results:');
+        if (polyTraitData) {
+          Object.keys(polyTraitData).forEach(key => {
+            console.warn(`  "${key}" (type: ${typeof key}) === "${polyTraitCode}" (type: ${typeof polyTraitCode}): ${key === polyTraitCode}`);
+            console.warn(`  "${key}" == "${polyTraitCode}": ${key == polyTraitCode}`);
+          });
+        }
+      }
+      
+      if (polyTraitTraits.length === 0) {
+        console.warn(`No traits found for PolyTrait ${polyTraitCode}, highlighting all edges`);
+        // 폴백: 모든 엣지 하이라이팅
+        GRAPH.forEachEdge((edge) => {
+          GRAPH.setEdgeAttribute(edge, 'colorHex', processedColor);
+          const src = GRAPH.source(edge);
+          const dst = GRAPH.target(edge);
+          highlightedNodes.add(src);
+          highlightedNodes.add(dst);
+        });
+      } else {
+        // 기존 Trait 하이라이팅 로직을 재활용 (OR 조건으로)
+        const edgePairs = new Map();
+        
+        GRAPH.forEachEdge((edge) => {
+          const src = GRAPH.source(edge);
+          const dst = GRAPH.target(edge);
+          const key = src < dst ? `${src}|${dst}` : `${dst}|${src}`;
+          if (!edgePairs.has(key)) {
+            edgePairs.set(key, []);
+          }
+          edgePairs.get(key).push(edge);
+        });
+        
+        edgePairs.forEach((edges) => {
+          let hasPolyTraitMatch = false;
+          
+          // 각 엣지에 대해 PolyTrait에 포함된 Trait 중 하나라도 일치하는지 확인 (OR 조건)
+          edges.forEach(edge => {
+            const attrs = GRAPH.getEdgeAttributes(edge);
+            const edgeTraitCode = attrs.traitCode;
+            
+            // PolyTrait에 포함된 Trait 중 하나라도 일치하면 true
+            if (polyTraitTraits.some(traitCode => String(edgeTraitCode) === String(traitCode))) {
+              hasPolyTraitMatch = true;
+              console.log(`Edge ${edge} matches PolyTrait (trait: ${edgeTraitCode})`);
+            }
+          });
+          
+          // PolyTrait에 일치하는 Trait가 있으면 해당 엣지 그룹 전체 하이라이팅
+          if (hasPolyTraitMatch) {
+            edges.forEach(edge => {
+              GRAPH.setEdgeAttribute(edge, 'colorHex', processedColor);
+              const src = GRAPH.source(edge);
+              const dst = GRAPH.target(edge);
+              highlightedNodes.add(src);
+              highlightedNodes.add(dst);
+            });
+          }
+        });
+      }
+      
+      console.log('Total highlighted nodes for PolyTrait:', highlightedNodes.size);
+    }
+
     // 트레이트 하이라이팅 색상 적용
     if (currentTraitHighlight) {
       highlightedNodes.forEach(node => {
@@ -747,6 +884,23 @@
         });
       }
     }
+    
+    // PolyTrait 하이라이팅 색상 적용 (최우선)
+    if (currentPolyTraitHighlight) {
+      const polyTraitCode = currentPolyTraitHighlight.code;
+      const processedColor = currentPolyTraitHighlight.color;
+      
+      console.log('Applying PolyTrait colors:', {polyTraitCode, processedColor});
+      console.log('Nodes to color:', highlightedNodes.size);
+      
+      // 하이라이팅된 노드들에만 색상 적용
+      highlightedNodes.forEach(nodeId => {
+        if (GRAPH.hasNode(nodeId)) {
+          GRAPH.setNodeAttribute(nodeId, 'color', processedColor);
+          console.log(`Applied color ${processedColor} to node ${nodeId}`);
+        }
+      });
+    }
 
     RENDERER.refresh();
   }
@@ -754,6 +908,7 @@
   function clearHighlightInGraph() {
     currentTraitHighlight = null;
     currentRuleHighlight = null;
+    currentPolyTraitHighlight = null;
     restoreOriginalColors();
   }
 
@@ -868,6 +1023,11 @@
       // Rule 하이라이팅
       const {ruleId, color} = msg.payload;
       highlightRuleInGraph(ruleId, color);
+    } else if (msg.type==='highlight-polytrait'){
+      // PolyTrait 하이라이팅
+      const {polyTraitCode, color, polyTraitData} = msg.payload;
+      console.log('Message handler polyTraitData:', polyTraitData);
+      highlightPolyTraitInGraph(polyTraitCode, color, polyTraitData);
     } else if (msg.type==='clear-highlight'){
       // 하이라이팅 해제
       clearHighlightInGraph();

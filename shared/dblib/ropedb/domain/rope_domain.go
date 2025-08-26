@@ -9,9 +9,19 @@ import (
 // 1) 간소화된 도메인
 // ------------------------------------------------------------
 
+type PolyTrait struct {
+	PolyTraitCode PolyTraitCode
+	TraitCodes    []TraitCode
+}
+type PolyNameAndTraits struct {
+	Name   string
+	Traits []TraitCode
+}
+
 type TraitID uint64
 type RopeID uint64
 
+type PolyTraitCode uint64
 type TraitCode uint16
 type RuleCode uint16
 
@@ -30,9 +40,27 @@ type RuleCode uint16
 
 // Vertex: 요약 저장(빠른 R/W)
 type Vertex struct {
-	Address shareddomain.Address
-	Ropes   []RopeRef  // (RopeID, Trait) 목록
-	Traits  []TraitRef // (Partner, Trait, TraitID)
+	Address   shareddomain.Address
+	PolyRopes []PolyRopeRef
+	Ropes     []RopeRef  // (RopeID, Trait) 목록
+	Traits    []TraitRef // (Partner, Trait, TraitID)
+}
+type PolyRopeRef struct {
+	Id PolyRopeID
+	//로프는 트레이트에 걸치고, 폴리로프는 폴리 트레이트에 걸침
+	PolyTrait PolyTraitCode
+}
+
+type PolyRopeID uint64
+
+type PolyRopeMark struct {
+	ID        PolyRopeID
+	PolyTrait PolyTraitCode
+	//로프는 트레이트에 거치고
+	//폴리 로프는 폴리 트레이트에 걸침
+	//폴리 트레이트는 트레이트에 걸침
+	//그러므로 폴리 로프는 로프에 걸침
+	Ropes []RopeID
 }
 
 // 도메인 로직 상, 한 Vertex내에서 TraitCode-RopeID는 1:1 매핑임

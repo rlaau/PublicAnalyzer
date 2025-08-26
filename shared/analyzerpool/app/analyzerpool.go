@@ -30,11 +30,8 @@ type AnalyzerPool struct {
 	busEE  *eventbus.EventBus[dto.EeEvt]
 	busCCE *eventbus.EventBus[dto.CceEvt]
 	busEEC *eventbus.EventBus[dto.EecEvt]
-	//* 여기도 그냥 바로 tx삽입
-	fanCC  *txFanout[domain.MarkedTransaction]
-	fanEE  *txFanout[domain.MarkedTransaction]
-	fanCCE *txFanout[domain.MarkedTransaction]
-	fanEEC *txFanout[domain.MarkedTransaction]
+	// 단일 Kafka 배치 소비자 + eventbus 팬아웃 매니저
+	fanoutManager *TxFanoutManager
 
 	closed atomic.Bool
 }
@@ -81,43 +78,43 @@ func CreateAnalyzerPoolFrame(isTest mode.ProcessingMode) (*AnalyzerPool, error) 
 		return nil, err
 	}
 
-	// 3) Tx fanout (네가 만든 배치 컨슈머로 구성)
-	//    토픽/그룹/브로커는 실제 값으로 대체
+	// 3) 단일 Kafka 배치 소비자 설정
 	defBatchSize := 1000
 	defTimeout := 300 // ms
-	var cfg func(string) kb.KafkaBatchConfig
+	var kafkaCfg kb.KafkaBatchConfig
 	if isTest.IsTest() {
-		cfg = func(groupSuffix string) kb.KafkaBatchConfig {
-			return kb.KafkaBatchConfig{
-				Brokers:      kb.GetGlobalBrokers(),
-				Topic:        kb.TestingTxTopic,
-				GroupID:      fmt.Sprintf("testval.%s", groupSuffix),
-				BatchSize:    defBatchSize,
-				BatchTimeout: time.Duration(defTimeout) * time.Millisecond,
-			}
+		kafkaCfg = kb.KafkaBatchConfig{
+			Brokers:      kb.GetGlobalBrokers(),
+			Topic:        kb.TestingTxTopic,
+			GroupID:      "testval.analyzer_pool",
+			BatchSize:    defBatchSize,
+			BatchTimeout: time.Duration(defTimeout) * time.Millisecond,
 		}
 	} else {
 		//TODO 실제 프로덕션 시엔 더 정교하게
-		cfg = func(groupSuffix string) kb.KafkaBatchConfig {
-			return kb.KafkaBatchConfig{
-				Brokers:      kb.GetGlobalBrokers(),
-				Topic:        kb.ProductionTxTopic,
-				GroupID:      fmt.Sprintf("production.%s", groupSuffix),
-				BatchSize:    defBatchSize,
-				BatchTimeout: time.Duration(defTimeout) * time.Millisecond,
-			}
+		kafkaCfg = kb.KafkaBatchConfig{
+			Brokers:      kb.GetGlobalBrokers(),
+			Topic:        kb.ProductionTxTopic,
+			GroupID:      "production.analyzer_pool",
+			BatchSize:    defBatchSize,
+			BatchTimeout: time.Duration(defTimeout) * time.Millisecond,
 		}
 	}
 
-	fCC := newTxFanout[domain.MarkedTransaction](cfg("cc"))
-	fEE := newTxFanout[domain.MarkedTransaction](cfg("ee"))
-	fCCE := newTxFanout[domain.MarkedTransaction](cfg("cce"))
-	fEEC := newTxFanout[domain.MarkedTransaction](cfg("eec"))
+	// 4) TxFanoutManager 생성 (단일 카프카 소비자 + eventbus 팬아웃)
+	fanoutMgr, err := NewTxFanoutManager(kafkaCfg, isTest, capLimit)
+	if err != nil {
+		bCC.Close()
+		bEE.Close()
+		bCCE.Close()
+		bEEC.Close()
+		return nil, fmt.Errorf("failed to create fanout manager: %w", err)
+	}
 
 	return &AnalyzerPool{
 		isTest: isTest,
 		busCC:  bCC, busEE: bEE, busCCE: bCCE, busEEC: bEEC,
-		fanCC: fCC, fanEE: fEE, fanCCE: fCCE, fanEEC: fEEC,
+		fanoutManager: fanoutMgr,
 	}, nil
 }
 
@@ -164,21 +161,26 @@ func (p *AnalyzerPool) DequeueEEC() <-chan dto.EecEvt {
 	return p.busEEC.Dequeue()
 }
 
-// ---- Tx Consume & Count
+// ---- Tx Consume & Count (EventBus 기반)
 
-func (p *AnalyzerPool) ConsumeCCTx() <-chan domain.MarkedTransaction { return p.fanCC.Ch() }
-func (p *AnalyzerPool) ConsumeEETx() <-chan domain.MarkedTransaction { return p.fanEE.Ch() }
+// 각 모듈은 해당 eventbus에서 트랜잭션을 소비
+func (p *AnalyzerPool) ConsumeCCTx() <-chan domain.MarkedTransaction {
+	return p.fanoutManager.busCC.Dequeue()
+}
+func (p *AnalyzerPool) ConsumeEETx() <-chan domain.MarkedTransaction {
+	return p.fanoutManager.busEE.Dequeue()
+}
 func (p *AnalyzerPool) ConsumeCCETx() <-chan domain.MarkedTransaction {
-	return p.fanCCE.Ch()
+	return p.fanoutManager.busCCE.Dequeue()
 }
 func (p *AnalyzerPool) ConsumeEECTx() <-chan domain.MarkedTransaction {
-	return p.fanEEC.Ch()
+	return p.fanoutManager.busEEC.Dequeue()
 }
 
-func (p *AnalyzerPool) TxCountCC() uint64  { return p.fanCC.Count() }
-func (p *AnalyzerPool) TxCountEE() uint64  { return p.fanEE.Count() }
-func (p *AnalyzerPool) TxCountCCE() uint64 { return p.fanCCE.Count() }
-func (p *AnalyzerPool) TxCountEEC() uint64 { return p.fanEEC.Count() }
+// 트랜잭션 카운트는 fanoutManager에서 제공
+func (p *AnalyzerPool) TxCount() uint64 {
+	return p.fanoutManager.Count()
+}
 
 // ---- Lifecycle
 
@@ -186,12 +188,9 @@ func (p *AnalyzerPool) Close(ctx context.Context) error {
 	if p.closed.Swap(true) {
 		return nil
 	}
-	// Kafka 먼저 닫기
-	_ = p.fanCC.Close()
-	_ = p.fanEE.Close()
-	_ = p.fanCCE.Close()
-	_ = p.fanEEC.Close()
-	fmt.Printf("FAN들 정리 완료\n")
+	// Kafka fanout manager 먼저 닫기
+	_ = p.fanoutManager.Close()
+	fmt.Printf("FanoutManager 정리 완료\n")
 	// 이벤트 버스는 Close 시 pending 저장
 	p.busCC.Close()
 	p.busEE.Close()

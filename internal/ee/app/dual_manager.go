@@ -89,7 +89,7 @@ func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.Mark
 	toAddr := tx.To
 
 	// 디버깅: 모든 트랜잭션의 케이스 분류 과정 로깅 (처음에는 항상 로깅)
-	debugEnabled := false //성능 이슈로 디버깅 취소//true // 일단 모든 트랜잭션 디버깅
+	debugEnabled := true //성능 이슈로 디버깅 취소//true // 일단 모든 트랜잭션 디버깅
 	allDbg := false
 	if allDbg {
 		fmt.Printf("🔀 DualManager: From=%s To=%s\n",
@@ -158,7 +158,7 @@ func (dm *DualManager) handleExceptionalAddress(_ domain.Address, _ string) erro
 // handleDepositDetection handles detection of new deposit addresses
 func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Address, tx *domain.MarkedTransaction, time chaintimer.ChainTime) error {
 	//fmt.Printf("💰 handleDepositDetection: %s → CEX %s\n", depositAddr.String()[:10]+"...", cexAddr.String()[:10]+"...")
-	debugEnabled := false
+	debugEnabled := true
 	// 1. 새로운 입금주소를 detectedDepositAddress에 추가
 	if err := dm.infra.GroundKnowledge.DetectNewDepositAddress(depositAddr, cexAddr); err != nil {
 		fmt.Printf("   ❌ DetectNewDepositAddress failed: %v\n", err)
@@ -257,7 +257,7 @@ func (dm *DualManager) AddToWindowBuffer(tx *domain.MarkedTransaction) (*domain.
 	txTime := tx.BlockTime
 	toAddr := tx.To
 	fromAddr := tx.From
-	debugEnabled := false
+	debugEnabled := true
 
 	// 디버깅: 매 50 트랜잭션마다 시간 로깅 (10분×50=8.3시간마다)
 	static_counter++

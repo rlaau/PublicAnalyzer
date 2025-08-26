@@ -51,6 +51,10 @@ func (h *EEAPIHandler) RegisterRoutes(router *chi.Mux) error {
 		
 		// 로프 메타데이터 엔드포인트
 		r.Get("/rope-info", h.handleRopeInfo) // ?id=<ropeId>
+		
+		// PolyTrait 관련 엔드포인트들
+		r.Get("/polytrait/legend", h.handlePolyTraitLegend) // PolyTrait 범례 정보
+		r.Get("/polyrope/search", h.handlePolyRopeSearch) // ?address1=<addr>&address2=<addr>&polytraitcode=<code>
 	})
 	router.Route("/api/ee/graph", func(r chi.Router) {
 		// GET /api/ee/graph/default
@@ -70,6 +74,10 @@ func (h *EEAPIHandler) RegisterRoutes(router *chi.Mux) error {
 		
 		// GET /api/ee/graph/rope-info/{id}
 		r.Get("/rope-info/{id}", h.handleRopeInfo)
+		
+		// PolyTrait 관련 엔드포인트들
+		r.Get("/polytrait/legend", h.handlePolyTraitLegend)
+		r.Get("/polyrope/search", h.handlePolyRopeSearch)
 	})
 	// 페이지 라우팅 - HTML 페이지 서빙
 	router.Route("/ui/ee", func(r chi.Router) {

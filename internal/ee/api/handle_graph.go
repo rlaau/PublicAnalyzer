@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	ropedbapp "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/app"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
+	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
 
 type graphProvider interface {
@@ -175,5 +176,92 @@ func (h *EEAPIHandler) handleRopeInfo(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, info)
 	} else {
 		writeErrorResponse(w, "Rope info not supported by DB implementation", http.StatusServiceUnavailable)
+	}
+}
+
+func (h *EEAPIHandler) handlePolyTraitLegend(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	// RopeDB 접근 확인
+	if h.analyzer == nil || h.analyzer.GraphDB() == nil {
+		writeErrorResponse(w, "Graph DB not accessible", http.StatusServiceUnavailable)
+		return
+	}
+	
+	// PolyTrait 범례 정보를 제공하는 메소드가 필요
+	if ropeDB, ok := h.analyzer.RopeDB().(interface {
+		GetPolyTraitLegend() map[ropedomain.PolyTraitCode]ropedomain.PolyNameAndTraits
+	}); ok {
+		legend := ropeDB.GetPolyTraitLegend()
+		writeJSONResponse(w, legend)
+	} else {
+		writeErrorResponse(w, "PolyTrait legend not supported by DB implementation", http.StatusServiceUnavailable)
+	}
+}
+
+func (h *EEAPIHandler) handlePolyRopeSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	// 필수 파라미터 확인
+	address1Str := r.URL.Query().Get("address1")
+	address2Str := r.URL.Query().Get("address2")
+	polyTraitCodeStr := r.URL.Query().Get("polytraitcode")
+	
+	if address1Str == "" || address2Str == "" || polyTraitCodeStr == "" {
+		writeErrorResponse(w, "missing required parameters: address1, address2, polytraitcode", http.StatusBadRequest)
+		return
+	}
+	
+	// PolyTraitCode 파싱
+	polyTraitCodeInt, err := strconv.ParseUint(polyTraitCodeStr, 10, 64)
+	if err != nil {
+		writeErrorResponse(w, "invalid polytrait code", http.StatusBadRequest)
+		return
+	}
+	polyTraitCode := ropedomain.PolyTraitCode(polyTraitCodeInt)
+	
+	// Address 파싱 (hex string을 Address로 변환)
+	address1, err := shareddomain.ParseAddressFromString(address1Str)
+	if err != nil {
+		writeErrorResponse(w, "invalid address1 format: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	address2, err := shareddomain.ParseAddressFromString(address2Str)
+	if err != nil {
+		writeErrorResponse(w, "invalid address2 format: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	
+	// RopeDB 접근 확인
+	if h.analyzer == nil || h.analyzer.GraphDB() == nil {
+		writeErrorResponse(w, "Graph DB not accessible", http.StatusServiceUnavailable)
+		return
+	}
+	
+	// ViewInSameRopeByPolyTrait 메소드 호출
+	if ropeDB, ok := h.analyzer.RopeDB().(interface {
+		ViewInSameRopeByPolyTrait(addr1, addr2 shareddomain.Address, polyTraitCode ropedomain.PolyTraitCode) (bool, error)
+	}); ok {
+		inSameRope, err := ropeDB.ViewInSameRopeByPolyTrait(address1, address2, polyTraitCode)
+		if err != nil {
+			writeErrorResponse(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		
+		response := map[string]interface{}{
+			"address1":       address1Str,
+			"address2":       address2Str,
+			"polytraitcode":  polyTraitCode,
+			"in_same_rope":   inSameRope,
+		}
+		writeJSONResponse(w, response)
+	} else {
+		writeErrorResponse(w, "PolyRope search not supported by DB implementation", http.StatusServiceUnavailable)
 	}
 }

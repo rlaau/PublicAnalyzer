@@ -98,6 +98,21 @@
         </div>
       </div>
     </div>
+    <div class="sec" style="margin-top:14px">
+      <h3>🔗 PolyRope Search</h3>
+      <div class="row"><input id="polyAddr1" type="text" placeholder="Address 1: 0x1234..."/></div>
+      <div class="row"><input id="polyAddr2" type="text" placeholder="Address 2: 0x5678..."/></div>
+      <div class="row"><input id="polyTraitCode" type="text" placeholder="PolyTrait Code (e.g. 100)"/></div>
+      <button id="polyRopeBtn">Check PolyRope Connection</button>
+      
+      <!-- PolyRope 검색 결과 표시 영역 -->
+      <div id="polyRopeResultPanel" style="margin-top:10px; display:none; padding:8px; background:#f0f8ff; border-radius:6px; border:1px solid #b3d9ff;">
+        <h4 style="margin:0 0 8px 0; font-size:12px; color:#1565c0;">🔍 PolyRope Search Result</h4>
+        <div id="polyRopeResultContent" class="kv" style="font-size:11px; line-height:1.3;">
+          <!-- PolyRope 검색 결과가 여기에 표시됩니다 -->
+        </div>
+      </div>
+    </div>
     <button id="defBtn" class="green" style="margin-top:14px">🏠 Default View</button>
   </section>
 
@@ -108,6 +123,13 @@
         <button onclick="recoverTrait()" style="background: #ff9800; color: white; border: none; padding: 3px 6px; border-radius: 3px; font-size: 10px; cursor: pointer;" onmouseover="this.style.background='#f57c00'" onmouseout="this.style.background='#ff9800'">Trait 해제</button>
       </div>
       <div id="traitLegend"></div>
+    </div>
+        <div class="sec" style="margin-top:10px">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+        <h3 style="margin: 0;">🔗 PolyTrait Colors</h3>
+        <button onclick="recoverPolyTrait()" style="background: #9c27b0; color: white; border: none; padding: 3px 6px; border-radius: 3px; font-size: 10px; cursor: pointer;" onmouseover="this.style.background='#7b1fa2'" onmouseout="this.style.background='#9c27b0'">PolyTrait 해제</button>
+      </div>
+      <div id="polyTraitLegend"></div>
     </div>
     <div class="sec" style="margin-top:10px">
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
@@ -141,7 +163,11 @@
 const f = document.getElementById('f');
 const sn=document.getElementById('sn'), se=document.getElementById('se'), st=document.getElementById('st'), ss=document.getElementById('ss');
 const nodeBox=document.getElementById('nodeBox'), edgeBox=document.getElementById('edgeBox');
-let CURRENT = { meta:{}, nodes:[], edges:[], legend:{traits:{}, rules:{}} };
+let CURRENT = { meta:{}, nodes:[], edges:[], legend:{traits:{}, rules:{}, polyTraits:{}} };
+
+// PolyTrait 관련 상태 및 데이터
+let currentHighlightPolyTrait = null;
+let polyTraitLegendData = {};
 
 // Info 패널 초기화 함수
 function resetInfoPanel() {
@@ -359,10 +385,10 @@ function renderLegend(legend){
   r.innerHTML = '';
   
   // 클릭 가능한 트레이트 범례 항목 생성
-  const mkTrait = (color,name,count,traitCode)=>`<div class="legend-item" data-trait="${traitCode||''}" style="cursor:pointer;padding:4px;border-radius:4px;" onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background=''"onclick="toggleTraitHighlight('${traitCode||''}','${color}')"><div class="legend-color" style="background:${color}"></div><span>${name}</span><span style="margin-left:auto;color:#888;font-size:11px">${count}</span></div>`;
+  const mkTrait = (color,name,count,traitCode)=>`<div class="legend-item" data-trait="${traitCode||''}" style="cursor:pointer;padding:4px;border-radius:4px;" onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background=''"onclick="toggleTraitHighlight('${traitCode||''}','${color}')"><div class="legend-color" style="background:${color}"></div><span>${name} <small style="color:#888;">(${traitCode})</small></span><span style="margin-left:auto;color:#888;font-size:11px">${count}</span></div>`;
   
   // 클릭 가능한 룰 범례 항목 생성
-  const mkRule = (color,name,count,ruleId)=>`<div class="legend-item" data-rule="${ruleId||''}" style="cursor:pointer;padding:4px;border-radius:4px;" onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background=''"onclick="toggleRuleHighlight('${ruleId||''}','${color}')"><div class="legend-color" style="background:${color}"></div><span>${name}</span><span style="margin-left:auto;color:#888;font-size:11px">${count}</span></div>`;
+  const mkRule = (color,name,count,ruleId)=>`<div class="legend-item" data-rule="${ruleId||''}" style="cursor:pointer;padding:4px;border-radius:4px;" onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background=''"onclick="toggleRuleHighlight('${ruleId||''}','${color}')"><div class="legend-color" style="background:${color}"></div><span>${name} <small style="color:#888;">(${ruleId})</small></span><span style="margin-left:auto;color:#888;font-size:11px">${count}</span></div>`;
   
   // Multi-Trait 항목을 맨 위에 추가 (실제 멀티 트레이트 연결된 노드 수 계산)
   let multiTraitNodes = new Set();
@@ -390,6 +416,145 @@ function renderLegend(legend){
     const it = legend.rules[k]; 
     r.insertAdjacentHTML('beforeend', mkRule(it.color, it.name, it.count||0, k));
   }
+}
+
+// PolyTrait 색상 생성 함수
+function generatePolyTraitColor(polyTraitCode) {
+  // PolyTrait별로 고유한 색상 생성 (더 밝고 눈에 띄는 색상)
+  const h = (polyTraitCode * 73 + 180) % 360;  // 73은 소수
+  const s = 80 + (polyTraitCode % 2) * 10;     // 80-90% 채도 (더 선명하게)
+  const l = 50 + (polyTraitCode % 3) * 10;     // 50-70% 명도 (더 밝게)
+  return `hsl(${h}, ${s}%, ${l}%)`;
+}
+
+// PolyTrait 범례 데이터 로드
+function loadPolyTraitLegend() {
+  console.log('=== Loading PolyTrait legend from server ===');
+  
+  const url = '/api/ee/graph/polytrait/legend';
+  console.log('Fetching URL:', url);
+  
+  fetch(url)
+    .then(response => {
+      console.log('PolyTrait legend response status:', response.status);
+      console.log('PolyTrait legend response ok:', response.ok);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      return response.json();
+    })
+    .then(legend => {
+      console.log('=== PolyTrait legend loaded successfully ===');
+      console.log('Raw server response:', legend);
+      console.log('Legend keys:', Object.keys(legend));
+      
+      if (!legend || Object.keys(legend).length === 0) {
+        console.warn('PolyTrait legend is empty or null');
+        return;
+      }
+      
+      polyTraitLegendData = legend;
+      
+      // 색상 추가 및 데이터 정규화 (서버에서 색상을 제공하지 않는 경우)
+      for (const [code, info] of Object.entries(legend)) {
+        console.log(`Processing PolyTrait ${code}:`, info);
+        
+        // 서버 응답의 Name을 name으로 정규화
+        if (info.Name && !info.name) {
+          info.name = info.Name;
+        }
+        
+        if (!info.color) {
+          info.color = generatePolyTraitColor(parseInt(code));
+          console.log(`Generated color for ${code}:`, info.color);
+        }
+        
+        console.log(`PolyTrait ${code} processed:`, {name: info.name, color: info.color});
+      }
+      
+      console.log('Final polyTraitLegendData:', polyTraitLegendData);
+      renderPolyTraitLegend();
+    })
+    .catch(err => {
+      console.error('=== Failed to load PolyTrait legend ===');
+      console.error('Error details:', err);
+      console.error('Error message:', err.message);
+      
+      // 에러시 빈 범례 표시
+      polyTraitLegendData = {};
+      renderPolyTraitLegend();
+    });
+}
+
+// PolyTrait 범례 렌더링
+function renderPolyTraitLegend() {
+  console.log('=== Rendering PolyTrait legend ===');
+  
+  const pt = document.getElementById('polyTraitLegend');
+  if (!pt) {
+    console.error('PolyTrait legend container not found');
+    return;
+  }
+  
+  console.log('PolyTrait legend container found');
+  console.log('polyTraitLegendData entries:', Object.keys(polyTraitLegendData).length);
+  
+  pt.innerHTML = '';
+  
+  if (Object.keys(polyTraitLegendData).length === 0) {
+    console.log('No PolyTrait data to render');
+    pt.innerHTML = '<div style="color:#888;font-style:italic;">No PolyTraits available</div>';
+    return;
+  }
+  
+  // 클릭 가능한 PolyTrait 범례 항목 생성
+  const mkPolyTrait = (color, name, polyTraitCode, traitCodes) => `<div class="legend-item" data-polytrait="${polyTraitCode||''}" style="cursor:pointer;padding:4px;border-radius:4px;" onmouseover="this.style.background='#f0f0f0'" onmouseout="this.style.background=''" onclick="togglePolyTraitHighlight('${polyTraitCode||''}','${color}')"><div class="legend-color" style="background:${color}"></div><span>${name} <small style="color:#888;">(${polyTraitCode}) [${traitCodes}]</small></span></div>`;
+  
+  // PolyTrait 범례들
+  let renderedCount = 0;
+  for (const [code, info] of Object.entries(polyTraitLegendData)) {
+    const color = info.color || generatePolyTraitColor(parseInt(code));
+    const name = info.name || `PolyTrait ${code}`;
+    const traits = info.Traits || info.traits || [];
+    const traitCodes = traits.join(', ');
+    
+    console.log(`Rendering PolyTrait ${code}: ${name} (${color}) with traits: [${traitCodes}]`);
+    pt.insertAdjacentHTML('beforeend', mkPolyTrait(color, name, code, traitCodes));
+    renderedCount++;
+  }
+  
+  console.log(`Successfully rendered ${renderedCount} PolyTrait legend items`);
+}
+
+// PolyRope 검색 결과 표시 함수
+function showPolyRopeResult(result) {
+  const panel = document.getElementById('polyRopeResultPanel');
+  const content = document.getElementById('polyRopeResultContent');
+  
+  if (!result) {
+    panel.style.display = 'none';
+    return;
+  }
+  
+  let html = '';
+  html += '<div><b>Address 1:</b> ' + (result.address1 ? result.address1.substring(0, 10) + '...' : 'N/A') + '</div>';
+  html += '<div><b>Address 2:</b> ' + (result.address2 ? result.address2.substring(0, 10) + '...' : 'N/A') + '</div>';
+  html += '<div><b>PolyTrait:</b> ' + (result.polytraitcode || 'N/A') + '</div>';
+  html += '<div><b>Connected:</b> <span style="color:' + (result.in_same_rope ? '#28a745' : '#dc3545') + ';font-weight:bold;">' + (result.in_same_rope ? '✅ YES' : '❌ NO') + '</span></div>';
+  
+  if (polyTraitLegendData[result.polytraitcode]) {
+    html += '<div><b>PolyTrait Name:</b> ' + polyTraitLegendData[result.polytraitcode].name + '</div>';
+  }
+  
+  content.innerHTML = html;
+  panel.style.display = 'block';
+}
+
+function hidePolyRopeResult() {
+  const panel = document.getElementById('polyRopeResultPanel');
+  panel.style.display = 'none';
 }
 
 // 하이라이팅 상태 관리
@@ -456,6 +621,52 @@ function recoverRule() {
   showNotification('Rule 하이라이팅이 해제되었습니다', 'info');
 }
 
+function togglePolyTraitHighlight(polyTraitCode, color) {
+  console.log('=== togglePolyTraitHighlight called ===');
+  console.log('Input polyTraitCode:', polyTraitCode);
+  console.log('Input color:', color);
+  console.log('Current currentHighlightPolyTrait:', currentHighlightPolyTrait);
+  
+  if (currentHighlightPolyTrait === polyTraitCode) {
+    // 이미 선택된 PolyTrait면 하이라이팅 해제
+    console.log('Disabling PolyTrait highlight');
+    currentHighlightPolyTrait = null;
+    f.contentWindow.postMessage({type: 'highlight-polytrait', payload: {polyTraitCode: null}}, '*');
+  } else {
+    // 새로운 PolyTrait 하이라이팅
+    console.log('Enabling PolyTrait highlight');
+    currentHighlightPolyTrait = polyTraitCode;
+    
+    // PolyTrait 데이터도 함께 전달 (전체 legend 데이터를 전달)
+    console.log('Sending complete PolyTrait legend data to frame');
+    console.log('polyTraitLegendData keys:', Object.keys(polyTraitLegendData));
+    console.log('Target polyTraitCode:', polyTraitCode);
+    
+    f.contentWindow.postMessage({
+      type: 'highlight-polytrait', 
+      payload: {
+        polyTraitCode, 
+        color,
+        polyTraitData: polyTraitLegendData
+      }
+    }, '*');
+  }
+}
+
+// PolyTrait 하이라이팅만 해제
+function recoverPolyTrait() {
+  console.log('Recovering PolyTrait highlighting...');
+  
+  // PolyTrait 하이라이팅 상태만 초기화
+  currentHighlightPolyTrait = null;
+  
+  // 프레임에 PolyTrait 해제 신호 전송
+  f.contentWindow.postMessage({type: 'highlight-polytrait', payload: {polyTraitCode: null}}, '*');
+  
+  // 알림 표시
+  showNotification('PolyTrait 하이라이팅이 해제되었습니다', 'info');
+}
+
 // 메시지(자식 → 부모)
 window.addEventListener('message', (ev)=>{
   const msg = ev.data||{};
@@ -465,6 +676,8 @@ window.addEventListener('message', (ev)=>{
       CURRENT = g; syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{}, rules:{}});
       resetInfoPanel(); // Info 패널 초기화
       hideRopeInfo(); // 로프 정보 숨김
+      hidePolyRopeResult(); // PolyRope 검색 결과 숨김
+      loadPolyTraitLegend(); // PolyTrait 범례 로드
       f.contentWindow.postMessage({type:'load-graph', payload: CURRENT}, '*');
     });
   } else if (msg.type==='child-ready'){
@@ -687,6 +900,8 @@ document.getElementById('defBtn').onclick = ()=>{
     CURRENT = g; syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{}, rules:{}});
     resetInfoPanel(); // Info 패널 초기화
     hideRopeInfo(); // 로프 정보 숨김
+    hidePolyRopeResult(); // PolyRope 검색 결과 숨김
+    loadPolyTraitLegend(); // PolyTrait 범례 다시 로드
     f.contentWindow.postMessage({type:'load-graph', payload: CURRENT}, '*');
   });
 };
@@ -812,6 +1027,46 @@ document.getElementById('ropeBtn').onclick = ()=>{
     .catch(err => {
       console.error('Rope search error:', err);
       alert('Rope 검색 중 오류가 발생했습니다: ' + err.message);
+    });
+};
+
+// PolyRope 검색
+document.getElementById('polyRopeBtn').onclick = ()=>{
+  const addr1 = (document.getElementById('polyAddr1').value||'').trim();
+  const addr2 = (document.getElementById('polyAddr2').value||'').trim();
+  const polyTraitCode = (document.getElementById('polyTraitCode').value||'').trim();
+  
+  if (!addr1 || !addr2 || !polyTraitCode) {
+    return alert('모든 필드를 입력해주세요 (Address 1, Address 2, PolyTrait Code)');
+  }
+  
+  console.log(`=== POLYROPE SEARCH ===`, {addr1, addr2, polyTraitCode});
+  
+  const url = '/api/ee/graph/polyrope/search?address1=' + encodeURIComponent(addr1) + '&address2=' + encodeURIComponent(addr2) + '&polytraitcode=' + encodeURIComponent(polyTraitCode);
+  console.log('Request URL:', url);
+  
+  fetch(url)
+    .then(r => r.json())
+    .then(result => {
+      console.log('PolyRope search result:', result);
+      
+      if (result.error) {
+        alert('PolyRope 검색 실패: ' + result.error);
+        hidePolyRopeResult();
+        return;
+      }
+      
+      // 검색 결과 표시
+      showPolyRopeResult(result);
+      
+      // 성공 알림
+      const connected = result.in_same_rope ? '연결됨' : '연결 안됨';
+      showNotification(`🔗 PolyRope 검색 완료: ${connected}`, 2000);
+    })
+    .catch(err => {
+      console.error('PolyRope search error:', err);
+      alert('PolyRope 검색 중 오류가 발생했습니다: ' + err.message);
+      hidePolyRopeResult();
     });
 };
 </script>

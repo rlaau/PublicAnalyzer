@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	chaintimer "github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
@@ -26,23 +27,25 @@ import (
 // ------------------------------------------------------------
 
 const (
-	kV      = "v:"       // v:<address>
-	kR      = "r:"       // r:<ropeID>
-	kT      = "t:"       // t:<traitID>
-	kCRope  = "ctr:rope" // BigEndian uint64
-	kCTrait = "ctr:trait"
+	kV         = "v:"       // v:<address>
+	kR         = "r:"       // r:<ropeID>
+	kT         = "t:"       // t:<traitID>
+	kPR        = "pr:"      // pr:<polyRopeID> - PolyRopeMark 저장
+	kCRope     = "ctr:rope" // BigEndian uint64
+	kCTrait    = "ctr:trait"
+	kCPolyRope = "ctr:polyrope" // BigEndian uint64 - PolyRope counter
 
 	maxRopeSize = 1000 // 도메인 상한
 )
 
-func NewRopeDB(isTest mode.ProcessingMode, dbName string, traitLegend map[domain.TraitCode]string, ruleLegend map[domain.RuleCode]string) (RopeDB, error) {
+func NewRopeDB(isTest mode.ProcessingMode, dbName string, traitLegend map[domain.TraitCode]string, ruleLegend map[domain.RuleCode]string, polyTraits map[domain.PolyTraitCode]domain.PolyNameAndTraits) (RopeDB, error) {
 	var root string
 	if isTest.IsTest() {
 		root = computation.FindTestingStorageRootPath()
 	} else {
 		root = computation.FindProductionStorageRootPath()
 	}
-	return NewRopeDBWithRoot(isTest, root, dbName, traitLegend, ruleLegend)
+	return NewRopeDBWithRoot(isTest, root, dbName, traitLegend, ruleLegend, polyTraits)
 }
 
 type RopeDB interface {
@@ -53,6 +56,7 @@ type RopeDB interface {
 	ViewRopeByNode(a shareddomain.Address) (*domain.Rope, error) // 첫 번째 Rope 기준(필요 시 Trait 선택 버전 추가)
 	ViewRope(id domain.RopeID) (*domain.Rope, error)
 	ViewInSameRope(a1, a2 shareddomain.Address) (bool, error)
+	ViewInSameRopeByPolyTrait(a1, a2 shareddomain.Address, polyTrait domain.PolyTraitCode) (bool, error)
 	GetGraphStats() map[string]any
 
 	// 트레이트 기반 조회
@@ -77,9 +81,15 @@ type BadgerRopeDB struct {
 	traitLegend map[domain.TraitCode]string
 	ruleLegend  map[domain.RuleCode]string
 
+	// PolyTrait 매핑 (PolyTraitCode → 정의)
+	polyTraits map[domain.PolyTraitCode]domain.PolyNameAndTraits
+	// Trait → PolyTrait 역방향 매핑 (빠른 조회용)
+	traitToPolyTrait map[domain.TraitCode][]domain.PolyTraitCode
+
 	// 비동기 쓰기 버스
-	busRope  *eventbus.EventBus[domain.RopeMarkUpsert]
-	busTrait *eventbus.EventBus[domain.TraitMarkUpsert]
+	busRope     *eventbus.EventBus[domain.RopeMarkUpsert]
+	busTrait    *eventbus.EventBus[domain.TraitMarkUpsert]
+	busPolyRope *eventbus.EventBus[PolyRopeMarkUpsert]
 
 	// GC 관련
 	gcTicker       *time.Ticker
@@ -87,8 +97,18 @@ type BadgerRopeDB struct {
 	publishCounter int64 // 발행 이벤트 카운터
 }
 
+// PolyRopeMark Upsert 커맨드
+type PolyRopeMarkUpsert struct {
+	PolyRopeID  domain.PolyRopeID
+	PolyTrait   domain.PolyTraitCode
+	AddRopes    []domain.RopeID // 추가할 Rope들
+	VolumeDelta uint32
+	LastSeen    chaintimer.ChainTime
+	MergeFrom   []domain.PolyRopeID // 병합할 다른 PolyRope들
+}
+
 // NewRopeDBWithRoot: 모드(true=test, false=prod)로 루트 분기
-func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, traitLegend map[domain.TraitCode]string, ruleLegend map[domain.RuleCode]string) (RopeDB, error) {
+func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, traitLegend map[domain.TraitCode]string, ruleLegend map[domain.RuleCode]string, polyTraits map[domain.PolyTraitCode]domain.PolyNameAndTraits) (RopeDB, error) {
 	// Badger
 	dbDir := filepath.Join(root, "rope_db", dbname, "badger")
 	opts := badger.DefaultOptions(dbDir).WithLogger(nil)
@@ -99,6 +119,8 @@ func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, t
 	// e.g. <root>/rope_db/<name>/eventbus/...
 	evRopeRel := filepath.Join("rope_db", dbname, "eventbus", "ropemark.jsonl")
 	evTraitRel := filepath.Join("rope_db", dbname, "eventbus", "traitmark.jsonl")
+	evPolyRopeRel := filepath.Join("rope_db", dbname, "eventbus", "polyropemark.jsonl")
+
 	// EventBus(JSONL 경로는 루트부터 분기)
 	busR, err := eventbus.NewWithRoot[domain.RopeMarkUpsert](func() string { return root }, evRopeRel, 4096)
 	if err != nil {
@@ -111,23 +133,43 @@ func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, t
 		_ = db.Close()
 		return nil, err
 	}
+	busPR, err := eventbus.NewWithRoot[PolyRopeMarkUpsert](func() string { return root }, evPolyRopeRel, 4096)
+	if err != nil {
+		busR.Close()
+		busT.Close()
+		_ = db.Close()
+		return nil, err
+	}
+
+	// Trait → PolyTrait 역방향 매핑 구축
+	traitToPolyTrait := make(map[domain.TraitCode][]domain.PolyTraitCode)
+	for polyCode, polyDef := range polyTraits {
+		for _, traitCode := range polyDef.Traits {
+			traitToPolyTrait[traitCode] = append(traitToPolyTrait[traitCode], polyCode)
+		}
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	b := &BadgerRopeDB{
 		db: db, isTest: isTest.IsTest(),
 		ctx: ctx, cancel: cancel,
-		traitLegend: traitLegend,
-		ruleLegend:  ruleLegend,
-		busRope:     busR, busTrait: busT,
+		traitLegend:      traitLegend,
+		ruleLegend:       ruleLegend,
+		polyTraits:       polyTraits,
+		traitToPolyTrait: traitToPolyTrait,
+		busRope:          busR,
+		busTrait:         busT,
+		busPolyRope:      busPR,
 	}
 
 	// GC 스케쥴러 설정
 	b.startGC()
 
 	// 워커 가동
-	b.wg.Add(3) // GC 워커 추가로 3개
+	b.wg.Add(4) // GC 워커 포함 4개
 	go b.traitWorker()
 	go b.ropeWorker()
+	go b.polyRopeWorker()
 	go b.gcWorker()
 	return b, nil
 }
@@ -144,6 +186,7 @@ func (b *BadgerRopeDB) Close() error {
 	// 이벤트버스: pending 저장 & 채널 close
 	b.busTrait.Close()
 	b.busRope.Close()
+	b.busPolyRope.Close()
 	b.wg.Wait()
 	return b.db.Close()
 }
@@ -280,11 +323,128 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 	b.putVertex(v1)
 	b.putVertex(v2)
 
-	// --- 6) publish 카운터 증가
+	// --- 6) PolyTrait 처리 (해당 Trait가 PolyTrait에 속하는 경우)
+	if polyTraitCodes, exists := b.traitToPolyTrait[ev.Trait]; exists {
+		for _, polyTraitCode := range polyTraitCodes {
+			b.processPolyTrait(v1, v2, polyTraitCode, ev)
+		}
+	}
+
+	// --- 7) publish 카운터 증가
 	atomic.AddInt64(&b.publishCounter, 1)
 
 	_ = created // created 여부는 외부로 굳이 노출하지 않음
 	return nil
+}
+
+// processPolyTrait: PolyTrait 레벨에서 PolyRope 처리
+func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode domain.PolyTraitCode, ev domain.TraitEvent) {
+	// 각 Vertex의 PolyRopeRef 찾기
+	pr1, prExist1 := b.getPolyRopeFromVertex(v1, polyTraitCode)
+	pr2, prExist2 := b.getPolyRopeFromVertex(v2, polyTraitCode)
+
+	// 현재 이벤트의 Trait로 생성된 RopeID 찾기
+	currentRopeID, ropeExists := b.ropeIDByTrait(v1, ev.Trait)
+	if !ropeExists {
+		currentRopeID, ropeExists = b.ropeIDByTrait(v2, ev.Trait)
+		if !ropeExists {
+			return // Rope가 없으면 PolyRope 처리 불가
+		}
+	}
+
+	switch {
+	case !prExist1 && !prExist2:
+		// 둘 다 PolyRope 없음 - 새 PolyRope 생성
+		newPolyID := b.nextPolyRopeID()
+		
+		// 두 Vertex에 PolyRopeRef 추가
+		b.setPolyRopeInVertex(v1, newPolyID, polyTraitCode)
+		b.setPolyRopeInVertex(v2, newPolyID, polyTraitCode)
+		
+		// PolyRopeMark 생성 (현재 Trait로 생성된 Rope만 포함)
+		_ = b.busPolyRope.Publish(PolyRopeMarkUpsert{
+			PolyRopeID:  newPolyID,
+			PolyTrait:   polyTraitCode,
+			AddRopes:    []domain.RopeID{currentRopeID},
+			VolumeDelta: 1,
+			LastSeen:    ev.Time,
+		})
+
+	case prExist1 && !prExist2:
+		// v1만 PolyRope 있음 - v2를 v1의 PolyRope에 편입
+		b.setPolyRopeInVertex(v2, pr1, polyTraitCode)
+		
+		// 현재 Rope를 PolyRope에 추가 (중복 제거는 dedupRopes에서 처리)
+		_ = b.busPolyRope.Publish(PolyRopeMarkUpsert{
+			PolyRopeID:  pr1,
+			PolyTrait:   polyTraitCode,
+			AddRopes:    []domain.RopeID{currentRopeID},
+			VolumeDelta: 1,
+			LastSeen:    ev.Time,
+		})
+
+	case !prExist1 && prExist2:
+		// v2만 PolyRope 있음 - v1을 v2의 PolyRope에 편입
+		b.setPolyRopeInVertex(v1, pr2, polyTraitCode)
+		
+		// 현재 Rope를 PolyRope에 추가 (중복 제거는 dedupRopes에서 처리)
+		_ = b.busPolyRope.Publish(PolyRopeMarkUpsert{
+			PolyRopeID:  pr2,
+			PolyTrait:   polyTraitCode,
+			AddRopes:    []domain.RopeID{currentRopeID},
+			VolumeDelta: 1,
+			LastSeen:    ev.Time,
+		})
+
+	default:
+		// 둘 다 PolyRope 있음
+		if pr1 == pr2 {
+			// 같은 PolyRope면 현재 Rope만 추가 (중복 제거는 dedupRopes에서 처리)
+			_ = b.busPolyRope.Publish(PolyRopeMarkUpsert{
+				PolyRopeID:  pr1,
+				PolyTrait:   polyTraitCode,
+				AddRopes:    []domain.RopeID{currentRopeID},
+				VolumeDelta: 1,
+				LastSeen:    ev.Time,
+			})
+		} else {
+			// 다른 PolyRope면 병합 - PolyRopeMark의 실제 멤버 수로 크기 비교
+			prm1 := b.getPolyRopeMark(pr1)
+			prm2 := b.getPolyRopeMark(pr2)
+			
+			// 각 PolyRope의 실제 멤버 수 계산
+			size1 := b.calculatePolyRopeSize(prm1.Ropes)
+			size2 := b.calculatePolyRopeSize(prm2.Ropes)
+			
+			target := pr1
+			source := pr2
+			
+			// 실제 멤버 수로 크기 비교
+			if size2 > size1 {
+				target, source = pr2, pr1
+			}
+			
+			// source PolyRope의 모든 Vertex들의 PolyRopeRef를 target으로 변경
+			b.updateAllVerticesPolyRope(source, target, polyTraitCode)
+			
+			// 합병된 PolyRopeMark 업서트 (source Ropes + 현재 Rope, 중복 제거)
+			srcMark := b.getPolyRopeMark(source)
+			addingRopes := append(srcMark.Ropes, currentRopeID)
+			
+			_ = b.busPolyRope.Publish(PolyRopeMarkUpsert{
+				PolyRopeID:  target,
+				PolyTrait:   polyTraitCode,
+				AddRopes:    addingRopes, // 중복 제거는 dedupRopes에서 처리
+				VolumeDelta: 1,
+				LastSeen:    ev.Time,
+				MergeFrom:   []domain.PolyRopeID{source},
+			})
+		}
+	}
+	
+	// Vertex 동기 저장
+	b.putVertex(v1)
+	b.putVertex(v2)
 }
 
 // setRopeForTrait: 해당 Trait의 RopeRef를 정확히 1칸만 유지.
@@ -327,6 +487,12 @@ func (b *BadgerRopeDB) ViewInSameRope(a1, a2 shareddomain.Address) (bool, error)
 	return inSameRope(v1, v2), nil
 }
 
+func (b *BadgerRopeDB) ViewInSameRopeByPolyTrait(a1, a2 shareddomain.Address, polyTrait domain.PolyTraitCode) (bool, error) {
+	v1 := b.getOrCreateVertex(a1)
+	v2 := b.getOrCreateVertex(a2)
+	return inSamePolyRopeByPolyTrait(v1, v2, polyTrait), nil
+}
+
 // ------------------------------------------------------------
 // 7) 워커(비동기 Upsert 적용)
 // ------------------------------------------------------------
@@ -355,6 +521,21 @@ func (b *BadgerRopeDB) ropeWorker() {
 				return
 			}
 			b.applyRopeUpsert(op)
+		case <-b.ctx.Done():
+			return
+		}
+	}
+}
+
+func (b *BadgerRopeDB) polyRopeWorker() {
+	defer b.wg.Done()
+	for {
+		select {
+		case op, ok := <-b.busPolyRope.Dequeue():
+			if !ok {
+				return
+			}
+			b.applyPolyRopeUpsert(op)
 		case <-b.ctx.Done():
 			return
 		}
@@ -441,6 +622,62 @@ func (b *BadgerRopeDB) applyRopeUpsert(op domain.RopeMarkUpsert) {
 	})
 }
 
+func (b *BadgerRopeDB) applyPolyRopeUpsert(op PolyRopeMarkUpsert) {
+	key := []byte(fmt.Sprintf("%s%d", kPR, uint64(op.PolyRopeID)))
+	_ = b.db.Update(func(txn *badger.Txn) error {
+		var prm domain.PolyRopeMark
+		if itm, err := txn.Get(key); err == nil {
+			_ = itm.Value(func(val []byte) error { return json.Unmarshal(val, &prm) })
+		}
+		if prm.ID == 0 {
+			prm = domain.PolyRopeMark{
+				ID:        op.PolyRopeID,
+				PolyTrait: op.PolyTrait,
+				Ropes:     nil,
+			}
+		}
+
+		// Rope 추가 + dedup
+		if len(op.AddRopes) > 0 {
+			prm.Ropes = dedupRopes(prm.Ropes, op.AddRopes)
+		}
+
+		// 병합 처리
+		for _, sid := range op.MergeFrom {
+			if sid == prm.ID {
+				continue
+			}
+			skey := []byte(fmt.Sprintf("%s%d", kPR, uint64(sid)))
+			_ = txn.Delete(skey)
+		}
+
+		data, _ := json.Marshal(prm)
+		return txn.Set(key, data)
+	})
+}
+
+// dedupRopes: RopeID 중복 제거
+func dedupRopes(base, inc []domain.RopeID) []domain.RopeID {
+	if len(inc) == 0 {
+		return base
+	}
+	m := map[domain.RopeID]struct{}{}
+	out := make([]domain.RopeID, 0, len(base)+len(inc))
+	for _, x := range base {
+		m[x] = struct{}{}
+		out = append(out, x)
+	}
+	for _, y := range inc {
+		if _, ok := m[y]; ok {
+			continue
+		}
+		m[y] = struct{}{}
+		out = append(out, y)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
 // ------------------------------------------------------------
 // 8) VertexDB 동기 I/O & 유틸
 // ------------------------------------------------------------
@@ -493,6 +730,33 @@ func inSameRope(v1, v2 *domain.Vertex) bool {
 	return false
 }
 
+func inSamePolyRopeByPolyTrait(v1, v2 *domain.Vertex, polyTrait domain.PolyTraitCode) bool {
+	// v1에서 해당 PolyTrait의 PolyRopeID 찾기
+	var polyRopeID1 domain.PolyRopeID
+	found1 := false
+	for _, pr := range v1.PolyRopes {
+		if pr.PolyTrait == polyTrait {
+			polyRopeID1 = pr.Id
+			found1 = true
+			break
+		}
+	}
+	
+	// v2에서 해당 PolyTrait의 PolyRopeID 찾기
+	var polyRopeID2 domain.PolyRopeID
+	found2 := false
+	for _, pr := range v2.PolyRopes {
+		if pr.PolyTrait == polyTrait {
+			polyRopeID2 = pr.Id
+			found2 = true
+			break
+		}
+	}
+	
+	// 둘 다 PolyRope가 있고, 같은 ID면 true
+	return found1 && found2 && polyRopeID1 == polyRopeID2
+}
+
 func (b *BadgerRopeDB) getRopeMark(id domain.RopeID) domain.RopeMark {
 	key := []byte(fmt.Sprintf("%s%d", kR, uint64(id)))
 	var rm domain.RopeMark
@@ -511,6 +775,9 @@ func (b *BadgerRopeDB) nextTraitID() domain.TraitID {
 }
 func (b *BadgerRopeDB) nextRopeID() domain.RopeID {
 	return domain.RopeID(b.incr(kCRope))
+}
+func (b *BadgerRopeDB) nextPolyRopeID() domain.PolyRopeID {
+	return domain.PolyRopeID(b.incr(kCPolyRope))
 }
 func (b *BadgerRopeDB) incr(key string) uint64 {
 	var next uint64
@@ -586,12 +853,78 @@ func dedupAppend(base, inc []shareddomain.Address) []shareddomain.Address {
 
 func sizeOf(rm domain.RopeMark) int { return int(rm.Size) }
 
+// getPolyRopeMark: PolyRopeMark 조회
+func (b *BadgerRopeDB) getPolyRopeMark(id domain.PolyRopeID) domain.PolyRopeMark {
+	key := []byte(fmt.Sprintf("%s%d", kPR, uint64(id)))
+	var prm domain.PolyRopeMark
+	_ = b.db.View(func(txn *badger.Txn) error {
+		itm, err := txn.Get(key)
+		if err != nil {
+			return err
+		}
+		return itm.Value(func(val []byte) error { return json.Unmarshal(val, &prm) })
+	})
+	return prm
+}
+
+// getPolyRopeFromVertex: Vertex에서 특정 PolyTrait의 PolyRope ID 가져오기
+func (b *BadgerRopeDB) getPolyRopeFromVertex(v *domain.Vertex, polyTrait domain.PolyTraitCode) (domain.PolyRopeID, bool) {
+	for _, pr := range v.PolyRopes {
+		if pr.PolyTrait == polyTrait {
+			return pr.Id, true
+		}
+	}
+	return 0, false
+}
+
+// setPolyRopeInVertex: Vertex에 PolyRope 설정
+func (b *BadgerRopeDB) setPolyRopeInVertex(v *domain.Vertex, polyRopeID domain.PolyRopeID, polyTrait domain.PolyTraitCode) {
+	for i, pr := range v.PolyRopes {
+		if pr.PolyTrait == polyTrait {
+			v.PolyRopes[i].Id = polyRopeID
+			return
+		}
+	}
+	// 없으면 새로 추가
+	v.PolyRopes = append(v.PolyRopes, domain.PolyRopeRef{
+		Id:        polyRopeID,
+		PolyTrait: polyTrait,
+	})
+}
+
+// calculatePolyRopeSize: PolyRope의 실제 멤버 수 계산
+func (b *BadgerRopeDB) calculatePolyRopeSize(ropeIDs []domain.RopeID) int {
+	totalSize := 0
+	for _, ropeID := range ropeIDs {
+		ropeMark := b.getRopeMark(ropeID)
+		totalSize += int(ropeMark.Size)
+	}
+	return totalSize
+}
+
+// updateAllVerticesPolyRope: source PolyRope에 속한 모든 Vertex를 target PolyRope로 업데이트
+func (b *BadgerRopeDB) updateAllVerticesPolyRope(sourcePolyRopeID, targetPolyRopeID domain.PolyRopeID, polyTrait domain.PolyTraitCode) {
+	// source PolyRope의 모든 Rope 가져오기
+	srcMark := b.getPolyRopeMark(sourcePolyRopeID)
+	
+	// 각 Rope의 모든 멤버 Vertex 업데이트
+	for _, ropeID := range srcMark.Ropes {
+		ropeMark := b.getRopeMark(ropeID)
+		for _, addr := range ropeMark.Members {
+			v := b.getOrCreateVertex(addr)
+			b.setPolyRopeInVertex(v, targetPolyRopeID, polyTrait)
+			b.putVertex(v)
+		}
+	}
+}
+
 // GetGraphStas returns basic graph statistics:
 // - nodes:  total number of vertices (keys with prefix "v:")
 // - ropes:  total number of rope marks (keys with prefix "r:")
 // - traits: total number of trait marks (keys with prefix "t:")
+// - polyRopes: total number of poly rope marks (keys with prefix "pr:")
 func (b *BadgerRopeDB) GetGraphStats() map[string]any {
-	var nodes, ropes, traits uint64
+	var nodes, ropes, traits, polyRopes uint64
 
 	_ = b.db.View(func(txn *badger.Txn) error {
 		// 공통 카운터 헬퍼
@@ -608,16 +941,18 @@ func (b *BadgerRopeDB) GetGraphStats() map[string]any {
 			return c
 		}
 
-		nodes = countPrefix([]byte(kV))  // "v:"
-		ropes = countPrefix([]byte(kR))  // "r:"
-		traits = countPrefix([]byte(kT)) // "t:"
+		nodes = countPrefix([]byte(kV))      // "v:"
+		ropes = countPrefix([]byte(kR))      // "r:"
+		traits = countPrefix([]byte(kT))     // "t:"
+		polyRopes = countPrefix([]byte(kPR)) // "pr:"
 		return nil
 	})
 
 	return map[string]any{
-		"nodes":  nodes,
-		"ropes":  ropes,
-		"traits": traits,
+		"nodes":     nodes,
+		"ropes":     ropes,
+		"traits":    traits,
+		"polyRopes": polyRopes,
 	}
 }
 
@@ -682,6 +1017,10 @@ func (b *BadgerRopeDB) RopeIDByTrait(v *domain.Vertex, t domain.TraitCode) (doma
 
 func (b *BadgerRopeDB) GetRopeMark(rid domain.RopeID) domain.RopeMark {
 	return b.getRopeMark(rid)
+}
+
+func (b *BadgerRopeDB) GetPolyTraitLegend() map[domain.PolyTraitCode]domain.PolyNameAndTraits {
+	return b.polyTraits
 }
 
 // ------------------------------------------------------------
