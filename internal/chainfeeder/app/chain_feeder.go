@@ -13,12 +13,13 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/chainfeeder/domain"
 )
 
-type FeederConfig struct {
+type ChainFeederConfig struct {
 	// Prefetcher + Producer 설정 그대로 품기
 	Prefetch PrefetcherConfig
 	Producer k.BackpressureProducerConfig
 
-	// 워터마크 (프로듀서 내부 버퍼 크기 기준, "메시지 수")
+	// 워터마크 (백프레셔 프로듀서 내부 버퍼 크기기준, 근데 이건 파일 바이트의 그 버퍼가 아님
+	// 백프레셔 내부의 자체 프리패칭용 인메모리 버퍼 크기 말하는거, "메시지 수")
 	// ※ Producer.MaxBufferSize와 같은 단위를 사용 (Message[T] 개수)
 	HighWatermark int // 이 이상이면 Prefetcher pause
 	LowWatermark  int // 이 이하면 Prefetcher resume
@@ -28,12 +29,12 @@ type FeederConfig struct {
 }
 
 type ChainFeeder struct {
-	cfg        FeederConfig
+	cfg        ChainFeederConfig
 	prefetcher *Prefetcher
 	producer   *k.KafkaBatchProducerWithBackpressure[domain.RawTransaction]
 }
 
-func NewChainFeeder(ctx context.Context, cfg FeederConfig, bp tools.CountingBackpressure) (*ChainFeeder, error) {
+func NewChainFeeder(ctx context.Context, cfg ChainFeederConfig, bp tools.CountingBackpressure) (*ChainFeeder, error) {
 	if cfg.DrainCheckInterval <= 0 {
 		cfg.DrainCheckInterval = 200 * time.Millisecond
 	}
@@ -48,7 +49,7 @@ func NewChainFeeder(ctx context.Context, cfg FeederConfig, bp tools.CountingBack
 		cfg.HighWatermark = int(float64(cfg.Producer.MaxBufferSize) * 0.8)
 	}
 	if cfg.LowWatermark <= 0 {
-		cfg.LowWatermark = int(float64(cfg.Producer.MaxBufferSize) * 0.4)
+		cfg.LowWatermark = int(float64(cfg.Producer.MaxBufferSize) * 0.3)
 	}
 
 	// Prefetcher

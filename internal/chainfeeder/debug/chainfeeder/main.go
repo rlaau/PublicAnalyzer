@@ -46,7 +46,7 @@ func main() {
 		MaxInterval:      3 * time.Second, // 안전 상한
 	}
 
-	feeder, err := cf.NewChainFeeder(ctx, cf.FeederConfig{
+	feeder, err := cf.NewChainFeeder(ctx, cf.ChainFeederConfig{
 		Prefetch:           pcfg,
 		Producer:           kcfg,
 		HighWatermark:      160_000, // 80%

@@ -17,6 +17,7 @@ type ProducerMode int
 
 const (
 	// ModeBuffered 버퍼를 사용하는 모드
+	//버퍼 사용 시 내부적으로 인메모리 버퍼로 프리패칭 준비하다가 적절한 시점에 프리패치함
 	ModeBuffered ProducerMode = iota
 	// ModeDirect 버퍼 없이 즉시 처리 모드
 	ModeDirect
@@ -28,6 +29,7 @@ type KafkaBatchProducerWithBackpressure[T any] struct {
 	writer *kafkaLib.Writer
 
 	// 백프레셔
+	//카프카를 위한 백프레셔 설정은 백프레셔 설정 시에 결정남
 	backpressure tools.CountingBackpressure
 
 	// 설정
@@ -93,10 +95,10 @@ func NewKafkaBatchProducerWithBackpressure[T any](
 		config.MaxInterval = 60 * time.Second
 	}
 	if config.Mode == ModeBuffered && config.MaxBufferSize <= 0 {
-		config.MaxBufferSize = 100000
+		config.MaxBufferSize = 100_000
 	}
 	if config.Mode == ModeDirect && config.DirectChannelSize <= 0 {
-		config.DirectChannelSize = 10000
+		config.DirectChannelSize = 10_000
 	}
 
 	// 글로벌 브로커 설정
@@ -337,8 +339,6 @@ func (p *KafkaBatchProducerWithBackpressure[T]) SendDirect(messages []Message[T]
 		return nil
 	case <-p.ctx.Done():
 		return fmt.Errorf("producer is shutting down")
-	case <-time.After(5 * time.Second):
-		return fmt.Errorf("timeout: direct channel is full")
 	}
 }
 
