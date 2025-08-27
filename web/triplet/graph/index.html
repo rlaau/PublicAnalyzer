@@ -77,7 +77,7 @@
 </style>
 </head>
 <body>
-  <section id="graph"><iframe id="f" src="/ui/ee/graph/frame" scrolling="no"></iframe></section>
+  <section id="graph"><iframe id="f" src="/ui/triplet/graph/frame" scrolling="no"></iframe></section>
 
   <section id="search" style="max-height: 90vh; overflow-y: auto; padding-right: 8px;">
     <div class="sec">
@@ -225,7 +225,7 @@ function hideRopeInfo() {
 function loadRopeInfo(ropeId) {
   console.log('Loading rope info for rope:', ropeId);
   
-  const url = '/api/ee/graph/rope-info/' + encodeURIComponent(ropeId);
+  const url = '/api/triplet/graph/rope-info/' + encodeURIComponent(ropeId);
   
   fetch(url)
     .then(r => r.json())
@@ -344,19 +344,41 @@ function recalculateLegendCounts(legend, nodes, edges) {
   nodes.forEach((node, index) => {
     console.log(`Node ${index}:`, node.id, 'traits:', node.traits?.length || 0);
     
-    // 노드의 traits에서 실제 RuleCode 추출
+    // 노드의 traits에서 실제 RuleCode 추출 - 더 견고한 검증
     if (node.traits && Array.isArray(node.traits)) {
       // 각 노드에 대해 해당 노드가 가진 Rule들을 수집
       const nodeRules = new Set();
       
       node.traits.forEach((trait, traitIndex) => {
-        const ruleCode = trait.ruleCode;
-        console.log(`  Trait ${traitIndex}:`, trait.traitCode, 'ruleCode:', ruleCode);
-        if (ruleCode && ruleCode > 0) {
-          nodeRules.add(ruleCode);
-          console.log(`    Added rule: ${ruleCode}`);
+        console.log(`  Trait ${traitIndex}:`, trait);
+        
+        // ruleCode 속성 확인 - 다양한 형태 지원
+        let ruleCode = null;
+        if (trait.ruleCode !== undefined && trait.ruleCode !== null) {
+          ruleCode = trait.ruleCode;
+        } else if (trait.RuleCode !== undefined && trait.RuleCode !== null) {
+          ruleCode = trait.RuleCode;
+        } else if (trait.rule_code !== undefined && trait.rule_code !== null) {
+          ruleCode = trait.rule_code;
+        }
+        
+        console.log(`    TraitCode: ${trait.traitCode}, RuleCode: ${ruleCode}`);
+        
+        // 유효한 ruleCode인지 확인 (0보다 크고 숫자여야 함)
+        if (ruleCode !== null && ruleCode !== undefined && ruleCode > 0) {
+          const numericRuleCode = Number(ruleCode);
+          if (!isNaN(numericRuleCode) && numericRuleCode > 0) {
+            nodeRules.add(numericRuleCode);
+            console.log(`    Added rule: ${numericRuleCode}`);
+          } else {
+            console.log(`    Invalid rule code: ${ruleCode} (not a positive number)`);
+          }
+        } else {
+          console.log(`    No valid rule code found for trait ${trait.traitCode}`);
         }
       });
+      
+      console.log(`  Node ${node.id} total unique rules: ${nodeRules.size}`, Array.from(nodeRules));
       
       // 실제 RuleCode들을 범례에 추가 (기존 색상/이름 우선)
       nodeRules.forEach(ruleCode => {
@@ -368,9 +390,13 @@ function recalculateLegendCounts(legend, nodes, edges) {
             name: `Rule ${ruleCode}`, // 백엔드에서 실제 이름 받아올 때까지 임시
             color: generateRuleColor(ruleCode)
           };
+          console.log(`    Created new rule legend: ${ruleKey}`);
         }
         updated.rules[ruleKey].count++;
+        console.log(`    Incremented count for rule ${ruleKey}: ${updated.rules[ruleKey].count}`);
       });
+    } else {
+      console.log(`  Node ${node.id} has no traits or invalid traits array`);
     }
   });
   
@@ -431,7 +457,7 @@ function generatePolyTraitColor(polyTraitCode) {
 function loadPolyTraitLegend() {
   console.log('=== Loading PolyTrait legend from server ===');
   
-  const url = '/api/ee/graph/polytrait/legend';
+  const url = '/api/triplet/graph/polytrait/legend';
   console.log('Fetching URL:', url);
   
   fetch(url)
@@ -672,7 +698,7 @@ window.addEventListener('message', (ev)=>{
   const msg = ev.data||{};
   if (msg.type==='child-mounted'){
     // 초기 로드
-    fetch('/api/ee/graph/default').then(r=>r.json()).then(g=>{
+    fetch('/api/triplet/graph/default').then(r=>r.json()).then(g=>{
       CURRENT = g; syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{}, rules:{}});
       resetInfoPanel(); // Info 패널 초기화
       hideRopeInfo(); // 로프 정보 숨김
@@ -774,7 +800,7 @@ window.addEventListener('message', (ev)=>{
     if (confirmExpand) {
       console.log(`=== NODE EXPANSION (PURE DB MODE): ${shortId} ===`);
       
-      fetch('/api/ee/graph/expand?v='+encodeURIComponent(id))
+      fetch('/api/triplet/graph/expand?v='+encodeURIComponent(id))
         .then(r=>r.json()).then(expandResult=>{
           console.log('Pure DB expansion result:', {
             nodes: expandResult.nodes?.length || 0,
@@ -896,7 +922,7 @@ window.addEventListener('message', (ev)=>{
 // 검색 버튼 → 서버 호출
 document.getElementById('defBtn').onclick = ()=>{
   console.log('Default button clicked');
-  fetch('/api/ee/graph/default').then(r=>r.json()).then(g=>{
+  fetch('/api/triplet/graph/default').then(r=>r.json()).then(g=>{
     CURRENT = g; syncStats(CURRENT); renderLegend(CURRENT.legend||{traits:{}, rules:{}});
     resetInfoPanel(); // Info 패널 초기화
     hideRopeInfo(); // 로프 정보 숨김
@@ -922,7 +948,7 @@ document.getElementById('addrBtn').onclick = ()=>{
     return alert('주소를 입력해주세요 (예: 0x1234...)');
   }
   
-  const url = '/api/ee/graph/expand?v='+encodeURIComponent(addr);
+  const url = '/api/triplet/graph/expand?v='+encodeURIComponent(addr);
   console.log('Request URL:', url);
   
   fetch(url)
@@ -979,7 +1005,7 @@ document.getElementById('ropeBtn').onclick = ()=>{
   console.log(`=== ROPE SEARCH (PURE DB MODE): ${ropeId} ===`);
   
   // 단일 DB 호출: FetchGraphByRopeID는 이미 rope 멤버들 + 1-hop 확장을 DB에서 계산함 (depth=2)
-  const url = '/api/ee/graph/rope/'+encodeURIComponent(ropeId);
+  const url = '/api/triplet/graph/rope/'+encodeURIComponent(ropeId);
   console.log('Request URL:', url);
   
   fetch(url)
@@ -1042,7 +1068,7 @@ document.getElementById('polyRopeBtn').onclick = ()=>{
   
   console.log(`=== POLYROPE SEARCH ===`, {addr1, addr2, polyTraitCode});
   
-  const url = '/api/ee/graph/polyrope/search?address1=' + encodeURIComponent(addr1) + '&address2=' + encodeURIComponent(addr2) + '&polytraitcode=' + encodeURIComponent(polyTraitCode);
+  const url = '/api/triplet/graph/polyrope/search?address1=' + encodeURIComponent(addr1) + '&address2=' + encodeURIComponent(addr2) + '&polytraitcode=' + encodeURIComponent(polyTraitCode);
   console.log('Request URL:', url);
   
   fetch(url)

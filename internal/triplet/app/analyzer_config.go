@@ -60,9 +60,9 @@ func ProductionConfig(name string) *EOAAnalyzerConfig {
 		MaxProcessingTime:   200_000_000,    // 200ms in nanoseconds
 		StatsInterval:       60_000_000_000, // 60s in nanoseconds
 		HealthCheckInterval: 30_000_000_000, // 30s in nanoseconds
-		IsolatedDBPath:      "data/ee",
-		GraphDBPath:         "data/ee/graph",
-		PendingDBPath:       "data/ee/pending",
+		IsolatedDBPath:      "data/triplet",
+		GraphDBPath:         "data/triplet/graph",
+		PendingDBPath:       "data/triplet/pending",
 		AutoCleanup:         false,
 		ResultReporting:     false,
 	}
@@ -78,19 +78,19 @@ func TestingConfig(name string) *EOAAnalyzerConfig {
 		MaxProcessingTime:   100_000_000,    // 100ms in nanoseconds
 		StatsInterval:       5_000_000_000,  // 5s in nanoseconds
 		HealthCheckInterval: 10_000_000_000, // 10s in nanoseconds
-		IsolatedDBPath:      "test_data/ee",
-		GraphDBPath:         "test_data/ee/graph",
-		PendingDBPath:       "test_data/ee/pending",
+		IsolatedDBPath:      "test_data/triplet",
+		GraphDBPath:         "test_data/triplet/graph",
+		PendingDBPath:       "test_data/triplet/pending",
 		AutoCleanup:         true,
 		ResultReporting:     true,
 	}
 }
 
 // AnalyzerFactory 분석기 팩토리 함수
-type AnalyzerFactory func(config *EOAAnalyzerConfig) (EOAAnalyzer, error)
+type AnalyzerFactory func(config *EOAAnalyzerConfig) (TripletAnalyzer, error)
 
 // CreateAnalyzer 설정에 따라 적절한 분석기 생성
-func CreateAnalyzer(config *EOAAnalyzerConfig, ctx context.Context) (EOAAnalyzer, error) {
+func CreateAnalyzer(config *EOAAnalyzerConfig, ctx context.Context) (TripletAnalyzer, error) {
 	switch config.Mode {
 	case ProductionMode:
 		return NewProductionEOAAnalyzer(config, ctx)

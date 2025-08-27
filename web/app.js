@@ -8,12 +8,12 @@ class ChainAnalyzerDashboard {
             maxErrors: 5,
             endpoints: {
                 system: '/health',
-                ee: {
-                    health: '/ee/health',
-                    statistics: '/ee/statistics', 
-                    channel: '/ee/channel-status',
-                    window: '/ee/dual-manager/window-stats',
-                    graph: '/ee/graph/stats'
+                triplet: {
+                    health: '/triplet/health',
+                    statistics: '/triplet/statistics', 
+                    channel: '/triplet/channel-status',
+                    window: '/triplet/dual-manager/window-stats',
+                    graph: '/triplet/graph/stats'
                 }
             }
         };
@@ -57,7 +57,7 @@ class ChainAnalyzerDashboard {
             
             await Promise.all([
                 this.updateSystemStatus(),
-                this.updateEEModule()
+                this.updateTripletModule()
             ]);
             
             this.onUpdateSuccess();
@@ -76,15 +76,15 @@ class ChainAnalyzerDashboard {
         this.updateStatusIndicator('server-health', serverHealthy);
         this.updateElement('module-count', Object.keys(data.modules || {}).length);
         
-        if (data.modules?.EE?.statistics?.uptime_seconds) {
+        if (data.modules?.Triplet?.statistics?.uptime_seconds) {
             this.updateElement('system-uptime', 
-                this.formatUptime(data.modules.EE.statistics.uptime_seconds));
+                this.formatUptime(data.modules.Triplet.statistics.uptime_seconds));
         }
     }
 
-    async updateEEModule() {
+    async updateTripletModule() {
         await Promise.all([
-            this.updateEEBasicStatus(),
+            this.updateTripletBasicStatus(),
             this.updateAnalyzerStats(),
             this.updateChannelStatus(), 
             this.updateWindowStats(),
@@ -92,24 +92,24 @@ class ChainAnalyzerDashboard {
         ]);
     }
 
-    // === EE 모듈 업데이트 메소드들 ===
-    async updateEEBasicStatus() {
-        const healthData = await this.fetchJSON(this.config.endpoints.ee.health);
-        const statsData = await this.fetchJSON(this.config.endpoints.ee.statistics);
+    // === Triplet 모듈 업데이트 메소드들 ===
+    async updateTripletBasicStatus() {
+        const healthData = await this.fetchJSON(this.config.endpoints.triplet.health);
+        const statsData = await this.fetchJSON(this.config.endpoints.triplet.statistics);
         
-        this.updateStatusIndicator('ee-health', healthData.healthy);
-        this.updateElement('ee-processed', this.formatNumber(statsData.total_processed || 0));
+        this.updateStatusIndicator('triplet-health', healthData.healthy);
+        this.updateElement('triplet-processed', this.formatNumber(statsData.total_processed || 0));
         
         const successRate = this.calculateSuccessRate(statsData);
-        this.updateElement('ee-success-rate', successRate + '%');
+        this.updateElement('triplet-success-rate', successRate + '%');
         
         const tps = this.calculateTPS(statsData);
-        this.updateElement('ee-tps', tps);
+        this.updateElement('triplet-tps', tps);
     }
 
     async updateAnalyzerStats() {
         try {
-            const stats = await this.fetchJSON(this.config.endpoints.ee.statistics);
+            const stats = await this.fetchJSON(this.config.endpoints.triplet.statistics);
             
             const statsItems = [
                 { label: 'Mode', value: stats.mode || 'N/A' },
@@ -130,7 +130,7 @@ class ChainAnalyzerDashboard {
 
     async updateChannelStatus() {
         try {
-            const data = await this.fetchJSON(this.config.endpoints.ee.channel);
+            const data = await this.fetchJSON(this.config.endpoints.triplet.channel);
             const { usage = 0, capacity = 1, usage_percent = 0 } = data;
             
             const statsItems = [
@@ -153,7 +153,7 @@ class ChainAnalyzerDashboard {
 
     async updateWindowStats() {
         try {
-            const windowData = await this.fetchJSON(this.config.endpoints.ee.window);
+            const windowData = await this.fetchJSON(this.config.endpoints.triplet.window);
             
             const statsItems = [
                 { label: 'Active Buckets', value: windowData.active_buckets || 0 },
@@ -173,7 +173,7 @@ class ChainAnalyzerDashboard {
 
     async updateGraphStatus() {
         try {
-            const data = await this.fetchJSON(this.config.endpoints.ee.graph);
+            const data = await this.fetchJSON(this.config.endpoints.triplet.graph);
             
             const statsItems = [
                 { 

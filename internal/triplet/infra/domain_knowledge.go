@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	localdomain "github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/domain"
+	localdomain "github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
 

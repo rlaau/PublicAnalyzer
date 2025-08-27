@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	sharedDomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )

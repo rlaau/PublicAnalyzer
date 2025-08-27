@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/app"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/app"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/infra"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	txFeeder "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/app"
 	feederDomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/domain"
@@ -67,7 +67,7 @@ func main() {
 	}()
 
 	// TxGenerator 설정 및 시작
-	cexRepo := infra.NewFileCEXRepository("internal/ee/cex.txt")
+	cexRepo := infra.NewFileCEXRepository("internal/triplet/cex.txt")
 	cexSet, err := cexRepo.LoadCEXSet()
 	if err != nil {
 		log.Printf("⚠️ Failed to load CEX set: %v", err)
@@ -86,7 +86,7 @@ func main() {
 	txGenerator := txFeeder.GetRawTxFeeder(genConfig, cexSet)
 
 	// 모의 입금 주소 로드 (선택사항)
-	if err := txGenerator.LoadMockDepositAddresses("internal/ee/mockedAndHiddenDepositAddress.txt"); err != nil {
+	if err := txGenerator.LoadMockDepositAddresses("internal/triplet/mockedAndHiddenDepositAddress.txt"); err != nil {
 		log.Printf("⚠️ Failed to load mock deposit addresses: %v (continuing...)", err)
 	}
 

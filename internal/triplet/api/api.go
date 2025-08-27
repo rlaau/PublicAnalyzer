@@ -7,18 +7,18 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/app"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 )
 
-// EEAPIHandler EE Analyzer API 핸들러
-type EEAPIHandler struct {
-	analyzer app.EOAAnalyzer
+// TripletAPIHandler Triplet Analyzer API 핸들러
+type TripletAPIHandler struct {
+	analyzer app.TripletAnalyzer
 }
 
-// NewEEAPIHandler EE API 핸들러 생성
-func NewEEAPIHandler(analyzer app.EOAAnalyzer) *EEAPIHandler {
-	return &EEAPIHandler{
+// NewTripletAPIHandler Triplet API 핸들러 생성
+func NewTripletAPIHandler(analyzer app.TripletAnalyzer) *TripletAPIHandler {
+	return &TripletAPIHandler{
 		analyzer: analyzer,
 	}
 }
@@ -26,14 +26,14 @@ func NewEEAPIHandler(analyzer app.EOAAnalyzer) *EEAPIHandler {
 // RegisterRoutes ModuleRegistrar 인터페이스 구현
 // 페이지 라우팅: ui/* (HTML 페이지 서빙)
 // API 라우팅: api/* (JSON API 응답)
-func (h *EEAPIHandler) RegisterRoutes(router *chi.Mux) error {
+func (h *TripletAPIHandler) RegisterRoutes(router *chi.Mux) error {
 	// Get absolute path to web directory
 	rootPath := computation.FindProjectRootPath()
 	webDir := filepath.Join(rootPath, "web")
 
 	// API 라우팅 - JSON API 응답
-	router.Route("/api/ee", func(r chi.Router) {
-		// EE Analyzer 상태 조회 엔드포인트들
+	router.Route("/api/triplet", func(r chi.Router) {
+		// Triplet Analyzer 상태 조회 엔드포인트들
 		r.Get("/statistics", h.handleGetStatistics)
 		r.Get("/health", h.handleHealthCheck)
 		r.Get("/channel-status", h.handleChannelStatus)
@@ -48,96 +48,96 @@ func (h *EEAPIHandler) RegisterRoutes(router *chi.Mux) error {
 		r.Get("/graph/trait", h.handleGraphByTrait) // ?code=<traitCode>
 		r.Get("/graph/rope", h.handleGraphByRope)   // ?id=<ropeId>
 		r.Get("/graph/stats", h.handleGraphStats)
-		
+
 		// 로프 메타데이터 엔드포인트
 		r.Get("/rope-info", h.handleRopeInfo) // ?id=<ropeId>
-		
+
 		// PolyTrait 관련 엔드포인트들
 		r.Get("/polytrait/legend", h.handlePolyTraitLegend) // PolyTrait 범례 정보
-		r.Get("/polyrope/search", h.handlePolyRopeSearch) // ?address1=<addr>&address2=<addr>&polytraitcode=<code>
+		r.Get("/polyrope/search", h.handlePolyRopeSearch)   // ?address1=<addr>&address2=<addr>&polytraitcode=<code>
 	})
-	router.Route("/api/ee/graph", func(r chi.Router) {
-		// GET /api/ee/graph/default
+	router.Route("/api/triplet/graph", func(r chi.Router) {
+		// GET /api/triplet/graph/default
 		r.Get("/default", h.handleGraphDefault)
 
-		// GET /api/ee/graph/expand?vertex=0x...&depth=1
+		// GET /api/triplet/graph/expand?vertex=0x...&depth=1
 		r.Get("/expand", h.handleGraphExpand)
 
-		// GET /api/ee/graph/trait/{code}
+		// GET /api/triplet/graph/trait/{code}
 		r.Get("/trait/{code}", h.handleGraphByTrait)
 
-		// GET /api/ee/graph/rope/{id}
+		// GET /api/triplet/graph/rope/{id}
 		r.Get("/rope/{id}", h.handleGraphByRope)
 
-		// GET /api/ee/graph/stats
+		// GET /api/triplet/graph/stats
 		r.Get("/stats", h.handleGraphStats)
-		
-		// GET /api/ee/graph/rope-info/{id}
+
+		// GET /api/triplet/graph/rope-info/{id}
 		r.Get("/rope-info/{id}", h.handleRopeInfo)
-		
+
 		// PolyTrait 관련 엔드포인트들
 		r.Get("/polytrait/legend", h.handlePolyTraitLegend)
 		r.Get("/polyrope/search", h.handlePolyRopeSearch)
 	})
 	// 페이지 라우팅 - HTML 페이지 서빙
-	router.Route("/ui/ee", func(r chi.Router) {
-		// EE 모듈 메인 페이지
+	router.Route("/ui/triplet", func(r chi.Router) {
+		// Triplet 모듈 메인 페이지
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-			http.ServeFile(w, r, filepath.Join(webDir, "ee", "index.html"))
+			http.ServeFile(w, r, filepath.Join(webDir, "triplet", "index.html"))
 		})
 		r.Get("/dashboard", func(w http.ResponseWriter, r *http.Request) {
-			http.ServeFile(w, r, filepath.Join(webDir, "ee", "index.html"))
+			http.ServeFile(w, r, filepath.Join(webDir, "triplet", "index.html"))
 		})
 
-		// 향후 추가될 EE 모듈 서브페이지들
+		// 향후 추가될 Triplet 모듈 서브페이지들
 		r.Get("/transactions", func(w http.ResponseWriter, r *http.Request) {
 			// TODO: 거래 분석 페이지 구현
-			http.ServeFile(w, r, filepath.Join(webDir, "ee", "index.html")) // 임시로 메인 페이지 서빙
+			http.ServeFile(w, r, filepath.Join(webDir, "triplet", "index.html")) // 임시로 메인 페이지 서빙
 		})
 		r.Get("/graph", func(w http.ResponseWriter, r *http.Request) {
 			// TODO: 그래프 조회 페이지 구현
-			http.ServeFile(w, r, filepath.Join(webDir, "ee", "index.html")) // 임시로 메인 페이지 서빙
+			http.ServeFile(w, r, filepath.Join(webDir, "triplet", "index.html")) // 임시로 메인 페이지 서빙
 		})
 		r.Get("/debug", func(w http.ResponseWriter, r *http.Request) {
 			// TODO: 디버그 도구 페이지 구현
-			http.ServeFile(w, r, filepath.Join(webDir, "ee", "index.html")) // 임시로 메인 페이지 서빙
+			http.ServeFile(w, r, filepath.Join(webDir, "triplet", "index.html")) // 임시로 메인 페이지 서빙
 		})
 	})
 
 	// UI 페이지 (정적 파일 서빙; webDir/ee/graph/*.html 가정)
-	router.Route("/ui/ee/graph", func(r chi.Router) {
+	router.Route("/ui/triplet/graph", func(r chi.Router) {
 		// 부모(Background)
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-			http.ServeFile(w, r, filepath.Join(webDir, "ee", "graph", "index.html"))
+			http.ServeFile(w, r, filepath.Join(webDir, "triplet", "graph", "index.html"))
 		})
 		// 자식(Frame/Sigma)
 		r.Get("/frame", func(w http.ResponseWriter, r *http.Request) {
-			http.ServeFile(w, r, filepath.Join(webDir, "ee", "graph", "frame.html"))
+			http.ServeFile(w, r, filepath.Join(webDir, "triplet", "graph", "frame.html"))
 		})
 	})
 
 	// 역호환성을 위한 기존 API 엔드포인트 리다이렉트
-	router.Get("/ee/statistics", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/api/ee/statistics", http.StatusMovedPermanently)
+	router.Get("/triplet/statistics", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/api/triplet/statistics", http.StatusMovedPermanently)
 	})
-	router.Get("/ee/health", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/api/ee/health", http.StatusMovedPermanently)
+	router.Get("/triplet/health", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/api/triplet/health", http.StatusMovedPermanently)
 	})
-	router.Get("/ee/channel-status", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/api/ee/channel-status", http.StatusMovedPermanently)
+	router.Get("/triplet/channel-status", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/api/triplet/channel-status", http.StatusMovedPermanently)
 	})
-	router.Get("/ee/dual-manager/window-stats", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/api/ee/dual-manager/window-stats", http.StatusMovedPermanently)
+	router.Get("/triplet/dual-manager/window-stats", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/api/triplet/dual-manager/window-stats", http.StatusMovedPermanently)
 	})
-	router.Get("/ee/graph/stats", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/api/ee/graph/stats", http.StatusMovedPermanently)
+	router.Get("/triplet/graph/stats", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/api/triplet/graph/stats", http.StatusMovedPermanently)
 	})
 
 	return nil
 }
 
 // handleGetStatistics 분석기 통계 조회
-func (h *EEAPIHandler) handleGetStatistics(w http.ResponseWriter, r *http.Request) {
+func (h *TripletAPIHandler) handleGetStatistics(w http.ResponseWriter, r *http.Request) {
 	if h.analyzer == nil {
 		writeJSONResponse(w, map[string]any{
 			"processed_transactions": 0, "success_rate": 0.0, "tps": 0.0,
@@ -167,7 +167,7 @@ func (h *EEAPIHandler) handleGetStatistics(w http.ResponseWriter, r *http.Reques
 			"success_rate":           0.0,
 			"tps":                    0.0,
 			"status":                 "analyzer_not_initialized",
-			"message":                "EE Analyzer is not initialized",
+			"message":                "Triplet Analyzer is not initialized",
 		}
 	} else {
 		stats = h.analyzer.GetStatistics()
@@ -181,7 +181,7 @@ func (h *EEAPIHandler) handleGetStatistics(w http.ResponseWriter, r *http.Reques
 }
 
 // handleHealthCheck 헬스 체크
-func (h *EEAPIHandler) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
+func (h *TripletAPIHandler) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -200,7 +200,7 @@ func (h *EEAPIHandler) handleHealthCheck(w http.ResponseWriter, r *http.Request)
 
 	response := map[string]interface{}{
 		"healthy": isHealthy,
-		"service": "ee-analyzer",
+		"service": "triplet-analyzer",
 		"status":  status,
 	}
 
@@ -213,7 +213,7 @@ func (h *EEAPIHandler) handleHealthCheck(w http.ResponseWriter, r *http.Request)
 }
 
 // handleChannelStatus 채널 상태 조회
-func (h *EEAPIHandler) handleChannelStatus(w http.ResponseWriter, r *http.Request) {
+func (h *TripletAPIHandler) handleChannelStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -241,7 +241,7 @@ func (h *EEAPIHandler) handleChannelStatus(w http.ResponseWriter, r *http.Reques
 }
 
 // handleWindowStats DualManager 윈도우 통계 조회
-func (h *EEAPIHandler) handleWindowStats(w http.ResponseWriter, r *http.Request) {
+func (h *TripletAPIHandler) handleWindowStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -261,7 +261,7 @@ func (h *EEAPIHandler) handleWindowStats(w http.ResponseWriter, r *http.Request)
 }
 
 // handleGraphStats 그래프 DB 통계 조회
-func (h *EEAPIHandler) handleGraphStats(w http.ResponseWriter, r *http.Request) {
+func (h *TripletAPIHandler) handleGraphStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -306,7 +306,7 @@ func writeErrorResponse(w http.ResponseWriter, message string, statusCode int) {
 
 	response := map[string]string{
 		"error":   message,
-		"service": "ee-analyzer",
+		"service": "triplet-analyzer",
 	}
 
 	json.NewEncoder(w).Encode(response)

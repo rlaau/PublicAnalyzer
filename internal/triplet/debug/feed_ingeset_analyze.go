@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/api"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/app"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/api"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	txFeeder "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/app"
@@ -108,12 +108,12 @@ func main() {
 	fmt.Println("\n4️⃣ Running simplified pipeline test with API server...")
 	monitoringServer := server.NewServer(":8080")
 	monitoringServer.SetupBasicRoutes()
-	// EE Analyzer API 등록
-	eeAPI := api.NewEEAPIHandler(analyzer)
-	if err := monitoringServer.RegisterModule(eeAPI); err != nil {
-		fmt.Printf("   ❌ Failed to register EE API: %v\n", err)
+	// Triplet Analyzer API 등록
+	tripletAPI := api.NewTripletAPIHandler(analyzer)
+	if err := monitoringServer.RegisterModule(tripletAPI); err != nil {
+		fmt.Printf("   ❌ Failed to register Triplet API: %v\n", err)
 	} else {
-		fmt.Printf("   ✅ EE Analyzer API registered successfully\n")
+		fmt.Printf("   ✅ Triplet Analyzer API registered successfully\n")
 	}
 
 	//*세팅 끝.본격적으로 시작하는 파트
@@ -202,18 +202,18 @@ func printServerInfo() {
 	fmt.Println("   📍 Available endpoints (Chi Router):")
 	fmt.Println("   💡 API Endpoints (JSON responses):")
 	fmt.Println("   - GET http://localhost:8080/api/health             - Server health")
-	fmt.Println("   - GET http://localhost:8080/api/ee/statistics      - EE Analyzer statistics")
-	fmt.Println("   - GET http://localhost:8080/api/ee/health          - EE Analyzer health")
-	fmt.Println("   - GET http://localhost:8080/api/ee/channel-status  - EE Channel status")
-	fmt.Println("   - GET http://localhost:8080/api/ee/dual-manager/window-stats - Window statistics")
-	fmt.Println("   - GET http://localhost:8080/api/ee/graph/stats     - Graph DB statistics")
+	fmt.Println("   - GET http://localhost:8080/api/triplet/statistics      - Triplet Analyzer statistics")
+	fmt.Println("   - GET http://localhost:8080/api/triplet/health          - Triplet Analyzer health")
+	fmt.Println("   - GET http://localhost:8080/api/triplet/channel-status  - Triplet Channel status")
+	fmt.Println("   - GET http://localhost:8080/api/triplet/dual-manager/window-stats - Window statistics")
+	fmt.Println("   - GET http://localhost:8080/api/triplet/graph/stats     - Graph DB statistics")
 	fmt.Println("   🌐 UI Endpoints (HTML pages):")
 	fmt.Println("   - GET http://localhost:8080/ui/dashboard           - Main Dashboard")
-	fmt.Println("   - GET http://localhost:8080/ui/ee/                 - EE Module Page")
+	fmt.Println("   - GET http://localhost:8080/ui/triplet/            - Triplet Module Page")
 	fmt.Println("   - GET http://localhost:8080/ui/cce/                - CCE Module Page")
 	fmt.Println("   🔄 Legacy Redirects (for backward compatibility):")
 	fmt.Println("   - GET http://localhost:8080/health → /api/health")
-	fmt.Println("   - GET http://localhost:8080/ee/* → /api/ee/*")
+	fmt.Println("   - GET http://localhost:8080/triplet/* → /api/triplet/*")
 	fmt.Println("   - GET http://localhost:8080/ → /ui/dashboard")
 }
 
@@ -293,7 +293,7 @@ func resetIsolatedEnvironmentPaths(cfg *IsolatedPathConfig) error {
 }
 
 // runSimplifiedMonitoring TPS 모니터링 포함
-func runSimplifiedMonitoring(generator *txFeeder.TxFeeder, analyzer app.EOAAnalyzer, ctx context.Context) {
+func runSimplifiedMonitoring(generator *txFeeder.TxFeeder, analyzer app.TripletAnalyzer, ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -322,7 +322,7 @@ func runSimplifiedMonitoring(generator *txFeeder.TxFeeder, analyzer app.EOAAnaly
 }
 
 // printSimplifiedResults 간소화된 결과 출력
-func printSimplifiedResults(generator *txFeeder.TxFeeder, analyzer app.EOAAnalyzer) {
+func printSimplifiedResults(generator *txFeeder.TxFeeder, analyzer app.TripletAnalyzer) {
 	stats := generator.GetPipelineStats()
 	analyzerStats := analyzer.GetStatistics()
 
@@ -337,7 +337,7 @@ func printSimplifiedResults(generator *txFeeder.TxFeeder, analyzer app.EOAAnalyz
 }
 
 // runDeterministicMonitoring TxDefineLoader용 모니터링
-func runDeterministicMonitoring(loader *txFeeder.TxDefineLoader, analyzer app.EOAAnalyzer, ctx context.Context) {
+func runDeterministicMonitoring(loader *txFeeder.TxDefineLoader, analyzer app.TripletAnalyzer, ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -369,7 +369,7 @@ func runDeterministicMonitoring(loader *txFeeder.TxDefineLoader, analyzer app.EO
 }
 
 // printDeterministicResults TxDefineLoader용 결과 출력
-func printDeterministicResults(loader *txFeeder.TxDefineLoader, analyzer app.EOAAnalyzer) {
+func printDeterministicResults(loader *txFeeder.TxDefineLoader, analyzer app.TripletAnalyzer) {
 	stats := loader.GetPipelineStats()
 	analyzerStats := analyzer.GetStatistics()
 	graphStructure := loader.GetGraphStructure()
@@ -399,7 +399,7 @@ func printDeterministicResults(loader *txFeeder.TxDefineLoader, analyzer app.EOA
 }
 
 // validateDeterministicResults TxDefineLoader 결과 검증
-func validateDeterministicResults(loader *txFeeder.TxDefineLoader, analyzer app.EOAAnalyzer) {
+func validateDeterministicResults(loader *txFeeder.TxDefineLoader, analyzer app.TripletAnalyzer) {
 	fmt.Println("\n🔍 DETERMINISTIC RESULTS VALIDATION")
 	fmt.Println(strings.Repeat("-", 40))
 

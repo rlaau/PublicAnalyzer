@@ -12,15 +12,15 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/infra"
 	ropeapp "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/app"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 )
 
-// EOAAnalyzer 인터페이스 - 테스트용과 프로덕션용 공통 인터페이스
+// TripletAnalyzer 인터페이스 - 테스트용과 프로덕션용 공통 인터페이스
 // ! 두 구현체는 데이터 저장 방식과 생명주기에서만 차이가 있음
-type EOAAnalyzer interface {
+type TripletAnalyzer interface {
 	// 분석기 생명주기 관리
 	Start(ctx context.Context) error
 	Stop() error
@@ -82,13 +82,13 @@ type SimpleAnalyzerStats struct {
 }
 
 // NewProductionEOAAnalyzer 프로덕션용 분석기 생성
-func NewProductionEOAAnalyzer(config *EOAAnalyzerConfig, ctx context.Context) (EOAAnalyzer, error) {
+func NewProductionEOAAnalyzer(config *EOAAnalyzerConfig, ctx context.Context) (TripletAnalyzer, error) {
 	infraStructure := NewInfraByConfig(config, ctx)
 	return newSimpleAnalyzer(config, infraStructure)
 }
 
 // NewTestingEOAAnalyzer 테스트용 분석기 생성
-func NewTestingEOAAnalyzer(config *EOAAnalyzerConfig, ctx context.Context) (EOAAnalyzer, error) {
+func NewTestingEOAAnalyzer(config *EOAAnalyzerConfig, ctx context.Context) (TripletAnalyzer, error) {
 	infraStructure := NewInfraByConfig(config, ctx)
 	return newSimpleAnalyzer(config, infraStructure)
 }

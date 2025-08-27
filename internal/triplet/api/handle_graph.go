@@ -1,4 +1,4 @@
-// internal/ee/api/graph_http.go
+// internal/triplet/api/graph_http.go
 package api
 
 import (
@@ -19,7 +19,7 @@ type graphProvider interface {
 	GetGraphStats() map[string]any
 }
 
-func (h *EEAPIHandler) withGraph(w http.ResponseWriter) (graphProvider, bool) {
+func (h *TripletAPIHandler) withGraph(w http.ResponseWriter) (graphProvider, bool) {
 	if h.analyzer == nil || h.analyzer.GraphDB() == nil {
 		writeErrorResponse(w, "Graph DB not accessible", http.StatusServiceUnavailable)
 		return nil, false
@@ -32,7 +32,7 @@ func (h *EEAPIHandler) withGraph(w http.ResponseWriter) (graphProvider, bool) {
 	return gp, true
 }
 
-func (h *EEAPIHandler) handleGraphDefault(w http.ResponseWriter, r *http.Request) {
+func (h *TripletAPIHandler) handleGraphDefault(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -49,7 +49,7 @@ func (h *EEAPIHandler) handleGraphDefault(w http.ResponseWriter, r *http.Request
 	writeJSONResponse(w, g)
 }
 
-func (h *EEAPIHandler) handleGraphExpand(w http.ResponseWriter, r *http.Request) {
+func (h *TripletAPIHandler) handleGraphExpand(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -71,7 +71,7 @@ func (h *EEAPIHandler) handleGraphExpand(w http.ResponseWriter, r *http.Request)
 	writeJSONResponse(w, g)
 }
 
-func (h *EEAPIHandler) handleGraphByTrait(w http.ResponseWriter, r *http.Request) {
+func (h *TripletAPIHandler) handleGraphByTrait(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -98,7 +98,7 @@ func (h *EEAPIHandler) handleGraphByTrait(w http.ResponseWriter, r *http.Request
 	writeJSONResponse(w, g)
 }
 
-func (h *EEAPIHandler) handleGraphByRope(w http.ResponseWriter, r *http.Request) {
+func (h *TripletAPIHandler) handleGraphByRope(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -135,7 +135,7 @@ func (h *EEAPIHandler) handleGraphByRope(w http.ResponseWriter, r *http.Request)
 	writeJSONResponse(w, g)
 }
 
-func (h *EEAPIHandler) handleRopeInfo(w http.ResponseWriter, r *http.Request) {
+func (h *TripletAPIHandler) handleRopeInfo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -179,7 +179,7 @@ func (h *EEAPIHandler) handleRopeInfo(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *EEAPIHandler) handlePolyTraitLegend(w http.ResponseWriter, r *http.Request) {
+func (h *TripletAPIHandler) handlePolyTraitLegend(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -202,7 +202,7 @@ func (h *EEAPIHandler) handlePolyTraitLegend(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-func (h *EEAPIHandler) handlePolyRopeSearch(w http.ResponseWriter, r *http.Request) {
+func (h *TripletAPIHandler) handlePolyRopeSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return

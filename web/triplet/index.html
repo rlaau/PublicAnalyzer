@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🔍 EE Analyzer Module - ChainAnalyzer</title>
+    <title>🔍 Triplet Analyzer Module - ChainAnalyzer</title>
     <link rel="stylesheet" href="/style.css">
     <style>
         .module-header {
@@ -40,12 +40,12 @@
     <main>
         <!-- 브레드크럼브 네비게이션 -->
         <nav class="breadcrumb">
-            <a href="/ui/dashboard">🏠 홈</a> > <span>🔍 EE Analyzer</span>
+            <a href="/ui/dashboard">🏠 홈</a> > <span>🔍 Triplet Analyzer</span>
         </nav>
 
-        <!-- EE 모듈 헤더 -->
+        <!-- Triplet 모듈 헤더 -->
         <section class="module-header">
-            <h1>🔍 EE Analyzer Module</h1>
+            <h1>🔍 Triplet Analyzer Module</h1>
             <p>EOA-EOA 거래 관계 분석 모듈입니다. 이더리움 외부 소유 계정 간의 거래 패턴을 분석하고 모니터링합니다.</p>
         </section>
 
@@ -117,17 +117,17 @@
                 <div class="feature-card">
                     <h4>💸 Transaction Analysis</h4>
                     <p>EOA 간 거래 패턴 분석</p>
-                    <button onclick="location.href='/ui/ee/transactions'">거래 분석</button>
+                    <button onclick="location.href='/ui/triplet/transactions'">거래 분석</button>
                 </div>
                 <div class="feature-card">
                     <h4>📊 Graph Database</h4>
                     <p>EOA 관계 그래프 조회</p>
-                    <button onclick="location.href='/ui/ee/graph'">그래프 조회</button>
+                    <button onclick="location.href='/ui/triplet/graph'">그래프 조회</button>
                 </div>
                 <div class="feature-card">
                     <h4>🔍 Debug Tools</h4>
                     <p>모듈 디버깅 도구</p>
-                    <button onclick="location.href='/ui/ee/debug'">디버그 도구</button>
+                    <button onclick="location.href='/ui/triplet/debug'">디버그 도구</button>
                 </div>
             </div>
         </section>
@@ -136,34 +136,34 @@
         <section class="api-section">
             <h2>🔌 EE API Endpoints</h2>
             <div class="api-grid">
-                <a href="/api/ee/health" target="_blank" class="api-link">
+                <a href="/api/triplet/health" target="_blank" class="api-link">
                     <div class="api-card">
                         <h4>EE Health</h4>
-                        <p>/api/ee/health</p>
+                        <p>/api/triplet/health</p>
                     </div>
                 </a>
-                <a href="/api/ee/statistics" target="_blank" class="api-link">
+                <a href="/api/triplet/statistics" target="_blank" class="api-link">
                     <div class="api-card">
                         <h4>EE Statistics</h4>
-                        <p>/api/ee/statistics</p>
+                        <p>/api/triplet/statistics</p>
                     </div>
                 </a>
-                <a href="/api/ee/channel-status" target="_blank" class="api-link">
+                <a href="/api/triplet/channel-status" target="_blank" class="api-link">
                     <div class="api-card">
                         <h4>Channel Status</h4>
-                        <p>/api/ee/channel-status</p>
+                        <p>/api/triplet/channel-status</p>
                     </div>
                 </a>
-                <a href="/api/ee/dual-manager/window-stats" target="_blank" class="api-link">
+                <a href="/api/triplet/dual-manager/window-stats" target="_blank" class="api-link">
                     <div class="api-card">
                         <h4>Window Stats</h4>
-                        <p>/api/ee/dual-manager/window-stats</p>
+                        <p>/api/triplet/dual-manager/window-stats</p>
                     </div>
                 </a>
-                <a href="/api/ee/graph/stats" target="_blank" class="api-link">
+                <a href="/api/triplet/graph/stats" target="_blank" class="api-link">
                     <div class="api-card">
                         <h4>Graph Stats</h4>
-                        <p>/api/ee/graph/stats</p>
+                        <p>/api/triplet/graph/stats</p>
                     </div>
                 </a>
             </div>
@@ -192,7 +192,7 @@
         }
 
         function updateEEHealth() {
-            fetch('/api/ee/health')
+            fetch('/api/triplet/health')
                 .then(response => response.json())
                 .then(data => {
                     const healthElement = document.getElementById('ee-health');
@@ -210,7 +210,7 @@
         }
 
         function updateEEStatistics() {
-            fetch('/api/ee/statistics')
+            fetch('/api/triplet/statistics')
                 .then(response => response.json())
                 .then(data => {
                     if (data.processed_transactions !== undefined) {
@@ -246,7 +246,7 @@
         }
 
         function updateChannelStatus() {
-            fetch('/api/ee/channel-status')
+            fetch('/api/triplet/channel-status')
                 .then(response => response.json())
                 .then(data => {
                     const statusElement = document.getElementById('channel-status');
@@ -276,7 +276,7 @@
         }
 
         function updateWindowStats() {
-            fetch('/api/ee/dual-manager/window-stats')
+            fetch('/api/triplet/dual-manager/window-stats')
                 .then(response => response.json())
                 .then(data => {
                     const windowElement = document.getElementById('window-stats');
@@ -301,7 +301,7 @@
         }
 
         function updateGraphStatus() {
-            fetch('/api/ee/graph/stats')
+            fetch('/api/triplet/graph/stats')
                 .then(response => response.json())
                 .then(data => {
                     const graphElement = document.getElementById('graph-status');

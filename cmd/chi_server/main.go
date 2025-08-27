@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/cce/api"
-	eeapi "github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/api"
+	tripletapi "github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/api"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server"
 )
 
@@ -26,11 +26,11 @@ func main() {
 	// 기본 라우트 설정
 	srv.SetupBasicRoutes()
 
-	// EE 모듈 등록 (실제 분석기는 개발 중이므로 nil 전달)
-	// TODO: 실제 환경에서는 적절한 EE analyzer 인스턴스를 생성해야 함
-	eeHandler := eeapi.NewEEAPIHandler(nil) // 임시로 nil 전달
-	if err := srv.RegisterModule(eeHandler); err != nil {
-		log.Fatalf("Failed to register EE module: %v", err)
+	// Triplet 모듈 등록 (실제 분석기는 개발 중이므로 nil 전달)
+	// TODO: 실제 환경에서는 적절한 Triplet analyzer 인스턴스를 생성해야 함
+	tripletHandler := tripletapi.NewTripletAPIHandler(nil) // 임시로 nil 전달
+	if err := srv.RegisterModule(tripletHandler); err != nil {
+		log.Fatalf("Failed to register Triplet module: %v", err)
 	}
 
 	// CCE 모듈 등록 (개발 중)
@@ -43,10 +43,10 @@ func main() {
 	go func() {
 		log.Printf("🚀 ChainAnalyzer Server starting on %s", addr)
 		log.Printf("📊 Dashboard: http://localhost%s/ui/dashboard", addr)
-		log.Printf("🔍 EE Module: http://localhost%s/ui/ee/", addr)
+		log.Printf("🔍 Triplet Module: http://localhost%s/ui/triplet/", addr)
 		log.Printf("🏢 CCE Module: http://localhost%s/ui/cce/", addr)
 		log.Printf("🔌 API Health: http://localhost%s/api/health", addr)
-		
+
 		if err := srv.Start(); err != nil {
 			log.Fatalf("Server failed to start: %v", err)
 		}
@@ -70,25 +70,25 @@ func main() {
 	log.Println("✅ Server exited gracefully")
 }
 
-// mockEEAnalyzer 테스트용 간단한 EE 분석기 목 (미사용, 참고용)
-type mockEEAnalyzer struct{}
+// mockTripletAnalyzer 테스트용 간단한 Triplet 분석기 목 (미사용, 참고용)
+type mockTripletAnalyzer struct{}
 
-func (m *mockEEAnalyzer) GetStatistics() map[string]any {
+func (m *mockTripletAnalyzer) GetStatistics() map[string]any {
 	return map[string]any{
 		"processed_transactions": 12345,
-		"success_rate":          0.987,
-		"tps":                   156.7,
+		"success_rate":           0.987,
+		"tps":                    156.7,
 	}
 }
 
-func (m *mockEEAnalyzer) IsHealthy() bool {
+func (m *mockTripletAnalyzer) IsHealthy() bool {
 	return true
 }
 
-func (m *mockEEAnalyzer) GetChannelStatus() (int, int) {
+func (m *mockTripletAnalyzer) GetChannelStatus() (int, int) {
 	return 75, 100 // 75/100 사용량
 }
 
-func (m *mockEEAnalyzer) GraphDB() any {
+func (m *mockTripletAnalyzer) GraphDB() any {
 	return "mock-graphdb"
 }

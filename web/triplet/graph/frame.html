@@ -753,21 +753,45 @@
       }
     }
 
-    // 룰 하이라이팅 처리 (노드)
+    // 룰 하이라이팅 처리 (노드) - 노드의 모든 Rule 확인
     if (currentRuleHighlight) {
       const ruleId = currentRuleHighlight.id;
       const processedColor = currentRuleHighlight.color;
       
+      console.log(`Processing rule highlighting for Rule ID: ${ruleId}`);
+      
       if (DATA && DATA.nodes) {
+        let checkedNodes = 0;
+        let matchedNodes = 0;
+        
         DATA.nodes.forEach(nodeData => {
+          checkedNodes++;
+          
           if (nodeData.traits && Array.isArray(nodeData.traits)) {
-            const hasTargetRule = nodeData.traits.some(trait => String(trait.ruleCode) === String(ruleId));
+            // 노드의 모든 traits에서 ruleCode가 일치하는 것이 있는지 확인
+            let hasTargetRule = false;
+            
+            nodeData.traits.forEach(trait => {
+              const nodeRuleCode = trait.ruleCode;
+              if (nodeRuleCode && String(nodeRuleCode) === String(ruleId)) {
+                hasTargetRule = true;
+                console.log(`Node ${nodeData.id} has matching rule: trait ${trait.traitCode} with ruleCode ${nodeRuleCode}`);
+              }
+            });
             
             if (hasTargetRule && GRAPH.hasNode(nodeData.id)) {
               highlightedNodes.add(nodeData.id);
+              matchedNodes++;
+              console.log(`Added node ${nodeData.id} to highlighted nodes`);
             }
+          } else {
+            console.log(`Node ${nodeData.id} has no traits or traits is not array:`, nodeData.traits);
           }
         });
+        
+        console.log(`Rule highlighting summary: checked ${checkedNodes} nodes, matched ${matchedNodes} nodes for rule ${ruleId}`);
+      } else {
+        console.log('No DATA or DATA.nodes available for rule highlighting');
       }
     }
 
@@ -867,21 +891,37 @@
       });
     }
     
-    // 룰 하이라이팅 색상 적용 (덮어쓰기)
+    // 룰 하이라이팅 색상 적용 (덮어쓰기) - 모든 Rule 확인
     if (currentRuleHighlight) {
       const ruleId = currentRuleHighlight.id;
       const processedColor = currentRuleHighlight.color;
       
+      console.log(`Applying rule highlighting colors for Rule ID: ${ruleId} with color: ${processedColor}`);
+      
       if (DATA && DATA.nodes) {
+        let coloredNodes = 0;
+        
         DATA.nodes.forEach(nodeData => {
           if (nodeData.traits && Array.isArray(nodeData.traits)) {
-            const hasTargetRule = nodeData.traits.some(trait => String(trait.ruleCode) === String(ruleId));
+            // 노드의 모든 traits에서 ruleCode가 일치하는 것이 있는지 확인
+            let hasTargetRule = false;
+            
+            nodeData.traits.forEach(trait => {
+              const nodeRuleCode = trait.ruleCode;
+              if (nodeRuleCode && String(nodeRuleCode) === String(ruleId)) {
+                hasTargetRule = true;
+              }
+            });
             
             if (hasTargetRule && GRAPH.hasNode(nodeData.id)) {
               GRAPH.setNodeAttribute(nodeData.id, 'color', processedColor);
+              coloredNodes++;
+              console.log(`Applied color ${processedColor} to node ${nodeData.id} for rule ${ruleId}`);
             }
           }
         });
+        
+        console.log(`Applied rule highlighting color to ${coloredNodes} nodes for rule ${ruleId}`);
       }
     }
     

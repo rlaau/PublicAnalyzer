@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/api"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/app"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/ee/infra"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/api"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/app"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/infra"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
@@ -75,7 +75,7 @@ const (
 
 // 룰 코드 → 이름 매핑
 var RuleLegend = map[domain.RuleCode]string{
-	RuleUser:     "RuleCustomer",
+	RuleUser:     "RuleUser",
 	RuleDeposit:  "RuleDeposit",
 	RuleCEX:      "RuleCex",
 	RuleCreator:  "RuleCreator",
@@ -86,7 +86,7 @@ var RuleLegend = map[domain.RuleCode]string{
 
 func link(t *testing.T, db RopeDB, a1, a2 shareddomain.Address, trait domain.TraitCode) {
 	t.Helper()
-	cexOrDeposit := uint16(trait)%3 == 0
+	cexOrDeposit := uint16(trait)%2 == 0
 	var rc domain.RuleCode
 	if cexOrDeposit {
 		rc = RuleUser
@@ -198,11 +198,11 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 	}
 	analyzer := &app.SimpleEOAAnalyzer{}
 	analyzer.NullButAddInfra(eoaInfra)
-	eeAPI := api.NewEEAPIHandler(analyzer) // analyzer.GraphDB()가 BadgerRopeDB를 물고 있어야 함
-	if err := monitoringServer.RegisterModule(eeAPI); err != nil {
-		fmt.Printf("   ❌ Failed to register EE API: %v\n", err)
+	tripletAPI := api.NewTripletAPIHandler(analyzer) // analyzer.GraphDB()가 BadgerRopeDB를 물고 있어야 함
+	if err := monitoringServer.RegisterModule(tripletAPI); err != nil {
+		fmt.Printf("   ❌ Failed to register Triplet API: %v\n", err)
 	} else {
-		fmt.Printf("   ✅ EE Analyzer API registered successfully\n")
+		fmt.Printf("   ✅ Triplet Analyzer API registered successfully\n")
 	}
 	go func() {
 		fmt.Printf("   🌐 Starting API server on :8080\n")
