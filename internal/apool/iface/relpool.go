@@ -5,9 +5,9 @@ import (
 	"io"
 )
 
-type CreationPort interface {
+type RelPort interface {
 	Start(ctx context.Context) error
 	io.Closer
 }
 
-type CreationEventMsg any
+type RelMsg any

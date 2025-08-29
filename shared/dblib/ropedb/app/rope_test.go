@@ -177,7 +177,7 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 	relPool := &relapp.RelationPool{
 		RopeRepo: db,
 	}
-	analyzer := &app.SimpleEOAAnalyzer{}
+	analyzer := &app.SimpleTriplet{}
 	analyzer.NullButAddDB(relPool)
 	tripletAPI := api.NewTripletAPIHandler(analyzer) // analyzer.GraphDB()가 BadgerRopeDB를 물고 있어야 함
 	if err := monitoringServer.RegisterModule(tripletAPI); err != nil {

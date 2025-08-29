@@ -117,6 +117,24 @@ func (b *EventBus[T]) Publish(v T) error {
 	b.cv.Signal()
 	return nil
 }
+func (b *EventBus[T]) PublishBatch(vs []T) error {
+	if b.closed.Load() {
+		return errors.New("eventbus: closed")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for !b.stopping && b.capLimit > 0 && len(b.pending)+len(vs) > b.capLimit {
+		b.cv.Wait()
+	}
+	if b.stopping {
+		return errors.New("eventbus: stopping")
+	}
+	b.pending = append(b.pending, vs...)
+	// 한 번만 깨워도 드레인 루프가 계속 처리함
+	b.cv.Signal()
+	return nil
+}
 
 // Dequeue: 단일 소비자 채널
 func (b *EventBus[T]) Dequeue() <-chan T { return b.out }

@@ -12,16 +12,18 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
-	relapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
 	ropeapp "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/app"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 )
 
-// TripletAnalyzer 인터페이스 - 테스트용과 프로덕션용 공통 인터페이스
-// ! 두 구현체는 데이터 저장 방식과 생명주기에서만 차이가 있음
-type TripletAnalyzer interface {
+// CommonTriplet 인터페이스 - 테스트용과 프로덕션용 공통 인터페이스
+// 그냥 최소 구조 정도를 정의한 인터페이스.
+// * 혹시라도 많이 임포트 할 시 꺼내 쓰라고 만든 정도임. 굳이 이 인터페이스 쓸 필요는 없음
+// ! 인터페이스는 쓰는 측에서 정의하는 것
+type CommonTriplet interface {
 	// 분석기 생명주기 관리
 	Start(ctx context.Context) error
 	Stop() error
@@ -37,17 +39,15 @@ type TripletAnalyzer interface {
 	//그래, 맞다. 인터페이스는 이따구로 쓰면 안되지/
 	//근데 이거 고치려면 또 리팩토링 해야함. 또!!!
 	//그건 나중에 하자고.
-	GraphDB() *badger.DB
-	RopeDB() ropeapp.RopeDB
 	GetRopeDBStats() map[string]any
 	//TODO 이딴건 당연히 금지임. 추후 로프DB관련 인터페이스 싹 제거하기
 	// 리소스 관리
 	io.Closer
 }
 
-// SimpleEOAAnalyzer 간단한 EOA 분석기 구현체
+// SimpleTriplet 간단한 EOA 분석기 구현체
 // * 테스트용과 프로덕션용 모두 지원하는 기본 구현
-type SimpleEOAAnalyzer struct {
+type SimpleTriplet struct {
 	// Core domain components
 	dualManager *DualManager
 
@@ -62,13 +62,13 @@ type SimpleEOAAnalyzer struct {
 	batchMode bool // 배치 모드 활성화 여부
 
 	// Configuration
-	config *EOAAnalyzerConfig
+	config *TripletConfig
 
 	// Statistics (thread-safe atomic counters)
 	stats SimpleAnalyzerStats
 
 	infra   infra.TotalEOAAnalyzerInfra
-	relPool *relapp.RelationPool
+	relPool iface.RelPort
 }
 
 // SimpleAnalyzerStats 간단한 분석기 통계
@@ -84,26 +84,25 @@ type SimpleAnalyzerStats struct {
 }
 
 // NewProductionEOAAnalyzer 프로덕션용 분석기 생성
-func NewProductionEOAAnalyzer(config *EOAAnalyzerConfig, ctx context.Context, relPool *relapp.RelationPool) (TripletAnalyzer, error) {
+func NewProductionEOAAnalyzer(config *TripletConfig, ctx context.Context, relPool iface.RelPort) (CommonTriplet, error) {
 	infraStructure := NewInfraByConfig(config, ctx)
 	return newSimpleAnalyzer(config, infraStructure, relPool)
 }
 
 // NewTestingEOAAnalyzer 테스트용 분석기 생성
-func NewTestingEOAAnalyzer(config *EOAAnalyzerConfig, ctx context.Context, relPool *relapp.RelationPool) (TripletAnalyzer, error) {
+func NewTestingEOAAnalyzer(config *TripletConfig, ctx context.Context, relPool iface.RelPort) (CommonTriplet, error) {
 	infraStructure := NewInfraByConfig(config, ctx)
 	return newSimpleAnalyzer(config, infraStructure, relPool)
 }
 
 // newSimpleAnalyzer 공통 분석기 생성 로직
-func newSimpleAnalyzer(config *EOAAnalyzerConfig, infraStructure infra.TotalEOAAnalyzerInfra, relPool *relapp.RelationPool) (*SimpleEOAAnalyzer, error) {
+func newSimpleAnalyzer(config *TripletConfig, infraStructure infra.TotalEOAAnalyzerInfra, relPool iface.RelPort) (*SimpleTriplet, error) {
 	//전체 EOA인프라에서 꺼내 쓰는 형식
 	dualManagerInfra := infra.NewDualManagerInfra(infraStructure.GroundKnowledge, infraStructure.PendingRelationRepo)
 	dualManager, _ := NewDualManager(*dualManagerInfra, relPool)
 
-	log.Printf("🔄 DualManager with pending DB at: %s", config.PendingDBPath)
 	log.Printf("듀얼 매니져 초기화. 현재 cex주소 개수: %d, 예시:%s", len(dualManager.infra.GroundKnowledge.GetCEXAddresses()), dualManager.infra.GroundKnowledge.GetCEXAddresses()[0])
-	analyzer := &SimpleEOAAnalyzer{
+	analyzer := &SimpleTriplet{
 		infra:       infraStructure,
 		dualManager: dualManager,
 		stopChannel: make(chan struct{}),
@@ -117,23 +116,23 @@ func newSimpleAnalyzer(config *EOAAnalyzerConfig, infraStructure infra.TotalEOAA
 
 	log.Printf("✅ Simple EOA Analyzer created: %s", config.Name)
 
-	log.Printf("✅ SimpleAnalyzer의 DB를  RelationPool로 포인팅함")
 	return analyzer, nil
 }
-func (a *SimpleEOAAnalyzer) GraphDB() *badger.DB {
-	if p, ok := a.relPool.RopeRepo.(infra.RawBadgerProvider); ok {
+func (a *SimpleTriplet) GraphDB() *badger.DB {
+	if p, ok := a.relPool.RopeDB().(infra.RawBadgerProvider); ok {
 		return p.RawBadgerDB()
 	}
 	return nil
 }
 
-func (a *SimpleEOAAnalyzer) RopeDB() ropeapp.RopeDB {
-	return a.relPool.RopeRepo
+func (a *SimpleTriplet) RopeDB() ropeapp.RopeDB {
+	return a.relPool.RopeDB()
 }
 
 // Start 분석기 시작
-func (a *SimpleEOAAnalyzer) Start(ctx context.Context) error {
-	log.Printf("🚀 Starting Simple Analyzer: %s", a.config.Name)
+// TODO 추후엔 당연히!!! 배치 컨슈머 아니라 트리 형식으로 받을 것
+func (a *SimpleTriplet) Start(ctx context.Context) error {
+	log.Printf("🚀 Starting Triplet: %s", a.config.Name)
 
 	// Consumer 시작 (배치 모드 or 단건 모드)
 	if a.batchMode && a.infra.BatchConsumer != nil {
@@ -163,7 +162,7 @@ func (a *SimpleEOAAnalyzer) Start(ctx context.Context) error {
 }
 
 // Stop 분석기 중지
-func (a *SimpleEOAAnalyzer) Stop() error {
+func (a *SimpleTriplet) Stop() error {
 	a.stopOnce.Do(func() {
 		close(a.stopChannel)
 	})
@@ -174,7 +173,7 @@ func (a *SimpleEOAAnalyzer) Stop() error {
 // TODO 현재 이 부분에서 스레드 간 성능 저하 발생함. 스레드 1개나 16개나 동일 성능 보임
 // TODO TxJob의 Do()가 서로 경합 발생. 패닉은 아니지만, 암묵적 성능 저하 발생중
 // TODO 문제에 대한 진단 및 추후 개선 방안은 /debug의 upgrade_solution.md에 자세히 적어놨음.
-func (a *SimpleEOAAnalyzer) ProcessTransaction(tx *shareddomain.MarkedTransaction) error {
+func (a *SimpleTriplet) ProcessTransaction(tx *shareddomain.MarkedTransaction) error {
 	job := NewTransactionJob(tx, a, 0) // workerID는 워커풀에서 자동 관리
 	select {
 	case a.infra.TxJobChannel <- job:
@@ -186,7 +185,7 @@ func (a *SimpleEOAAnalyzer) ProcessTransaction(tx *shareddomain.MarkedTransactio
 }
 
 // ProcessTransactions 배치 트랜잭션 처리
-func (a *SimpleEOAAnalyzer) ProcessTransactions(txs []*shareddomain.MarkedTransaction) error {
+func (a *SimpleTriplet) ProcessTransactions(txs []*shareddomain.MarkedTransaction) error {
 	for _, tx := range txs {
 		if err := a.ProcessTransaction(tx); err != nil {
 			continue // 개별 실패는 무시하고 계속 처리
@@ -198,7 +197,7 @@ func (a *SimpleEOAAnalyzer) ProcessTransactions(txs []*shareddomain.MarkedTransa
 // transactionWorker는 이제 워커풀에 의해 대체됨 - 하위 호환성을 위해 주석 처리
 // 실제 작업은 TransactionJob.Do()에서 처리됨
 // batchConsumerWorker 배치 Consumer 워커 (고성능 배치 처리)
-func (a *SimpleEOAAnalyzer) batchConsumerWorker(ctx context.Context) {
+func (a *SimpleTriplet) batchConsumerWorker(ctx context.Context) {
 	defer a.wg.Done()
 
 	log.Printf("🚀 Batch consumer worker started")
@@ -237,7 +236,7 @@ func (a *SimpleEOAAnalyzer) batchConsumerWorker(ctx context.Context) {
 }
 
 // processTransactionParrell 배치 메시지 처리 (고효율)
-func (a *SimpleEOAAnalyzer) processTransactionParrell(messages []kafka.Message[*shareddomain.MarkedTransaction]) {
+func (a *SimpleTriplet) processTransactionParrell(messages []kafka.Message[*shareddomain.MarkedTransaction]) {
 	batchSize := len(messages)
 	processedCount := atomic.LoadInt64(&a.stats.TotalProcessed)
 
@@ -282,7 +281,7 @@ func (a *SimpleEOAAnalyzer) processTransactionParrell(messages []kafka.Message[*
 // 하위 호환성을 위해 삭제
 
 // analyzeTransactionResult 트랜잭션 결과 분석
-func (a *SimpleEOAAnalyzer) analyzeTransactionResult(tx *shareddomain.MarkedTransaction) {
+func (a *SimpleTriplet) analyzeTransactionResult(tx *shareddomain.MarkedTransaction) {
 	isDebug := false
 	depositDetected := false
 
@@ -318,7 +317,7 @@ func (a *SimpleEOAAnalyzer) analyzeTransactionResult(tx *shareddomain.MarkedTran
 }
 
 // statsReporter 주기적 통계 출력
-func (a *SimpleEOAAnalyzer) statsReporter(ctx context.Context) {
+func (a *SimpleTriplet) statsReporter(ctx context.Context) {
 	defer a.wg.Done()
 
 	ticker := time.NewTicker(time.Duration(a.config.StatsInterval))
@@ -337,7 +336,7 @@ func (a *SimpleEOAAnalyzer) statsReporter(ctx context.Context) {
 }
 
 // printStatistics 통계 출력
-func (a *SimpleEOAAnalyzer) printStatistics() {
+func (a *SimpleTriplet) printStatistics() {
 	total := atomic.LoadInt64(&a.stats.TotalProcessed)
 	success := atomic.LoadInt64(&a.stats.SuccessCount)
 	errors := atomic.LoadInt64(&a.stats.ErrorCount)
@@ -370,14 +369,14 @@ func (a *SimpleEOAAnalyzer) printStatistics() {
 			windowStats["active_buckets"], windowStats["pending_relations"])
 	}
 
-	graphStats := a.relPool.RopeRepo.GetGraphStats()
+	graphStats := a.relPool.RopeDB().GetGraphStats()
 	log.Printf("   Graph: %v nodes | %v edges",
 		graphStats["total_nodes"], graphStats["total_edges"])
 
 }
 
 // GetStatistics 통계 반환
-func (a *SimpleEOAAnalyzer) GetStatistics() map[string]any {
+func (a *SimpleTriplet) GetStatistics() map[string]any {
 	return map[string]any{
 		"mode":               string(a.config.Mode),
 		"name":               a.config.Name,
@@ -394,12 +393,12 @@ func (a *SimpleEOAAnalyzer) GetStatistics() map[string]any {
 	}
 }
 
-func (a *SimpleEOAAnalyzer) GetRopeDBStats() map[string]any {
-	return a.relPool.RopeRepo.GetGraphStats()
+func (a *SimpleTriplet) GetRopeDBStats() map[string]any {
+	return a.relPool.RopeDB().GetGraphStats()
 }
 
 // IsHealthy 헬스 상태 체크
-func (a *SimpleEOAAnalyzer) IsHealthy() bool {
+func (a *SimpleTriplet) IsHealthy() bool {
 	total := atomic.LoadInt64(&a.stats.TotalProcessed)
 	errors := atomic.LoadInt64(&a.stats.ErrorCount)
 
@@ -414,12 +413,12 @@ func (a *SimpleEOAAnalyzer) IsHealthy() bool {
 }
 
 // GetChannelStatus 채널 상태 반환
-func (a *SimpleEOAAnalyzer) GetChannelStatus() (int, int) {
+func (a *SimpleTriplet) GetChannelStatus() (int, int) {
 	return len(a.infra.TxJobChannel), cap(a.infra.TxJobChannel)
 }
 
 // shutdown 우아한 종료
-func (a *SimpleEOAAnalyzer) shutdown() error {
+func (a *SimpleTriplet) shutdown() error {
 	log.Printf("🔄 Shutting down: %s", a.config.Name)
 
 	// 워커풀 종료
@@ -457,7 +456,7 @@ func (a *SimpleEOAAnalyzer) shutdown() error {
 		log.Printf("⚠️ Error closing dual manager: %v", err)
 	}
 
-	if err := a.relPool.RopeRepo.Close(); err != nil {
+	if err := a.relPool.RopeDB().Close(); err != nil {
 		log.Printf("⚠️ Error closing graph repository: %v", err)
 	}
 
@@ -471,7 +470,7 @@ func (a *SimpleEOAAnalyzer) shutdown() error {
 }
 
 // printFinalReport 최종 리포트 출력 (테스트 모드용)
-func (a *SimpleEOAAnalyzer) printFinalReport() {
+func (a *SimpleTriplet) printFinalReport() {
 	log.Printf("\n" + strings.Repeat("=", 80))
 	log.Printf("🎯 FINAL REPORT: %s", a.config.Name)
 	log.Printf(strings.Repeat("=", 80))
@@ -506,7 +505,7 @@ func (a *SimpleEOAAnalyzer) printFinalReport() {
 		}
 	}
 
-	graphStats := a.relPool.RopeRepo.GetGraphStats()
+	graphStats := a.relPool.RopeDB().GetGraphStats()
 	log.Printf("\n🗂️  Graph Database State:")
 	for key, value := range graphStats {
 		log.Printf("   %s: %v", key, value)
@@ -516,8 +515,8 @@ func (a *SimpleEOAAnalyzer) printFinalReport() {
 }
 
 // cleanup 테스트 데이터 정리
-func (a *SimpleEOAAnalyzer) cleanup() {
-	if a.config.Mode != TestingMode {
+func (a *SimpleTriplet) cleanup() {
+	if !a.config.Mode.IsTest() {
 		return
 	}
 
@@ -531,12 +530,12 @@ func (a *SimpleEOAAnalyzer) cleanup() {
 }
 
 // GetDualManager DualManager 인스턴스 반환 (API 서버용)
-func (a *SimpleEOAAnalyzer) GetDualManager() *DualManager {
+func (a *SimpleTriplet) GetDualManager() *DualManager {
 	return a.dualManager
 }
 
 // Close io.Closer 인터페이스 구현
-func (a *SimpleEOAAnalyzer) Close() error {
+func (a *SimpleTriplet) Close() error {
 
 	// Batch Consumer 정리
 	if a.infra.BatchConsumer != nil {
@@ -551,6 +550,6 @@ func (a *SimpleEOAAnalyzer) Close() error {
 // TODO 추후 삭제할 것. 어쩌다 프로세스 도중에 DB바꿀 일이 있고, 하필 그게 테스트코드라 일다 놔뒀음
 // TODO 추후 ropeDB테스트 리팩토링 후 제거할 것
 // !!프로덕션 환경에선 절대절대 쓰지 말겄!!!
-func (a *SimpleEOAAnalyzer) NullButAddDB(relPool *relapp.RelationPool) {
+func (a *SimpleTriplet) NullButAddDB(relPool iface.RelPort) {
 	a.relPool = relPool
 }

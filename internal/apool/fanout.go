@@ -1,4 +1,4 @@
-package rel
+package apool
 
 import (
 	"context"
@@ -21,8 +21,8 @@ type TxFanoutManager struct {
 	consumer *kafka.KafkaBatchConsumer[domain.MarkedTransaction]
 
 	// 각 모듈별 eventbus
-	busTriplet  *eventbus.EventBus[domain.MarkedTransaction]
-	busCreation *eventbus.EventBus[domain.MarkedTransaction]
+	busNod *eventbus.EventBus[domain.MarkedTransaction]
+	busRel *eventbus.EventBus[domain.MarkedTransaction]
 
 	stop chan struct{}
 	wg   sync.WaitGroup
@@ -41,23 +41,23 @@ func NewTxFanoutManager(cfg kafka.KafkaBatchConfig, isTest mode.ProcessingMode, 
 
 	// Transaction 분배용 버스들 생성 (tx_fanout 폴더에 저장)
 	rel := func(name string) string {
-		return filepath.Join("relation_pool", "tx_fanout", fmt.Sprintf("%s.jsonl", name))
+		return filepath.Join("analyzer_pool", "tx_fanout", fmt.Sprintf("%s.jsonl", name))
 	}
 
-	busTriplet, err := eventbus.NewWithRoot[domain.MarkedTransaction](root, rel("tx_triplet"), capLimit)
+	busNod, err := eventbus.NewWithRoot[domain.MarkedTransaction](root, rel("tx_nod"), capLimit)
 
-	busCreation, err := eventbus.NewWithRoot[domain.MarkedTransaction](root, rel("tx_creation"), capLimit)
+	busRel, err := eventbus.NewWithRoot[domain.MarkedTransaction](root, rel("tx_rel"), capLimit)
 	if err != nil {
-		busTriplet.Close()
+		busNod.Close()
 		return nil, fmt.Errorf("failed to create CCE tx bus: %w", err)
 	}
 
 	f := &TxFanoutManager{
-		consumer:    kafka.NewKafkaBatchConsumer[domain.MarkedTransaction](cfg),
-		busTriplet:  busTriplet,
-		busCreation: busCreation,
-		stop:        make(chan struct{}),
-		bp:          bp,
+		consumer: kafka.NewKafkaBatchConsumer[domain.MarkedTransaction](cfg),
+		busNod:   busNod,
+		busRel:   busRel,
+		stop:     make(chan struct{}),
+		bp:       bp,
 	}
 	f.wg.Add(1)
 	go f.run()
@@ -111,29 +111,12 @@ func (f *TxFanoutManager) run() {
 
 // 트랜잭션 분배 로직
 func (f *TxFanoutManager) fanoutTransaction(tx domain.MarkedTransaction) {
-	//TODO: 목표는 relation pool이 각 모듈에게 적절한 tx분배하는 것. 현재는 오직 Triplet모듈에만 tx주고 있음. 추후 MarkTransaction기반으로 올바르게 전달할 것.
-
-	// !!!!!!현재는 모든 트랜잭션을 Triplet 모듈에만 전달
-	if err := f.busTriplet.Publish(tx); err != nil {
-		fmt.Printf("[TxFanoutManager] failed to publish to EE: %v\n", err)
+	if err := f.busNod.Publish(tx); err != nil {
+		fmt.Printf("[TxFanoutManager] failed to publish to Nod: %v\n", err)
 	}
-
-	// !!향후 구현될 분배 로직:
-	//TODO 내 경우, 포트 기반 분배
-	// switch {
-	// case tx.TxSyntax[0] == domain.EOAMark && tx.TxSyntax[1] == domain.EOAMark:
-	//     // EOA -> EOA: EE 모듈
-	//     f.busEE.Publish(tx)
-	// case tx.TxSyntax[0] == domain.ContractMark && tx.TxSyntax[1] == domain.ContractMark:
-	//     // Contract -> Contract: CC 모듈
-	//     f.busCC.Publish(tx)
-	// case tx.TxSyntax[0] == domain.ContractMark && tx.TxSyntax[1] == domain.EOAMark:
-	//     // Contract -> EOA: CCE 모듈
-	//     f.busCCE.Publish(tx)
-	// case tx.TxSyntax[0] == domain.EOAMark && tx.TxSyntax[1] == domain.ContractMark:
-	//     // EOA -> Contract: EEC 모듈
-	//     f.busEEC.Publish(tx)
-	// }
+	if err := f.busRel.Publish(tx); err != nil {
+		fmt.Printf("[TxFanoutManager] failed to publish to Rel: %v\n", err)
+	}
 }
 
 // TxFanoutManager Close 메서드
@@ -142,8 +125,8 @@ func (f *TxFanoutManager) Close() error {
 	f.wg.Wait()   // goroutine 합류
 
 	// 자체 관리하는 transaction 버스들 정리
-	f.busTriplet.Close()
-	f.busCreation.Close()
+	f.busNod.Close()
+	f.busRel.Close()
 
 	return f.consumer.Close() // 카프카 리더 닫기
 }

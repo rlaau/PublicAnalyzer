@@ -10,8 +10,11 @@ import (
 	"syscall"
 	"time"
 
+	aapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool"
 	relapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/api"
+	relapi "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/api"
+	reliface "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/iface"
+
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
@@ -38,10 +41,6 @@ func main() {
 	isolatedDir := filepath.Join(testingRootPath, "feed_ingest_ee_test")
 	isolatedPathConfig := &IsolatedPathConfig{
 		RootOfIsolatedDir: isolatedDir,
-		CEXFilePath:       filepath.Join(isolatedDir, "cex.txt"),
-		MockDepositFile:   filepath.Join(isolatedDir, "deposits.txt"),
-		GraphDBPath:       filepath.Join(isolatedDir, "graph"),
-		PendingDBPath:     filepath.Join(isolatedDir, "pending"),
 	}
 	// 테스트 시작 전에 이전 데이터 정리 (삭제 후 생성 로직
 	if err := resetIsolatedEnvironmentPaths(isolatedPathConfig); err != nil {
@@ -63,6 +62,7 @@ func main() {
 		DepositToCexRatio:            50,              // TxDefineLoader에서는 사용하지 않지만 호환성을 위해 유지
 		RandomToDepositRatio:         30,              // TxDefineLoader에서는 사용하지 않지만 호환성을 위해 유지
 	}
+	relClouser := computation.ComputeRelClosure(isolatedDir)
 	//TxDefineLoader의 총 설정
 	txFeederConfig := &txFeeder.TxFeederConfig{
 		GenConfig: txFeederGenConfig,
@@ -71,8 +71,8 @@ func main() {
 		// 고립 환경의 루트를 참고 용으로 받음
 		TargetIsolatedTestingDir: isolatedPathConfig.RootOfIsolatedDir,
 		//고립 환경에서 CEX파일을 복사 후 참조-쓰기 하는 것
-		TargetIsolatedCEXFilePath:         isolatedPathConfig.CEXFilePath,
-		TargetIsolatedMockDepositFilePath: isolatedPathConfig.MockDepositFile,
+		TargetIsolatedCEXFilePath:         relClouser("cex.txt"),
+		TargetIsolatedMockDepositFilePath: relClouser("deposits.txt"),
 
 		BatchMode:    true,                  // 배치 모드 활성화
 		BatchSize:    100,                   // 100개씩 배치 (결정론적이므로 작은 배치)
@@ -85,39 +85,37 @@ func main() {
 	}
 
 	//EOA analyzer 만들기
-	analyzerConfig := &app.EOAAnalyzerConfig{
+	analyzerConfig := &app.TripletConfig{
 		Name:                "Simplified-Pipeline-Analyzer",
-		Mode:                app.TestingMode,
+		Mode:                mode.TestingModeProcess,
 		ChannelBufferSize:   1_000_000,
 		WorkerCount:         1,
 		StatsInterval:       2_000_000_000, // 2초
 		HealthCheckInterval: 3_000_000_000, // 3초
 		//모든 경로는 IsolatedConfiger의 경로를 씀으로써 안전하게 고립된 값만 사용함
-		IsolatedDBPath:  isolatedPathConfig.RootOfIsolatedDir,
-		GraphDBPath:     isolatedPathConfig.GraphDBPath,
-		PendingDBPath:   isolatedPathConfig.PendingDBPath,
-		CEXFilePath:     isolatedPathConfig.CEXFilePath, // 격리된 환경의 CEX 파일 사용
-		AutoCleanup:     false,                          // ←★ 결과 보존 위해 비활성화
+		IsolatedDBPath: isolatedPathConfig.RootOfIsolatedDir,
+
+		AutoCleanup:     false, // ←★ 결과 보존 위해 비활성화
 		ResultReporting: true,
 	}
-	relPool, err := relapp.CreateRelationPoolFrame(mode.TestingModeProcess)
+	apool, err := aapp.CreateAnalzerPoolFrame(mode.TestingModeProcess, nil)
+	relPool, err := relapp.CreateRelationPoolFrame(mode.TestingModeProcess, apool)
 	analyzer, err := app.CreateAnalyzer(analyzerConfig, ctx, relPool)
-	relPool.Register(analyzer, nil, nil)
+	relPool.Register(analyzer, nil)
 	if err != nil {
 		panic("failed to create analyzer")
 	}
 	fmt.Printf("   ✅ Simplified pipeline with API server created\n")
-
+	apool.Register(relPool, nil)
 	// 4. 서버 생성
 	fmt.Println("\n4️⃣ Running simplified pipeline test with API server...")
 	monitoringServer := server.NewServer(":8080")
 	monitoringServer.SetupBasicRoutes()
-	// Triplet Analyzer API 등록
-	tripletAPI := api.NewTripletAPIHandler(analyzer)
-	if err := monitoringServer.RegisterModule(tripletAPI); err != nil {
-		fmt.Printf("   ❌ Failed to register Triplet API: %v\n", err)
+	relAPI := relapi.NewRelPoolAPIHandler(relPool)
+	if err := monitoringServer.RegisterModule(relAPI); err != nil {
+		fmt.Printf("   ❌ Failed to register Relation Pool API: %v\n", err)
 	} else {
-		fmt.Printf("   ✅ Triplet Analyzer API registered successfully\n")
+		fmt.Printf("   ✅ Relation Pool API registered successfully\n")
 	}
 
 	//*세팅 끝.본격적으로 시작하는 파트
@@ -137,29 +135,29 @@ func main() {
 		}
 	}()
 	fmt.Printf("   🔄 TxGenerator started (publishing to Kafka)\n")
-	// 3. EOA Analyzer 시작 (Kafka에서 트랜잭션 받기)
-	analyzerDone := make(chan error, 1)
+
+	tripletDone := make(chan error, 1)
 	go func() {
-		analyzerDone <- analyzer.Start(ctx)
+		tripletDone <- relPool.GetTripletPort().Start(ctx)
 	}()
-	fmt.Printf("   🔄 EOA Analyzer started with Kafka consumer\n")
+	fmt.Printf("   🔄 Triplet started with Kafka consumer\n")
 	// 4. 모니터링 (간소화됨) - TxDefineLoader용
-	go runDeterministicMonitoring(transactionFeeder, analyzer, ctx)
+	go runTripletMonitoring(transactionFeeder, relPool.GetTripletPort(), ctx)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	fmt.Printf("   🎯 Server and analyzer running! Press Ctrl+C to stop...\n")
+	fmt.Printf("   🎯 Server and Triplet running! Press Ctrl+C to stop...\n")
 
 	//*동작 마무리 후 정리 시작. 끝날 떄까지 대기
 	select {
 	case <-ctx.Done():
 		fmt.Printf("   ⏰ Test completed by timeout\n")
-	case err := <-analyzerDone:
+	case err := <-tripletDone:
 		if err != nil {
-			fmt.Printf("   ⚠️ Analyzer stopped with error: %v\n", err)
+			fmt.Printf("   ⚠️ Triplet  stopped with error: %v\n", err)
 		} else {
-			fmt.Printf("   ✅ Analyzer completed successfully\n")
+			fmt.Printf("   ✅ Triplet  completed successfully\n")
 		}
 	case <-sigChan:
 		fmt.Printf("   🛑 Shutdown signal received...\n")
@@ -177,23 +175,23 @@ func main() {
 	transactionFeeder.Stop()
 
 	//*종료 후 결과 보고 - TxDefineLoader용
-	printDeterministicResults(transactionFeeder, analyzer)
-	if err := generateGraphReportWithDB(isolatedPathConfig, analyzer.GraphDB()); err != nil {
+	printDeterministicResults(transactionFeeder, relPool.GetTripletPort())
+	if err := generateGraphReportWithDB(isolatedPathConfig, relPool.RopeRepo.RawBadgerDB()); err != nil {
 		fmt.Printf("   ⚠️ Graph report failed: %v\n", err)
 	} else {
 		fmt.Printf("   📁 Graph report saved under: %s\n", filepath.Join(isolatedDir, "report"))
 	}
 
 	// TxDefineLoader 결과 검증
-	validateDeterministicResults(transactionFeeder, analyzer)
+	validateTripletResults(transactionFeeder, relPool.GetTripletPort())
 	//* 함수 종료 후 최종 정리
 	defer func() {
 		cancel()
 		if transactionFeeder != nil {
 			transactionFeeder.Close()
 		}
-		if analyzer != nil {
-			analyzer.Close()
+		if relPool.GetTripletPort() != nil {
+			relPool.GetTripletPort().Close()
 		}
 		if monitoringServer != nil {
 			shutdownServerCancel()
@@ -206,8 +204,8 @@ func printServerInfo() {
 	fmt.Println("   📍 Available endpoints (Chi Router):")
 	fmt.Println("   💡 API Endpoints (JSON responses):")
 	fmt.Println("   - GET http://localhost:8080/api/health             - Server health")
-	fmt.Println("   - GET http://localhost:8080/api/triplet/statistics      - Triplet Analyzer statistics")
-	fmt.Println("   - GET http://localhost:8080/api/triplet/health          - Triplet Analyzer health")
+	fmt.Println("   - GET http://localhost:8080/api/triplet/statistics      - Triplet  statistics")
+	fmt.Println("   - GET http://localhost:8080/api/triplet/health          - Triplet  health")
 	fmt.Println("   - GET http://localhost:8080/api/triplet/channel-status  - Triplet Channel status")
 	fmt.Println("   - GET http://localhost:8080/api/triplet/dual-manager/window-stats - Window statistics")
 	fmt.Println("   - GET http://localhost:8080/api/triplet/graph/stats     - Graph DB statistics")
@@ -297,7 +295,7 @@ func resetIsolatedEnvironmentPaths(cfg *IsolatedPathConfig) error {
 }
 
 // runSimplifiedMonitoring TPS 모니터링 포함
-func runSimplifiedMonitoring(generator *txFeeder.TxFeeder, analyzer app.TripletAnalyzer, ctx context.Context) {
+func runSimplifiedMonitoring(generator *txFeeder.TxFeeder, relTriplet reliface.TripletPort, ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -307,15 +305,15 @@ func runSimplifiedMonitoring(generator *txFeeder.TxFeeder, analyzer app.TripletA
 			return
 		case <-ticker.C:
 			stats := generator.GetPipelineStats()
-			analyzerStats := analyzer.GetStatistics()
+			tripletStats := relTriplet.GetStatistics()
 			tps := generator.GetTPS()
 
-			fmt.Printf("📊 [%.1fs] Gen: %d | Kafka: %d | TPS: %.0f | Analyzer: %v | 🚀 BATCH MODE\n",
+			fmt.Printf("📊 [%.1fs] Gen: %d | Kafka: %d | TPS: %.0f | Triplet: %v | 🚀 BATCH MODE\n",
 				time.Since(stats.StartTime).Seconds(),
 				stats.Generated,
 				stats.Transmitted,
 				tps,
-				analyzerStats["success_count"])
+				tripletStats["success_count"])
 
 			// 목표 달성 확인
 			if tps >= 10000 {
@@ -326,9 +324,9 @@ func runSimplifiedMonitoring(generator *txFeeder.TxFeeder, analyzer app.TripletA
 }
 
 // printSimplifiedResults 간소화된 결과 출력
-func printSimplifiedResults(generator *txFeeder.TxFeeder, analyzer app.TripletAnalyzer) {
+func printSimplifiedResults(generator *txFeeder.TxFeeder, relTriplet reliface.TripletPort) {
 	stats := generator.GetPipelineStats()
-	analyzerStats := analyzer.GetStatistics()
+	tripletStats := relTriplet.GetStatistics()
 
 	fmt.Println("\n" + strings.Repeat("=", 60))
 	fmt.Println("📊 SIMPLIFIED PIPELINE TEST RESULTS")
@@ -336,12 +334,12 @@ func printSimplifiedResults(generator *txFeeder.TxFeeder, analyzer app.TripletAn
 	fmt.Printf("Generated: %d | Transmitted: %d | Runtime: %.1fs\n",
 		stats.Generated, stats.Transmitted, time.Since(stats.StartTime).Seconds())
 	fmt.Printf("Analyzer Success: %v | Healthy: %t\n",
-		analyzerStats["success_count"], analyzer.IsHealthy())
+		tripletStats["success_count"], relTriplet.IsHealthy())
 	fmt.Println(strings.Repeat("=", 60))
 }
 
-// runDeterministicMonitoring TxDefineLoader용 모니터링
-func runDeterministicMonitoring(loader *txFeeder.TxDefineLoader, analyzer app.TripletAnalyzer, ctx context.Context) {
+// runTripletMonitoring TxDefineLoader용 모니터링
+func runTripletMonitoring(loader *txFeeder.TxDefineLoader, relTriplet reliface.TripletPort, ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -351,7 +349,7 @@ func runDeterministicMonitoring(loader *txFeeder.TxDefineLoader, analyzer app.Tr
 			return
 		case <-ticker.C:
 			stats := loader.GetPipelineStats()
-			analyzerStats := analyzer.GetStatistics()
+			tripletStats := relTriplet.GetStatistics()
 			tps := loader.GetTPS()
 			progress := loader.GetProgress()
 
@@ -361,7 +359,7 @@ func runDeterministicMonitoring(loader *txFeeder.TxDefineLoader, analyzer app.Tr
 				stats.Transmitted,
 				tps,
 				progress*100,
-				analyzerStats["success_count"])
+				tripletStats["success_count"])
 
 			// 완료 확인
 			if loader.IsCompleted() {
@@ -373,9 +371,9 @@ func runDeterministicMonitoring(loader *txFeeder.TxDefineLoader, analyzer app.Tr
 }
 
 // printDeterministicResults TxDefineLoader용 결과 출력
-func printDeterministicResults(loader *txFeeder.TxDefineLoader, analyzer app.TripletAnalyzer) {
+func printDeterministicResults(loader *txFeeder.TxDefineLoader, relTriplet reliface.TripletPort) {
 	stats := loader.GetPipelineStats()
-	analyzerStats := analyzer.GetStatistics()
+	tripletStats := relTriplet.GetStatistics()
 	graphStructure := loader.GetGraphStructure()
 
 	fmt.Println("\n" + strings.Repeat("=", 60))
@@ -383,8 +381,8 @@ func printDeterministicResults(loader *txFeeder.TxDefineLoader, analyzer app.Tri
 	fmt.Println(strings.Repeat("=", 60))
 	fmt.Printf("Generated: %d | Transmitted: %d | Runtime: %.1fs\n",
 		stats.Generated, stats.Transmitted, time.Since(stats.StartTime).Seconds())
-	fmt.Printf("Analyzer Success: %v | Healthy: %t\n",
-		analyzerStats["success_count"], analyzer.IsHealthy())
+	fmt.Printf("triplet Success: %v | Healthy: %t\n",
+		tripletStats["success_count"], relTriplet.IsHealthy())
 
 	fmt.Println("\n🎯 Deterministic Graph Structure:")
 	fmt.Printf("  CEX Addresses: %d\n", graphStructure.ExpectedCEXCount)
@@ -402,8 +400,8 @@ func printDeterministicResults(loader *txFeeder.TxDefineLoader, analyzer app.Tri
 	fmt.Println(strings.Repeat("=", 60))
 }
 
-// validateDeterministicResults TxDefineLoader 결과 검증
-func validateDeterministicResults(loader *txFeeder.TxDefineLoader, analyzer app.TripletAnalyzer) {
+// validateTripletResults TxDefineLoader 결과 검증
+func validateTripletResults(loader *txFeeder.TxDefineLoader, relTriplet reliface.TripletPort) {
 	fmt.Println("\n🔍 DETERMINISTIC RESULTS VALIDATION")
 	fmt.Println(strings.Repeat("-", 40))
 
@@ -424,16 +422,16 @@ func validateDeterministicResults(loader *txFeeder.TxDefineLoader, analyzer app.
 	fmt.Printf("  User-to-User Pairs: %v (expected: ~100)\n", validation["user_to_user_pairs"])
 
 	// 분석기 결과와 비교
-	analyzerStats := analyzer.GetStatistics()
+	tripletStats := relTriplet.GetStatistics()
 	fmt.Printf("\nAnalyzer Processing Results:\n")
-	fmt.Printf("  Processed Transactions: %v\n", analyzerStats["success_count"])
-	fmt.Printf("  Expected vs Actual: %v / %v\n", validation["total_transactions"], analyzerStats["success_count"])
+	fmt.Printf("  Processed Transactions: %v\n", tripletStats["success_count"])
+	fmt.Printf("  Expected vs Actual: %v / %v\n", validation["total_transactions"], tripletStats["success_count"])
 	//ropeDB결과 출력
-	graphStats := analyzer.GetRopeDBStats()
+	graphStats := relTriplet.GetRopeDBStats()
 	fmt.Printf("모든 노드 수 %d, 모든 로프 수 %d, 모든 트레이트 수 %d", graphStats["nodes"], graphStats["ropes"], graphStats["traits"])
 	// 성공률 계산
 	if expectedTotal, ok := validation["total_transactions"].(int); ok {
-		if processedCount, ok := analyzerStats["success_count"].(int64); ok {
+		if processedCount, ok := tripletStats["success_count"].(int64); ok {
 			successRate := float64(processedCount) / float64(expectedTotal) * 100
 			fmt.Printf("  Success Rate: %.2f%%\n", successRate)
 

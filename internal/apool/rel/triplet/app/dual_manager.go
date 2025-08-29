@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	relapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
@@ -29,7 +29,7 @@ type DualManager struct {
 	frontIndex             int           // 가장 오래된 버킷 인덱스 (제거 대상)
 	rearIndex              int           // 가장 최신 버킷 인덱스 (추가 위치)
 	bucketCount            int           // 현재 버킷 개수 (0~21)
-	relPool                *relapp.RelationPool
+	relPool                iface.RelPort
 
 	// Synchronization (최적화된 뮤텍스)
 	mutex        sync.RWMutex // 전체 구조체 보호용 (구조 변경 등)
@@ -53,7 +53,7 @@ func newTimeBucket(startTime chaintimer.ChainTime) *TimeBucket {
 }
 
 // NewDualManager creates a new dual manager instance
-func NewDualManager(managerInfra infra.DualManagerInfra, pool *relapp.RelationPool) (*DualManager, error) {
+func NewDualManager(managerInfra infra.DualManagerInfra, pool iface.RelPort) (*DualManager, error) {
 
 	dm := &DualManager{
 		infra:                  managerInfra,
@@ -224,7 +224,7 @@ func (dm *DualManager) saveCexAndDepositToGraphDB(cex, deposit domain.Address, t
 		addrAndRule2,
 		txScala,
 	)
-	return dm.relPool.RopeRepo.PushTraitEvent(traitEvent)
+	return dm.relPool.RopeDB().PushTraitEvent(traitEvent)
 }
 
 // saveDualRelationToGraphDB saves a connection between two EOAs to the graph database
@@ -251,7 +251,7 @@ func (dm *DualManager) saveDualRelationToGraphDB(fromScala infra.FromScala, toAd
 		addressAndRule2,
 		txScala,
 	)
-	return dm.relPool.RopeRepo.PushTraitEvent(traitEvent)
+	return dm.relPool.RopeDB().PushTraitEvent(traitEvent)
 
 }
 

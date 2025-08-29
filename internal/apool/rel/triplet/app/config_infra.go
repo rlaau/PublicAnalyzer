@@ -9,15 +9,17 @@ import (
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/workerpool"
 )
 
-// TODO 이것도 추후 수정. 컨텍스트가 아오 너무 많자나
-func NewInfraByConfig(config *EOAAnalyzerConfig, ctx context.Context) infra.TotalEOAAnalyzerInfra {
+func NewInfraByConfig(config *TripletConfig, ctx context.Context) infra.TotalEOAAnalyzerInfra {
+	var isolateColusre = computation.ComputeRelClosure(config.IsolatedDBPath)
 	log.Printf("EOA Analyzer의 Infra 세팅 중: %s (Mode: %s)", config.Name, config.Mode)
-	cexSet, err := loadCEXSet(config.CEXFilePath)
+	cexSet, err := loadCEXSet(isolateColusre("cex.txt"))
 	if err != nil {
 		fmt.Printf("CEX set로딩 중 에러남.")
 		panic("더 이상 작업 불가")
@@ -33,14 +35,13 @@ func NewInfraByConfig(config *EOAAnalyzerConfig, ctx context.Context) infra.Tota
 	}
 	log.Printf("🧠 Ground knowledge loaded")
 
-	log.Printf("🗂️  Graph repository at: %s", config.GraphDBPath)
 	batchConsumer := loadKafkaBatchConsumer(config.Mode, config.Name)
 	//* 워커 풀에 쓸 채널 생성
 	txJobChannel := make(chan workerpool.Job, config.ChannelBufferSize)
 	//* 워커풀 생성 및 채널 등록
 	workerPool := workerpool.New(ctx, config.WorkerCount, txJobChannel)
 	log.Printf("🔧 WorkerPool initialized with %d workers", config.WorkerCount)
-	pendingDB, err := infra.NewFFBadgerPendingRelationRepo(config.PendingDBPath)
+	pendingDB, err := infra.NewFFBadgerPendingRelationRepo(isolateColusre("pending"))
 	if err != nil {
 		panic("펜딜 레포지토리를 열지 못함.")
 	}
@@ -48,10 +49,10 @@ func NewInfraByConfig(config *EOAAnalyzerConfig, ctx context.Context) infra.Tota
 
 }
 
-func loadKafkaBatchConsumer(mode AnalyzerMode, name string) *kafka.KafkaBatchConsumer[*shareddomain.MarkedTransaction] {
+func loadKafkaBatchConsumer(mode mode.ProcessingMode, name string) *kafka.KafkaBatchConsumer[*shareddomain.MarkedTransaction] {
 	// Transaction Consumer 초기화 - 모드에 따라 다른 토픽 사용
 	kafkaBrokers := []string{kafka.DefaultKafkaPort}
-	isTestMode := (mode == TestingMode)
+	isTestMode := mode.IsTest()
 	groupID := fmt.Sprintf("triplet-analyzer-%s", strings.ReplaceAll(name, " ", "-"))
 	// 배치 모드 Consumer 초기화 (고성능)
 	batchSize := 100                      // 100개씩 배치 처리
@@ -86,7 +87,7 @@ func loadCEXSet(cexFilePath string) (*shareddomain.CEXSet, error) {
 	}
 	return cexSet, nil
 }
-func loadDetectedDepositSet(fileDBPath string, mode AnalyzerMode) (*infra.FileDepositRepository, error) {
+func loadDetectedDepositSet(fileDBPath string, mode mode.ProcessingMode) (*infra.FileDepositRepository, error) {
 	// 데이터 디렉토리 생성
 	if err := os.MkdirAll(fileDBPath, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
@@ -95,7 +96,7 @@ func loadDetectedDepositSet(fileDBPath string, mode AnalyzerMode) (*infra.FileDe
 	var detectedDepositFilePath string
 	//TODO 로직은 그럴듯 하지만, FileDBPath자체가 Isolated 폴더 내부라 실은 효용이 없음. 추후 isolated관련 feed_XX_XX.go수정 필요.
 	//TODO 테스트 시에만 isolated되게 해야 함.
-	if mode == TestingMode {
+	if mode.IsTest() {
 		detectedDepositFilePath = fileDBPath + "/test_detected_deposits.csv"
 	} else {
 		detectedDepositFilePath = fileDBPath + "/production_detected_deposits.csv"

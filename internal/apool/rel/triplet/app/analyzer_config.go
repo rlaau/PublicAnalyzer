@@ -3,32 +3,15 @@ package app
 import (
 	"context"
 
-	relapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/iface"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
 
-// AnalyzerMode 분석기 모드 정의
-type AnalyzerMode string
-
-const (
-	ProductionMode AnalyzerMode = "production" // 프로덕션 모드 - 영구 저장
-	TestingMode    AnalyzerMode = "testing"    // 테스트 모드 - 임시 저장, 자동 정리
-)
-
-func (a AnalyzerMode) IsTest() bool {
-	if a == TestingMode {
-		return true
-	}
-	if a == ProductionMode {
-		return false
-	}
-	panic("입력값 오류")
-}
-
-// EOAAnalyzerConfig 분석기 설정
-type EOAAnalyzerConfig struct {
+// TripletConfig 분석기 설정
+type TripletConfig struct {
 	// 기본 설정
-	Name string       // 분석기 이름
-	Mode AnalyzerMode // 동작 모드 (production/testing)
+	Name string              // 분석기 이름
+	Mode mode.ProcessingMode // 동작 모드 (production/testing)
 
 	// 성능 설정
 	ChannelBufferSize int   // 채널 버퍼 크기
@@ -43,60 +26,21 @@ type EOAAnalyzerConfig struct {
 	// 로직: findRoot를 통해 루트를 찾고, 그 안에 새로운 데이터 폴더를 생성하거나 찾는 것.
 	// 테스트 시엔 고립된 DB통해서 얻고, 상용 시엔 다른 path에서 얻기
 	IsolatedDBPath string // 데이터 저장 경로
-	GraphDBPath    string // 그래프 DB 경로
-	PendingDBPath  string // 펜딩 관계 DB 경로
-	CEXFilePath    string // CEX 주소 파일 경로
 
 	// 테스트 모드 전용 설정
 	AutoCleanup     bool // 종료 시 자동 정리 여부
 	ResultReporting bool // 결과 리포팅 여부
 }
 
-// ProductionConfig 프로덕션 모드 기본 설정
-func ProductionConfig(name string) *EOAAnalyzerConfig {
-	return &EOAAnalyzerConfig{
-		Name:                name + "-Production",
-		Mode:                ProductionMode,
-		ChannelBufferSize:   200_000,
-		WorkerCount:         8,
-		MaxProcessingTime:   200_000_000,    // 200ms in nanoseconds
-		StatsInterval:       60_000_000_000, // 60s in nanoseconds
-		HealthCheckInterval: 30_000_000_000, // 30s in nanoseconds
-		IsolatedDBPath:      "data/triplet",
-		GraphDBPath:         "data/triplet/graph",
-		PendingDBPath:       "data/triplet/pending",
-		AutoCleanup:         false,
-		ResultReporting:     false,
-	}
-}
-
-// TestingConfig 테스트 모드 기본 설정
-func TestingConfig(name string) *EOAAnalyzerConfig {
-	return &EOAAnalyzerConfig{
-		Name:                name + "-Testing",
-		Mode:                TestingMode,
-		ChannelBufferSize:   500,
-		WorkerCount:         2,
-		MaxProcessingTime:   100_000_000,    // 100ms in nanoseconds
-		StatsInterval:       5_000_000_000,  // 5s in nanoseconds
-		HealthCheckInterval: 10_000_000_000, // 10s in nanoseconds
-		IsolatedDBPath:      "test_data/triplet",
-		GraphDBPath:         "test_data/triplet/graph",
-		PendingDBPath:       "test_data/triplet/pending",
-		AutoCleanup:         true,
-		ResultReporting:     true,
-	}
-}
-
 // AnalyzerFactory 분석기 팩토리 함수
-type AnalyzerFactory func(config *EOAAnalyzerConfig) (TripletAnalyzer, error)
+type AnalyzerFactory func(config *TripletConfig) (CommonTriplet, error)
 
 // CreateAnalyzer 설정에 따라 적절한 분석기 생성
-func CreateAnalyzer(config *EOAAnalyzerConfig, ctx context.Context, relPool *relapp.RelationPool) (TripletAnalyzer, error) {
+func CreateAnalyzer(config *TripletConfig, ctx context.Context, relPool iface.RelPort) (CommonTriplet, error) {
 	switch config.Mode {
-	case ProductionMode:
+	case mode.ProductionModeProcess:
 		return NewProductionEOAAnalyzer(config, ctx, relPool)
-	case TestingMode:
+	case mode.TestingModeProcess:
 		return NewTestingEOAAnalyzer(config, ctx, relPool)
 	default:
 		return nil, ErrInvalidAnalyzerMode{Mode: string(config.Mode)}

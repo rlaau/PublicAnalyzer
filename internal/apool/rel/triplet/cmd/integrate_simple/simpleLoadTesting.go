@@ -34,17 +34,15 @@ func main() {
 	}()
 
 	// 테스트 설정
-	config := &app.EOAAnalyzerConfig{
+	config := &app.TripletConfig{
 		Name:                "Simple-Load-Test",
-		Mode:                app.TestingMode,
+		Mode:                mode.TestingModeProcess,
 		ChannelBufferSize:   500,
 		WorkerCount:         2,
 		MaxProcessingTime:   50_000_000,
 		StatsInterval:       3_000_000_000, // 3초
 		HealthCheckInterval: 5_000_000_000, // 5초
 		IsolatedDBPath:      testDir,
-		GraphDBPath:         filepath.Join(testDir, "graph"),
-		PendingDBPath:       filepath.Join(testDir, "pending"),
 		AutoCleanup:         true,
 		ResultReporting:     true,
 	}
@@ -52,10 +50,10 @@ func main() {
 	// 컨텍스트 설정 (15초 테스트)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	relPool, err := relapp.CreateRelationPoolFrame(mode.TestingModeProcess)
+	relPool, err := relapp.CreateRelationPoolFrame(mode.TestingModeProcess, nil)
 	// 분석기 생성
 	analyzer, err := app.CreateAnalyzer(config, ctx, relPool)
-	relPool.Register(analyzer, nil, nil)
+	relPool.Register(analyzer, nil)
 	if err != nil {
 		log.Fatalf("❌ Failed to create analyzer: %v", err)
 	}

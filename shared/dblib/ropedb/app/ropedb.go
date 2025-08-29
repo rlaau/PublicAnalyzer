@@ -62,6 +62,7 @@ type RopeDB interface {
 	// 트레이트 기반 조회
 	ViewAllTraitMarkByCode(t domain.TraitCode) ([]domain.TraitMark, error)
 	ViewAllTraitMarkByString(s string) ([]domain.TraitMark, error)
+	RawBadgerDB() *badger.DB
 
 	Close() error
 }

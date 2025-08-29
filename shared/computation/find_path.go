@@ -5,6 +5,20 @@ import (
 	"path/filepath"
 )
 
+func FindWebDir() string {
+	rootPath := FindProjectRootPath()
+	webDir := filepath.Join(rootPath, "web")
+	return webDir
+
+}
+
+// rel을 받아서 baseDir+rel을 하는 함수 반환
+func ComputeRelClosure(baseDir string) func(string) string {
+	return func(rel string) string {
+		return filepath.Join(baseDir, rel)
+	}
+}
+
 // 고립환경 테스팅 시의 루트패시 전달
 // 사용 시엔 FindTestingStorageRootPath+{테스트명}+{각 저장소}로 쓰면 됨
 func FindTestingStorageRootPath() string {

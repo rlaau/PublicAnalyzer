@@ -13,12 +13,12 @@ import (
 // TransactionJob implements workerpool.Job interface for transaction processing
 type TransactionJob struct {
 	tx       *shareddomain.MarkedTransaction
-	analyzer *SimpleEOAAnalyzer
+	analyzer *SimpleTriplet
 	workerID int
 }
 
 // NewTransactionJob creates a new transaction processing job
-func NewTransactionJob(tx *shareddomain.MarkedTransaction, analyzer *SimpleEOAAnalyzer, workerID int) *TransactionJob {
+func NewTransactionJob(tx *shareddomain.MarkedTransaction, analyzer *SimpleTriplet, workerID int) *TransactionJob {
 	return &TransactionJob{
 		tx:       tx,
 		analyzer: analyzer,
@@ -32,7 +32,7 @@ func (j *TransactionJob) Do(ctx context.Context) error {
 }
 
 // processSingleTransactionJob processes a single transaction (refactored from processSingleTransaction)
-func (a *SimpleEOAAnalyzer) processSingleTransactionJob(tx *shareddomain.MarkedTransaction, workerID int) error {
+func (a *SimpleTriplet) processSingleTransactionJob(tx *shareddomain.MarkedTransaction, workerID int) error {
 	processedCount := atomic.AddInt64(&a.stats.TotalProcessed, 1)
 
 	// 처음 몇 개 트랜잭션은 디버깅 로그 출력

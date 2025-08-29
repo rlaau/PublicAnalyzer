@@ -3,9 +3,12 @@ package rel
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
+	"os/signal"
 	"path/filepath"
 	"sync/atomic"
-	"time"
+	"syscall"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/roperepo"
@@ -13,14 +16,13 @@ import (
 	ropeapp "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring/tools"
 )
 
 // 관계 분석 시, 각 단일 분석기가 통신하기 위한 풀
 type RelationPool struct {
 	isTest mode.ProcessingMode
+	Apool  iface.ApoolPort
 
 	ports struct {
 		triplet  iface.TripletPort
@@ -30,12 +32,12 @@ type RelationPool struct {
 	busTriplet  *eventbus.EventBus[iface.TripletEventMsg]
 	busCreation *eventbus.EventBus[iface.CreationEventMsg]
 
-	fanoutManager *TxFanoutManager
+	txDistributor *TxDistributor
 	closed        atomic.Bool
 	RopeRepo      ropeapp.RopeDB
 }
 
-func CreateRelationPoolFrame(isTest mode.ProcessingMode) (*RelationPool, error) {
+func CreateRelationPoolFrame(isTest mode.ProcessingMode, apool iface.ApoolPort) (*RelationPool, error) {
 	var root func() string
 	if isTest.IsTest() {
 		root = computation.FindTestingStorageRootPath
@@ -63,6 +65,7 @@ func CreateRelationPoolFrame(isTest mode.ProcessingMode) (*RelationPool, error) 
 	if err != nil {
 		busTriplet.Close()
 		busCreation.Close()
+		return nil, err
 	}
 
 	return &RelationPool{
@@ -70,45 +73,29 @@ func CreateRelationPoolFrame(isTest mode.ProcessingMode) (*RelationPool, error) 
 		busTriplet:  busTriplet,
 		busCreation: busCreation,
 		RopeRepo:    ropeRepo,
+		Apool:       apool,
 	}, nil
 }
 
-func (r *RelationPool) Register(triplet iface.TripletPort, creation iface.CreationPort, bp tools.CountingBackpressure) {
+func (r *RelationPool) RopeDB() ropeapp.RopeDB {
+	return r.RopeRepo
+}
+func (r *RelationPool) Register(triplet iface.TripletPort, creation iface.CreationPort) error {
 
-	defaultBatchSize := 5000
-	defTimeout := 300 //ms
-	var kafkaCfg kafka.KafkaBatchConfig
-	if r.isTest.IsTest() {
-		kafkaCfg = kafka.KafkaBatchConfig{
-			Brokers:      kafka.GetGlobalBrokers(),
-			Topic:        kafka.TestingTxTopic,
-			GroupID:      "testval.relation_pool",
-			BatchSize:    defaultBatchSize,
-			BatchTimeout: time.Duration(defTimeout) * time.Millisecond,
-		}
-	} else {
-		//TODO 실제 프로덕션 시엔 더 정교하게
-		kafkaCfg = kafka.KafkaBatchConfig{
-			Brokers:      kafka.GetGlobalBrokers(),
-			Topic:        kafka.ProductionTxTopic,
-			GroupID:      "production.relation_pool",
-			BatchSize:    defaultBatchSize,
-			BatchTimeout: time.Duration(defTimeout) * time.Millisecond,
-		}
-	}
 	capLimit := 2048
 	if !r.isTest.IsTest() {
 		capLimit = 8192
 	}
 	var err error
-	r.fanoutManager, err = NewTxFanoutManager(kafkaCfg, r.isTest, capLimit, bp)
+	r.txDistributor, err = NewTxDistributor(r.isTest, capLimit, r.Apool.ConsumeRelTxByFanout())
 	if err != nil {
 		r.busCreation.Close()
 		r.busTriplet.Close()
+		return err
 	}
 	r.ports.triplet = triplet
 	r.ports.creation = creation
-
+	return nil
 }
 
 // 포트 기반 뷰어
@@ -135,21 +122,61 @@ func (r *RelationPool) DequeueCreation() <-chan iface.CreationEventMsg {
 
 // Tx Fanout에서의 소비자.
 func (r *RelationPool) ConsumeTripletTxByFanout() <-chan domain.MarkedTransaction {
-	return r.fanoutManager.busTriplet.Dequeue()
+	return r.txDistributor.busTriplet.Dequeue()
 }
 func (r *RelationPool) ConsumeCreationTxByFanout() <-chan domain.MarkedTransaction {
-	return r.fanoutManager.busCreation.Dequeue()
+	return r.txDistributor.busCreation.Dequeue()
 }
 
-func (r *RelationPool) Close(ctx context.Context) error {
+func (r *RelationPool) Start(parent context.Context) error {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	//TODO 추후 이 코드 활성화하기. 크리에이션 생기고 나면 키기
+	if !r.isTest.IsTest() && (r.ports.triplet == nil || r.ports.creation == nil) {
+		return fmt.Errorf("relpools's ports not registered")
+	}
+	log.Printf("Starting RelPool")
+	//TODO 모듈 개수 늘릴 시 최소 모듈 개수보단 크게 잡기
+	moduleDone := make(chan error, 5)
+	go func() {
+		moduleDone <- r.GetTripletPort().Start(ctx)
+	}()
+	go func() {
+		moduleDone <- r.GetCreationPort().Start(ctx)
+	}()
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	defer func() {
+		signal.Stop(sigChan)
+		close(sigChan)
+	}()
+	select {
+	case <-ctx.Done():
+		fmt.Printf("   ⏰ Test completed by timeout\n")
+	case err := <-moduleDone:
+		cancel()
+		if err != nil {
+			fmt.Printf("   ⚠️ Relpool's subModule stopped with error: %v\n", err)
+		} else {
+			fmt.Printf("   ✅ Relpool completed successfully\n")
+		}
+	case <-sigChan:
+		fmt.Printf("   🛑 Shutdown signal received...\n")
+		cancel()
+	}
+	return r.Close()
+}
+func (r *RelationPool) Close() error {
+	//* 자기 자신만 close해도 start시 연결된 ctx로 자식도 종료
 	if r.closed.Swap(true) {
 		return nil
 	}
 
-	_ = r.fanoutManager.Close()
-	fmt.Printf("FanoutManager 정리 완료\n")
+	_ = r.txDistributor.Close()
+	fmt.Printf("relpool의 txDistributor 정리 완료\n")
 	r.busTriplet.Close()
 	r.busCreation.Close()
+	r.RopeRepo.Close()
 	fmt.Printf("BUS들 정리 완료\n")
 	return nil
 }
