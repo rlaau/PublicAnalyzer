@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/infra"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"

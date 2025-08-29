@@ -20,7 +20,7 @@ services:
     image: confluentinc/cp-kafka:7.4.3
     depends_on:
       zookeeper:
-      
+        condition: service_healthy
     ports:
       - "9092:9092"
     environment:

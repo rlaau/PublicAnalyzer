@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/nod/co/app"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
@@ -83,14 +83,14 @@ func extractRandomFromJsonl(count int) (map[string]ContractData, error) {
 			log.Printf("Error loading from %s: %v", filename, err)
 			continue
 		}
-		
+
 		for _, contract := range contracts {
 			result[contract.Address] = contract
 			if len(result) >= count {
 				break
 			}
 		}
-		
+
 		if len(result) >= count {
 			break
 		}
@@ -143,7 +143,7 @@ func extractRandomFromFile(filename string, count int) ([]ContractData, error) {
 			lines = append(lines, line)
 		}
 	}
-	
+
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
@@ -182,13 +182,13 @@ func extractRandomFromFile(filename string, count int) ([]ContractData, error) {
 
 func validateContractsAgainstDB(contDB *app.ContractDB, jsonlContracts map[string]ContractData) []ValidationResult {
 	var results []ValidationResult
-	
+
 	for address, jsonlData := range jsonlContracts {
 		result := ValidationResult{
 			Address:   address,
 			JsonlData: &jsonlData,
 		}
-		
+
 		// DB에서 해당 주소 조회
 		addr, err := domain.ParseAddressFromString(address)
 		if err != nil {
@@ -197,7 +197,7 @@ func validateContractsAgainstDB(contDB *app.ContractDB, jsonlContracts map[strin
 			results = append(results, result)
 			continue
 		}
-		
+
 		dbContract, err := contDB.Get(addr)
 		if err != nil {
 			result.IsMatch = false
@@ -205,17 +205,17 @@ func validateContractsAgainstDB(contDB *app.ContractDB, jsonlContracts map[strin
 			results = append(results, result)
 			continue
 		}
-		
+
 		result.DbData = &dbContract
-		
+
 		// 데이터 비교
 		isMatch, errMsg := compareContractData(jsonlData, dbContract)
 		result.IsMatch = isMatch
 		result.ErrorMessage = errMsg
-		
+
 		results = append(results, result)
 	}
-	
+
 	return results
 }
 

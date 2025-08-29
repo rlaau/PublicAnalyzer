@@ -341,66 +341,71 @@ function recalculateLegendCounts(legend, nodes, edges) {
     });
   }
   
+  // Rule 카운트 계산을 위한 Set (중복 방지)
+  const nodeRuleCounts = new Map(); // ruleId -> Set of nodeIds
+  
+  // 디버깅을 위한 로그 추가
+  let totalNodesWithTraits = 0;
+  let totalNodesWithRules = 0;
+  
   nodes.forEach((node, index) => {
-    console.log(`Node ${index}:`, node.id, 'traits:', node.traits?.length || 0);
-    
-    // 노드의 traits에서 실제 RuleCode 추출 - 더 견고한 검증
-    if (node.traits && Array.isArray(node.traits)) {
-      // 각 노드에 대해 해당 노드가 가진 Rule들을 수집
+    // 노드의 traits에서 실제 RuleCode 추출
+    if (node.traits && Array.isArray(node.traits) && node.traits.length > 0) {
+      totalNodesWithTraits++;
+      // 각 노드가 가진 고유 Rule들 수집
       const nodeRules = new Set();
+      let nodeHasRule = false;
       
-      node.traits.forEach((trait, traitIndex) => {
-        console.log(`  Trait ${traitIndex}:`, trait);
-        
-        // ruleCode 속성 확인 - 다양한 형태 지원
-        let ruleCode = null;
-        if (trait.ruleCode !== undefined && trait.ruleCode !== null) {
-          ruleCode = trait.ruleCode;
-        } else if (trait.RuleCode !== undefined && trait.RuleCode !== null) {
-          ruleCode = trait.RuleCode;
-        } else if (trait.rule_code !== undefined && trait.rule_code !== null) {
-          ruleCode = trait.rule_code;
-        }
-        
-        console.log(`    TraitCode: ${trait.traitCode}, RuleCode: ${ruleCode}`);
+      node.traits.forEach((trait) => {
+        // ruleCode 속성 확인 - 다양한 형태 지원 (대소문자 처리)
+        let ruleCode = trait.ruleCode || trait.RuleCode || trait.rule_code || trait.rulecode;
         
         // 유효한 ruleCode인지 확인 (0보다 크고 숫자여야 함)
-        if (ruleCode !== null && ruleCode !== undefined && ruleCode > 0) {
+        if (ruleCode !== null && ruleCode !== undefined) {
           const numericRuleCode = Number(ruleCode);
           if (!isNaN(numericRuleCode) && numericRuleCode > 0) {
             nodeRules.add(numericRuleCode);
-            console.log(`    Added rule: ${numericRuleCode}`);
-          } else {
-            console.log(`    Invalid rule code: ${ruleCode} (not a positive number)`);
+            nodeHasRule = true;
           }
-        } else {
-          console.log(`    No valid rule code found for trait ${trait.traitCode}`);
         }
       });
       
-      console.log(`  Node ${node.id} total unique rules: ${nodeRules.size}`, Array.from(nodeRules));
+      if (nodeHasRule) {
+        totalNodesWithRules++;
+      }
       
-      // 실제 RuleCode들을 범례에 추가 (기존 색상/이름 우선)
+      // 각 Rule에 대해 노드 추가 (중복 방지)
       nodeRules.forEach(ruleCode => {
         const ruleKey = String(ruleCode);
+        
+        if (!nodeRuleCounts.has(ruleKey)) {
+          nodeRuleCounts.set(ruleKey, new Set());
+        }
+        nodeRuleCounts.get(ruleKey).add(node.id);
+        
+        // 범례에 Rule 추가 (없는 경우에만)
         if (!updated.rules[ruleKey]) {
-          // 새로운 룰이면 새로 생성
+          // 백엔드에서 제공하는 Rule 이름을 사용 (하드코딩 제거)
           updated.rules[ruleKey] = {
             count: 0,
-            name: `Rule ${ruleCode}`, // 백엔드에서 실제 이름 받아올 때까지 임시
+            name: `Rule ${ruleCode}`, // 임시 이름, 백엔드에서 최신 데이터로 교체됨
             color: generateRuleColor(ruleCode)
           };
-          console.log(`    Created new rule legend: ${ruleKey}`);
         }
-        updated.rules[ruleKey].count++;
-        console.log(`    Incremented count for rule ${ruleKey}: ${updated.rules[ruleKey].count}`);
       });
-    } else {
-      console.log(`  Node ${node.id} has no traits or invalid traits array`);
     }
   });
   
-  console.log('Final updated rules:', updated.rules);
+  console.log(`Rule calculation: ${totalNodesWithTraits} nodes with traits, ${totalNodesWithRules} nodes with rules`);
+  
+  // 최종 Rule 카운트 업데이트 (각 Rule에 속한 고유 노드 수)
+  nodeRuleCounts.forEach((nodeSet, ruleKey) => {
+    if (updated.rules[ruleKey]) {
+      updated.rules[ruleKey].count = nodeSet.size;
+    }
+  });
+  
+  console.log('Final rule counts:', Object.entries(updated.rules).map(([k, v]) => `Rule ${k}: ${v.count} nodes`));
   
   return updated;
 }
@@ -600,14 +605,40 @@ function toggleTraitHighlight(traitCode, color) {
 }
 
 function toggleRuleHighlight(ruleId, color) {
+  console.log('=== toggleRuleHighlight called ===');
+  console.log('ruleId:', ruleId, 'type:', typeof ruleId);
+  console.log('color:', color);
+  console.log('Current rule highlight:', currentHighlightRule);
+  
   // 우선순위 제약 제거 - 트레이트 하이라이팅 상태와 무관하게 작동
   if (currentHighlightRule === ruleId) {
     // 이미 선택된 Rule이면 하이라이팅 해제
+    console.log('Disabling rule highlight');
     currentHighlightRule = null;
     f.contentWindow.postMessage({type: 'highlight-rule', payload: {ruleId: null}}, '*');
   } else {
     // 새로운 Rule 하이라이팅
+    console.log('Enabling rule highlight for rule:', ruleId);
     currentHighlightRule = ruleId;
+    
+    // 현재 노드들의 Rule 확인
+    console.log('Checking nodes for rule:', ruleId);
+    let matchCount = 0;
+    if (CURRENT && CURRENT.nodes) {
+      CURRENT.nodes.forEach(node => {
+        if (node.traits && node.traits.length > 0) {
+          node.traits.forEach(trait => {
+            const nodeRuleCode = trait.ruleCode || trait.RuleCode;
+            if (nodeRuleCode && String(nodeRuleCode) === String(ruleId)) {
+              console.log(`Found match: Node ${node.id} has rule ${nodeRuleCode}`);
+              matchCount++;
+            }
+          });
+        }
+      });
+    }
+    console.log(`Total nodes with rule ${ruleId}: ${matchCount}`);
+    
     f.contentWindow.postMessage({type: 'highlight-rule', payload: {ruleId, color}}, '*');
   }
 }
@@ -755,13 +786,62 @@ window.addEventListener('message', (ev)=>{
       html += '<br/>Traits: <b>' + p.traitCount + '</b>';
       if (p.traits && p.traits.length > 0) {
         html += '<br/>Types: ';
-        const traitNames = p.traits.slice(0, 3).map(t => t.traitName || 'code ' + t.traitCode).join(', ');
+        const traitNames = p.traits.slice(0, 3).map(t => {
+          // 범례에서 Trait 이름 찾기 (하드코딩 제거)
+          const traitKey = String(t.traitCode);
+          const traitName = (CURRENT.legend && CURRENT.legend.traits && CURRENT.legend.traits[traitKey])
+            ? CURRENT.legend.traits[traitKey].name
+            : t.traitName || `Trait ${t.traitCode}`;
+          return traitName;
+        }).join(', ');
         html += '<span class="muted">' + traitNames;
         if (p.traits.length > 3) {
           html += ' +' + (p.traits.length - 3) + ' more';
         }
         html += '</span>';
       }
+    }
+    
+    // Rule 정보 추가 (범례 데이터를 사용하여 하드코딩 제거)
+    if (p.traits && p.traits.length > 0) {
+      console.log('=== INFO PANEL RULE DEBUG ===');
+      console.log('Node traits:', p.traits);
+      
+      // 노드가 가진 고유한 Rule들 수집
+      const nodeRules = new Set();
+      p.traits.forEach((trait, idx) => {
+        const ruleCode = trait.ruleCode || trait.RuleCode;
+        console.log(`Trait ${idx}: traitCode=${trait.traitCode}, ruleCode=${ruleCode}`);
+        if (ruleCode && ruleCode > 0) {
+          nodeRules.add(ruleCode);
+          console.log(`Added rule ${ruleCode} to nodeRules`);
+        }
+      });
+      
+      console.log('Final nodeRules set:', Array.from(nodeRules));
+      console.log('Available legend rules:', CURRENT.legend?.rules ? Object.keys(CURRENT.legend.rules) : 'none');
+      
+      if (nodeRules.size > 0) {
+        html += '<br/>Rules: ';
+        const ruleList = Array.from(nodeRules)
+          .sort((a, b) => a - b)
+          .map(ruleCode => {
+            // 현재 범례에서 Rule 이름 찾기
+            const ruleKey = String(ruleCode);
+            const ruleName = (CURRENT.legend && CURRENT.legend.rules && CURRENT.legend.rules[ruleKey]) 
+              ? CURRENT.legend.rules[ruleKey].name 
+              : `Rule ${ruleCode}`;
+            console.log(`Rule ${ruleCode} -> ${ruleName}`);
+            return `<span class="mono" title="Rule ${ruleCode}">${ruleName}</span>`;
+          })
+          .join(', ');
+        html += ruleList;
+        console.log('Rule HTML added:', ruleList);
+      } else {
+        console.log('No rules found for this node');
+      }
+    } else {
+      console.log('No traits found for node hover');
     }
     
     // 정보가 없을 경우
@@ -780,14 +860,26 @@ window.addEventListener('message', (ev)=>{
       // 멀티 트레이트 정보 표시
       let html = '<b>Multi-Trait Connection (' + p.totalTraits + ' traits):</b><br/>';
       p.traits.forEach((trait, index) => {
+        // 범례에서 Trait 이름 찾기 (하드코딩 제거)
+        const traitKey = String(trait.traitCode);
+        const traitName = (CURRENT.legend && CURRENT.legend.traits && CURRENT.legend.traits[traitKey])
+          ? CURRENT.legend.traits[traitKey].name
+          : trait.traitName || `Trait ${trait.traitCode}`;
+        
         html += (index > 0 ? '<br/>' : '') + 
-                '• <b>' + (trait.traitName || ('code ' + trait.traitCode)) + '</b> ' +
+                '• <b>' + traitName + '</b> ' +
                 '<span class="mono">#' + (trait.traitId || 0) + '</span>';
       });
       edgeBox.innerHTML = html;
     } else {
       // 단일 트레이트 정보 표시
-      edgeBox.innerHTML = 'Trait: <b>'+(p.traitName||('code '+p.traitCode))+'</b> <span class="mono">#'+(p.traitId||0)+'</span>';
+      // 범례에서 Trait 이름 찾기 (하드코딩 제거)
+      const traitKey = String(p.traitCode);
+      const traitName = (CURRENT.legend && CURRENT.legend.traits && CURRENT.legend.traits[traitKey])
+        ? CURRENT.legend.traits[traitKey].name
+        : p.traitName || `Trait ${p.traitCode}`;
+      
+      edgeBox.innerHTML = 'Trait: <b>'+traitName+'</b> <span class="mono">#'+(p.traitId||0)+'</span>';
     }
   } else if (msg.type==='node-click'){
     const id = msg.payload && msg.payload.id;
@@ -807,6 +899,24 @@ window.addEventListener('message', (ev)=>{
             edges: expandResult.edges?.length || 0,
             error: expandResult.error
           });
+          
+          // 확장 결과의 Rule 정보 확인
+          console.log('=== EXPANSION RULE DEBUG ===');
+          if (expandResult.nodes) {
+            expandResult.nodes.forEach(node => {
+              if (node.traits && node.traits.length > 0) {
+                console.log(`Expanded Node ${node.id}:`);
+                node.traits.forEach(trait => {
+                  console.log(`  Trait ${trait.traitCode}:`, {
+                    ruleCode: trait.ruleCode,
+                    RuleCode: trait.RuleCode,
+                    raw: trait
+                  });
+                });
+              }
+            });
+          }
+          console.log('Expansion legend rules:', expandResult.legend?.rules);
           
           if (expandResult.error) {
             console.error(`Expansion failed: ${expandResult.error}`);
@@ -836,12 +946,16 @@ window.addEventListener('message', (ev)=>{
           const nodeMap = new Map();
           const edgeMap = new Map();
           
-          // 기존 노드/엣지 추가
+          // 기존 노드/엣지 추가 (기존 데이터 유지)
           (CURRENT.nodes || []).forEach(n => nodeMap.set(n.id, n));
           (CURRENT.edges || []).forEach(e => edgeMap.set(e.id, e));
           
-          // 확장 결과 노드/엣지 추가
-          (expandResult.nodes || []).forEach(n => nodeMap.set(n.id, n));
+          // 확장 결과 노드/엣지 추가 (새 데이터로 업데이트/추가)
+          (expandResult.nodes || []).forEach(n => {
+            // 기존 노드가 있으면 서버 데이터로 완전 교체
+            // (서버가 최신 Rule 정보를 가지고 있음)
+            nodeMap.set(n.id, n);
+          });
           (expandResult.edges || []).forEach(e => edgeMap.set(e.id, e));
           
           // CURRENT 업데이트
@@ -938,6 +1052,24 @@ console.log('addrBtn element:', document.getElementById('addrBtn'));
 console.log('ropeBtn element:', document.getElementById('ropeBtn'));
 console.log('defBtn element:', document.getElementById('defBtn'));
 console.log('=== EVENT HANDLERS REGISTERED ===');
+
+// Rule 디버깅을 위한 전역 함수 추가
+window.debugRules = function() {
+  console.log('=== RULE DEBUG INFO ===');
+  console.log('Current legend rules:', CURRENT.legend?.rules);
+  console.log('Current nodes with traits:');
+  if (CURRENT && CURRENT.nodes) {
+    CURRENT.nodes.forEach(node => {
+      if (node.traits && node.traits.length > 0) {
+        console.log(`Node ${node.id}:`);
+        node.traits.forEach(trait => {
+          console.log(`  Trait ${trait.traitCode}: ruleCode=${trait.ruleCode || trait.RuleCode || 'NONE'}`);
+        });
+      }
+    });
+  }
+  console.log('Current rule highlight state:', currentHighlightRule);
+};
 // 주소 검색: 해당 주소를 중심으로 그래프 초기화 + 1-hop 확장
 document.getElementById('addrBtn').onclick = ()=>{
   console.log('=== ADDRESS SEARCH (RESET MODE) ===');

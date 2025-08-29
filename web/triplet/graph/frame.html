@@ -114,8 +114,57 @@
   const WIDTH_HOVER_BUMP = 1.35;  // 호버시 가산
 
   // ===== Graph build / merge =====
-  function addDataToGraph(data){
-    DATA = data;
+  function addDataToGraph(data, isIncremental = false){
+    // 증분 업데이트인 경우 기존 DATA에 병합
+    if (isIncremental && DATA) {
+      console.log('=== Merging incremental data into existing DATA ===');
+      console.log('Before merge - DATA nodes:', DATA.nodes?.length || 0);
+      console.log('Incoming nodes to merge:', data.nodes?.length || 0);
+      
+      // 노드 병합 (Map 사용하여 중복 제거)
+      const nodeMap = new Map();
+      if (DATA.nodes) {
+        DATA.nodes.forEach(n => nodeMap.set(n.id, n));
+      }
+      if (data.nodes) {
+        data.nodes.forEach(n => nodeMap.set(n.id, n)); // 새 데이터로 덮어쓰기
+      }
+      
+      // 엣지 병합
+      const edgeMap = new Map();
+      if (DATA.edges) {
+        DATA.edges.forEach(e => edgeMap.set(e.id, e));
+      }
+      if (data.edges) {
+        data.edges.forEach(e => edgeMap.set(e.id, e));
+      }
+      
+      // 병합된 데이터로 DATA 업데이트
+      DATA = {
+        ...DATA,
+        ...data,
+        nodes: Array.from(nodeMap.values()),
+        edges: Array.from(edgeMap.values())
+      };
+      
+      // 범례도 병합
+      if (data.legend) {
+        DATA.legend = DATA.legend || {traits: {}, rules: {}};
+        if (data.legend.traits) {
+          DATA.legend.traits = {...(DATA.legend.traits || {}), ...data.legend.traits};
+        }
+        if (data.legend.rules) {
+          DATA.legend.rules = {...(DATA.legend.rules || {}), ...data.legend.rules};
+        }
+      }
+      
+      console.log('After merge - DATA nodes:', DATA.nodes?.length || 0);
+      console.log('After merge - DATA edges:', DATA.edges?.length || 0);
+    } else {
+      // 완전히 새로운 데이터로 교체 (초기 로드 또는 검색)
+      DATA = data;
+    }
+    
     TRAIT_PALETTE = buildTraitPaletteFromLegend();
 
     const NODE_COLOR = '#222222';
@@ -360,6 +409,20 @@
       
       console.log('Node hover payload:', payload);
       console.log('NodeDetails:', nodeDetails);
+      
+      // Rule 디버깅: traits에 ruleCode가 있는지 확인
+      if (nodeDetails && nodeDetails.traits && nodeDetails.traits.length > 0) {
+        console.log('=== NODE HOVER RULE DEBUG ===');
+        nodeDetails.traits.forEach((trait, idx) => {
+          console.log(`Trait ${idx}:`, {
+            traitCode: trait.traitCode,
+            traitName: trait.traitName,
+            ruleCode: trait.ruleCode,
+            RuleCode: trait.RuleCode,
+            rawTrait: trait
+          });
+        });
+      }
       
       window.parent && window.parent.postMessage({ type: 'node-hover', payload}, '*');
     });
@@ -760,6 +823,9 @@
       
       console.log(`Processing rule highlighting for Rule ID: ${ruleId}`);
       
+      // Rule 하이라이팅을 위한 노드 수집 (별도 Set 사용)
+      const ruleHighlightedNodes = new Set();
+      
       if (DATA && DATA.nodes) {
         let checkedNodes = 0;
         let matchedNodes = 0;
@@ -772,20 +838,21 @@
             let hasTargetRule = false;
             
             nodeData.traits.forEach(trait => {
-              const nodeRuleCode = trait.ruleCode;
-              if (nodeRuleCode && String(nodeRuleCode) === String(ruleId)) {
-                hasTargetRule = true;
-                console.log(`Node ${nodeData.id} has matching rule: trait ${trait.traitCode} with ruleCode ${nodeRuleCode}`);
+              // 다양한 형태의 ruleCode 지원
+              const nodeRuleCode = trait.ruleCode || trait.RuleCode || trait.rule_code;
+              if (nodeRuleCode !== null && nodeRuleCode !== undefined) {
+                if (String(nodeRuleCode) === String(ruleId)) {
+                  hasTargetRule = true;
+                  console.log(`Node ${nodeData.id} has matching rule: trait ${trait.traitCode} with ruleCode ${nodeRuleCode}`);
+                }
               }
             });
             
             if (hasTargetRule && GRAPH.hasNode(nodeData.id)) {
-              highlightedNodes.add(nodeData.id);
+              ruleHighlightedNodes.add(nodeData.id);
               matchedNodes++;
-              console.log(`Added node ${nodeData.id} to highlighted nodes`);
+              console.log(`Added node ${nodeData.id} to rule highlighted nodes`);
             }
-          } else {
-            console.log(`Node ${nodeData.id} has no traits or traits is not array:`, nodeData.traits);
           }
         });
         
@@ -793,6 +860,11 @@
       } else {
         console.log('No DATA or DATA.nodes available for rule highlighting');
       }
+      
+      // Rule 노드들도 highlightedNodes에 추가 (엣지 색상 처리를 위해)
+      ruleHighlightedNodes.forEach(nodeId => {
+        highlightedNodes.add(nodeId);
+      });
     }
 
     // PolyTrait 하이라이팅 처리 (기존 Trait 하이라이팅 로직을 OR 조건으로 재활용)
@@ -884,6 +956,11 @@
       console.log('Total highlighted nodes for PolyTrait:', highlightedNodes.size);
     }
 
+    // 우선순위에 따른 노드 색상 적용
+    // 1. 기본: 트레이트 하이라이팅
+    // 2. 덮어쓰기: 룰 하이라이팅 (트레이트보다 우선)
+    // 3. 최우선: PolyTrait 하이라이팅 (모든 것보다 우선)
+    
     // 트레이트 하이라이팅 색상 적용
     if (currentTraitHighlight) {
       highlightedNodes.forEach(node => {
@@ -891,7 +968,7 @@
       });
     }
     
-    // 룰 하이라이팅 색상 적용 (덮어쓰기) - 모든 Rule 확인
+    // 룰 하이라이팅 색상 적용 (트레이트 색상 덮어쓰기)
     if (currentRuleHighlight) {
       const ruleId = currentRuleHighlight.id;
       const processedColor = currentRuleHighlight.color;
@@ -907,16 +984,20 @@
             let hasTargetRule = false;
             
             nodeData.traits.forEach(trait => {
-              const nodeRuleCode = trait.ruleCode;
-              if (nodeRuleCode && String(nodeRuleCode) === String(ruleId)) {
-                hasTargetRule = true;
+              // 다양한 형태의 ruleCode 지원
+              const nodeRuleCode = trait.ruleCode || trait.RuleCode || trait.rule_code;
+              if (nodeRuleCode !== null && nodeRuleCode !== undefined) {
+                if (String(nodeRuleCode) === String(ruleId)) {
+                  hasTargetRule = true;
+                }
               }
             });
             
             if (hasTargetRule && GRAPH.hasNode(nodeData.id)) {
+              // Rule 노드는 Rule 색상으로 설정 (노드만 칠함)
               GRAPH.setNodeAttribute(nodeData.id, 'color', processedColor);
               coloredNodes++;
-              console.log(`Applied color ${processedColor} to node ${nodeData.id} for rule ${ruleId}`);
+              console.log(`Applied rule color ${processedColor} to node ${nodeData.id}`);
             }
           }
         });
@@ -925,7 +1006,7 @@
       }
     }
     
-    // PolyTrait 하이라이팅 색상 적용 (최우선)
+    // PolyTrait 하이라이팅 색상 적용 (최우선 - 모든 것 덮어쓰기)
     if (currentPolyTraitHighlight) {
       const polyTraitCode = currentPolyTraitHighlight.code;
       const processedColor = currentPolyTraitHighlight.color;
@@ -937,7 +1018,7 @@
       highlightedNodes.forEach(nodeId => {
         if (GRAPH.hasNode(nodeId)) {
           GRAPH.setNodeAttribute(nodeId, 'color', processedColor);
-          console.log(`Applied color ${processedColor} to node ${nodeId}`);
+          console.log(`Applied PolyTrait color ${processedColor} to node ${nodeId}`);
         }
       });
     }
@@ -1037,6 +1118,32 @@
     console.log('Message payload nodes:', msg.payload?.nodes?.length || 0);
     console.log('Message payload edges:', msg.payload?.edges?.length || 0);
     
+    // apply-graph 메시지일 때 Rule 정보 확인
+    if (msg.type === 'apply-graph' && msg.payload?.nodes) {
+      console.log('=== APPLY-GRAPH RULE DEBUG ===');
+      msg.payload.nodes.forEach((node, idx) => {
+        if (node.traits && node.traits.length > 0) {
+          let hasRule = false;
+          node.traits.forEach(trait => {
+            if (trait.ruleCode || trait.RuleCode) {
+              hasRule = true;
+            }
+          });
+          if (hasRule) {
+            console.log(`Node ${idx} (${node.id}): has Rule data`);
+            node.traits.forEach(trait => {
+              if (trait.ruleCode || trait.RuleCode) {
+                console.log(`  Trait ${trait.traitCode}: ruleCode=${trait.ruleCode || trait.RuleCode}`);
+              }
+            });
+          } else {
+            console.log(`Node ${idx} (${node.id}): NO Rule data in any traits`);
+          }
+        }
+      });
+      console.log('Apply-graph legend rules:', msg.payload.legend?.rules);
+    }
+    
     if (msg.type==='load-graph'){
       try {
         if (RENDERER === null) {
@@ -1053,7 +1160,7 @@
       }
     } else if (msg.type==='apply-graph'){
       // 렌더러/그래프 kill 없이 증분 반영만
-      addDataToGraph(msg.payload);
+      addDataToGraph(msg.payload, true); // 두 번째 인자로 증분 업데이트임을 표시
       updateHud();
     } else if (msg.type==='highlight-trait'){
       // 트레이트 하이라이팅

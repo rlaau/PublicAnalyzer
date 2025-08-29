@@ -37,7 +37,6 @@ type RopeBrief struct {
 type NodeInfo struct {
 	ID       string            `json:"id"`
 	Label    string            `json:"label"`
-	Color    string            `json:"color"` // 대표 로프 색
 	Size     int               `json:"size"`
 	RopeID   ropedomain.RopeID `json:"ropeId"`   // 대표 로프
 	RopeName string            `json:"ropeName"` // 대표 로프명
@@ -363,7 +362,7 @@ func (b *BadgerRopeDB) buildGraphFromVertex(start shareddomain.Address, depth in
 
 func (b *BadgerRopeDB) createNodeInfo(v *ropedomain.Vertex) NodeInfo {
 	var ropeID ropedomain.RopeID
-	var ropeColor, ropeName string
+	var ropeName string
 
 	// 모든 로프 수집
 	var allRopes []RopeBrief
@@ -378,33 +377,19 @@ func (b *BadgerRopeDB) createNodeInfo(v *ropedomain.Vertex) NodeInfo {
 	if len(allRopes) > 0 {
 		ropeID = allRopes[0].ID
 		ropeName = allRopes[0].Name
-		ropeColor = allRopes[0].Color
 	} else {
-		ropeColor = "#888888"
 		ropeName = "No Rope"
 	}
 
 	traits := make([]NodeTrait, len(v.Traits))
 	for i, tr := range v.Traits {
-		// TraitMark를 조회해서 실제 RuleCode 가져오기
-		tm := b.getTraitMark(tr.TraitID)
-		
-		// 현재 노드 주소에 해당하는 Rule 결정
-		var ruleCode ropedomain.RuleCode
-		if tm.AddressA == v.Address {
-			ruleCode = tm.RuleA
-		} else if tm.AddressB == v.Address {
-			ruleCode = tm.RuleB
-		} else {
-			ruleCode = 0 // 기본값
-		}
-		
+		// Vertex에 저장된 MyRule을 직접 사용 (TraitMark 조회 불필요)
 		traits[i] = NodeTrait{
 			TraitCode: tr.Trait,
 			TraitName: b.traitName(tr.Trait),
 			Partner:   tr.Partner.String(),
 			TraitID:   tr.TraitID,
-			RuleCode:  ruleCode,
+			RuleCode:  tr.MyRule, // 버텍스에서 직접 가져오기
 		}
 	}
 	// 주소 축약
@@ -413,11 +398,11 @@ func (b *BadgerRopeDB) createNodeInfo(v *ropedomain.Vertex) NodeInfo {
 	if len(addr) > 13 {
 		shortAddr = addr[:6] + ".." + addr[len(addr)-4:]
 	}
-	
+
 	// 라벨에 더 많은 정보 포함
 	ropeCount := len(allRopes)
 	traitCount := len(v.Traits)
-	
+
 	var label string
 	if ropeCount > 0 && traitCount > 0 {
 		label = fmt.Sprintf("%s\nR:%d T:%d", shortAddr, ropeCount, traitCount)
@@ -432,7 +417,6 @@ func (b *BadgerRopeDB) createNodeInfo(v *ropedomain.Vertex) NodeInfo {
 	return NodeInfo{
 		ID:       v.Address.String(),
 		Label:    label,
-		Color:    ropeColor,
 		Size:     5 + len(v.Traits),
 		RopeID:   ropeID,
 		RopeName: ropeName,
@@ -447,23 +431,23 @@ func (b *BadgerRopeDB) GetRopeInfo(id ropedomain.RopeID) (map[string]interface{}
 	if ropeMark.ID == 0 {
 		return nil, fmt.Errorf("rope not found: %d", id)
 	}
-	
+
 	// 멤버 주소를 문자열로 변환
 	memberStrs := make([]string, len(ropeMark.Members))
 	for i, addr := range ropeMark.Members {
 		memberStrs[i] = addr.String()
 	}
-	
+
 	info := map[string]interface{}{
-		"id":       int64(ropeMark.ID),
-		"trait":    int64(ropeMark.Trait),
-		"size":     int64(ropeMark.Size),
-		"volume":   int64(ropeMark.Volume),
-		"lastSeen": ropeMark.LastSeen.Unix(),
-		"members":  memberStrs,
+		"id":        int64(ropeMark.ID),
+		"trait":     int64(ropeMark.Trait),
+		"size":      int64(ropeMark.Size),
+		"volume":    int64(ropeMark.Volume),
+		"lastSeen":  ropeMark.LastSeen.Unix(),
+		"members":   memberStrs,
 		"traitName": b.traitName(ropeMark.Trait),
 	}
-	
+
 	return info, nil
 }
 

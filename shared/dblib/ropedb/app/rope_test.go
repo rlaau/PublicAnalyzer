@@ -3,14 +3,12 @@ package app_test
 import (
 	"encoding/binary"
 	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/api"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/app"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/infra"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/api"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/app"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
@@ -159,31 +157,14 @@ func linksOf(t *testing.T, impl *BadgerRopeDB, a shareddomain.Address) []domain.
 	t.Helper()
 	return impl.GetOrCreateVertex(a).Traits
 }
-func clearDir(path string) error {
-	dirEntries, err := os.ReadDir(path)
-	if err != nil {
-		// 디렉토리가 없다면 새로 만들기
-		if os.IsNotExist(err) {
-			return os.MkdirAll(path, 0o755)
-		}
-		return err
-	}
-	for _, entry := range dirEntries {
-		entryPath := filepath.Join(path, entry.Name())
-		if err := os.RemoveAll(entryPath); err != nil {
-			return fmt.Errorf("failed to remove %s: %w", entryPath, err)
-		}
-	}
-	return nil
-}
 
 // --- 시나리오 ---
 
 func TestRopeDB_UseCase_Spec(t *testing.T) {
 
 	testDir := computation.FindTestingStorageRootPath() + "/rope_visual"
-	clearDir(testDir)
-	db, err := NewRopeDBWithRoot(mode.TestingModeProcess, testDir, "rope_test", TraitLegend, RuleLegend, PolyTraitLegend) // 항상 새/빈 디렉터리
+	computation.SetCleanedDir(testDir)
+	db, err := NewRopeDBWithRoot(mode.TestingModeProcess, testDir, "rope_test", TraitLegend, RuleLegend, PolyTraitLegend)
 	if err != nil {
 		t.Fatal(err)
 	}

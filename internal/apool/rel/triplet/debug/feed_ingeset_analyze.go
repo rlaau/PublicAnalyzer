@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/api"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/app"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/api"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	txFeeder "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/app"

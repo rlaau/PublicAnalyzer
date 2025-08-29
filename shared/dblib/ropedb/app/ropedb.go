@@ -191,10 +191,9 @@ func (b *BadgerRopeDB) Close() error {
 	return b.db.Close()
 }
 
-// ------------------------------------------------------------
-// 6) 퍼블릭 API (Push*, View*)
-// ------------------------------------------------------------
-
+// * 결국 로프 DB 튜닝의 핵심
+// * PushTraitEvent가 빠르게 작동하면 됨
+// *근데, Vertex 읽기 쓰기 외엔 전부 비동기로 동작 중임
 func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 	debugEnabled := true
 	if b.publishCounter%10 == 0 && debugEnabled {
@@ -223,7 +222,7 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 	v2 := b.getOrCreateVertex(a2)
 
 	// --- 2) 링크 업서트 → TraitID 확보(둘 다 동일 ID 사용)
-	tid, created := b.ensureLink(v1, v2, ev.Trait)
+	tid, created := b.ensureLink(v1, v2, ev.Trait, ev.RuleA, ev.RuleB)
 
 	// --- 3) TraitMark Upsert 큐잉(단일 커맨드)
 	_ = b.busTrait.Publish(domain.TraitMarkUpsert{
@@ -356,11 +355,11 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 	case !prExist1 && !prExist2:
 		// 둘 다 PolyRope 없음 - 새 PolyRope 생성
 		newPolyID := b.nextPolyRopeID()
-		
+
 		// 두 Vertex에 PolyRopeRef 추가
 		b.setPolyRopeInVertex(v1, newPolyID, polyTraitCode)
 		b.setPolyRopeInVertex(v2, newPolyID, polyTraitCode)
-		
+
 		// PolyRopeMark 생성 (현재 Trait로 생성된 Rope만 포함)
 		_ = b.busPolyRope.Publish(PolyRopeMarkUpsert{
 			PolyRopeID:  newPolyID,
@@ -373,7 +372,7 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 	case prExist1 && !prExist2:
 		// v1만 PolyRope 있음 - v2를 v1의 PolyRope에 편입
 		b.setPolyRopeInVertex(v2, pr1, polyTraitCode)
-		
+
 		// 현재 Rope를 PolyRope에 추가 (중복 제거는 dedupRopes에서 처리)
 		_ = b.busPolyRope.Publish(PolyRopeMarkUpsert{
 			PolyRopeID:  pr1,
@@ -386,7 +385,7 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 	case !prExist1 && prExist2:
 		// v2만 PolyRope 있음 - v1을 v2의 PolyRope에 편입
 		b.setPolyRopeInVertex(v1, pr2, polyTraitCode)
-		
+
 		// 현재 Rope를 PolyRope에 추가 (중복 제거는 dedupRopes에서 처리)
 		_ = b.busPolyRope.Publish(PolyRopeMarkUpsert{
 			PolyRopeID:  pr2,
@@ -411,26 +410,26 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 			// 다른 PolyRope면 병합 - PolyRopeMark의 실제 멤버 수로 크기 비교
 			prm1 := b.getPolyRopeMark(pr1)
 			prm2 := b.getPolyRopeMark(pr2)
-			
+
 			// 각 PolyRope의 실제 멤버 수 계산
 			size1 := b.calculatePolyRopeSize(prm1.Ropes)
 			size2 := b.calculatePolyRopeSize(prm2.Ropes)
-			
+
 			target := pr1
 			source := pr2
-			
+
 			// 실제 멤버 수로 크기 비교
 			if size2 > size1 {
 				target, source = pr2, pr1
 			}
-			
+
 			// source PolyRope의 모든 Vertex들의 PolyRopeRef를 target으로 변경
 			b.updateAllVerticesPolyRope(source, target, polyTraitCode)
-			
+
 			// 합병된 PolyRopeMark 업서트 (source Ropes + 현재 Rope, 중복 제거)
 			srcMark := b.getPolyRopeMark(source)
 			addingRopes := append(srcMark.Ropes, currentRopeID)
-			
+
 			_ = b.busPolyRope.Publish(PolyRopeMarkUpsert{
 				PolyRopeID:  target,
 				PolyTrait:   polyTraitCode,
@@ -441,7 +440,7 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 			})
 		}
 	}
-	
+
 	// Vertex 동기 저장
 	b.putVertex(v1)
 	b.putVertex(v2)
@@ -741,7 +740,7 @@ func inSamePolyRopeByPolyTrait(v1, v2 *domain.Vertex, polyTrait domain.PolyTrait
 			break
 		}
 	}
-	
+
 	// v2에서 해당 PolyTrait의 PolyRopeID 찾기
 	var polyRopeID2 domain.PolyRopeID
 	found2 := false
@@ -752,7 +751,7 @@ func inSamePolyRopeByPolyTrait(v1, v2 *domain.Vertex, polyTrait domain.PolyTrait
 			break
 		}
 	}
-	
+
 	// 둘 다 PolyRope가 있고, 같은 ID면 true
 	return found1 && found2 && polyRopeID1 == polyRopeID2
 }
@@ -798,7 +797,7 @@ func (b *BadgerRopeDB) incr(key string) uint64 {
 }
 
 // v1<->v2, Trait 기준으로 링크 업서트하여 공통 TraitID 보장
-func (b *BadgerRopeDB) ensureLink(v1, v2 *domain.Vertex, t domain.TraitCode) (domain.TraitID, bool) {
+func (b *BadgerRopeDB) ensureLink(v1, v2 *domain.Vertex, t domain.TraitCode, ruleA, ruleB domain.RuleCode) (domain.TraitID, bool) {
 	find := func(v *domain.Vertex, p shareddomain.Address, t domain.TraitCode) (int, bool) {
 		for i, l := range v.Traits {
 			if l.Partner == p && l.Trait == t {
@@ -810,21 +809,30 @@ func (b *BadgerRopeDB) ensureLink(v1, v2 *domain.Vertex, t domain.TraitCode) (do
 	i1, ok1 := find(v1, v2.Address, t)
 	i2, ok2 := find(v2, v1.Address, t)
 
-	switch {
-	case ok1 && ok2:
+	if ok1 && ok2 {
+		// 이미 양쪽에 링크가 있으면 룰 정보 업데이트
+		v1.Traits[i1].MyRule = ruleA
+		v1.Traits[i1].PartnerRule = ruleB
+		v2.Traits[i2].MyRule = ruleB
+		v2.Traits[i2].PartnerRule = ruleA
 		return v1.Traits[i1].TraitID, false
-	case ok1 && !ok2:
-		id := v1.Traits[i1].TraitID
-		v2.Traits = append(v2.Traits, domain.TraitRef{Partner: v1.Address, Trait: t, TraitID: id})
-		return id, false
-	case !ok1 && ok2:
-		id := v2.Traits[i2].TraitID
-		v1.Traits = append(v1.Traits, domain.TraitRef{Partner: v2.Address, Trait: t, TraitID: id})
-		return id, false
-	default:
+	} else {
 		id := b.nextTraitID()
-		v1.Traits = append(v1.Traits, domain.TraitRef{Partner: v2.Address, Trait: t, TraitID: id})
-		v2.Traits = append(v2.Traits, domain.TraitRef{Partner: v1.Address, Trait: t, TraitID: id})
+		// 양쪽 모두 새로 생성 (룰 정보 포함)
+		v1.Traits = append(v1.Traits, domain.TraitRef{
+			TraitID:     id,
+			Trait:       t,
+			Partner:     v2.Address,
+			MyRule:      ruleA,
+			PartnerRule: ruleB,
+		})
+		v2.Traits = append(v2.Traits, domain.TraitRef{
+			TraitID:     id,
+			Trait:       t,
+			Partner:     v1.Address,
+			MyRule:      ruleB,
+			PartnerRule: ruleA,
+		})
 		return id, true
 	}
 }
@@ -906,7 +914,7 @@ func (b *BadgerRopeDB) calculatePolyRopeSize(ropeIDs []domain.RopeID) int {
 func (b *BadgerRopeDB) updateAllVerticesPolyRope(sourcePolyRopeID, targetPolyRopeID domain.PolyRopeID, polyTrait domain.PolyTraitCode) {
 	// source PolyRope의 모든 Rope 가져오기
 	srcMark := b.getPolyRopeMark(sourcePolyRopeID)
-	
+
 	// 각 Rope의 모든 멤버 Vertex 업데이트
 	for _, ropeID := range srcMark.Ropes {
 		ropeMark := b.getRopeMark(ropeID)

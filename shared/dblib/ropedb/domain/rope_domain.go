@@ -38,7 +38,6 @@ type RuleCode uint16
 // 	RuleCEX
 // )
 
-// Vertex: 요약 저장(빠른 R/W)
 type Vertex struct {
 	Address   shareddomain.Address
 	PolyRopes []PolyRopeRef
@@ -70,9 +69,11 @@ type RopeRef struct {
 }
 
 type TraitRef struct {
-	TraitID TraitID
-	Trait   TraitCode
-	Partner shareddomain.Address
+	TraitID     TraitID
+	Trait       TraitCode
+	Partner     shareddomain.Address
+	MyRule      RuleCode // 내 역할에 대한 룰 코드
+	PartnerRule RuleCode // 파트너 역할에 대한 룰 코드
 }
 
 // RopeMark: Rope에 대한 저장 문서(조회 시 조립의 근간)
@@ -86,6 +87,7 @@ type RopeMark struct {
 }
 
 // TraitMark: Trait(엣지)에 대한 저장 문서
+// 20+8+2(20+8)+8+8= 100
 type TraitMark struct {
 	ID    TraitID
 	Trait TraitCode

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/infra"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"

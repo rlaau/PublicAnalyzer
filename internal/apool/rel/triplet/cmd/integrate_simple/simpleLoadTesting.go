@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/app"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/infra"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/app"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	txFeeder "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/app"
 	feederDomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/domain"

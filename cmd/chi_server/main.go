@@ -8,8 +8,8 @@ import (
 	"syscall"
 	"time"
 
+	tripletapi "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/api"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/cce/api"
-	tripletapi "github.com/rlaaudgjs5638/chainAnalyzer/internal/triplet/api"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server"
 )
 
