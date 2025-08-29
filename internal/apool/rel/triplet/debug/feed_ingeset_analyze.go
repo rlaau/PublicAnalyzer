@@ -15,7 +15,6 @@ import (
 	relapi "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/api"
 	reliface "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/iface"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
@@ -84,31 +83,8 @@ func main() {
 		panic("failed to create TxDefineLoader")
 	}
 
-	//EOA analyzer 만들기
-	analyzerConfig := &app.TripletConfig{
-		Name:                "Simplified-Pipeline-Analyzer",
-		Mode:                mode.TestingModeProcess,
-		ChannelBufferSize:   1_000_000,
-		WorkerCount:         1,
-		StatsInterval:       2_000_000_000, // 2초
-		HealthCheckInterval: 3_000_000_000, // 3초
-		//모든 경로는 IsolatedConfiger의 경로를 씀으로써 안전하게 고립된 값만 사용함
-		IsolatedDBPath: isolatedPathConfig.RootOfIsolatedDir,
-
-		AutoCleanup:     false, // ←★ 결과 보존 위해 비활성화
-		ResultReporting: true,
-	}
 	apool, err := aapp.CreateAnalzerPoolFrame(mode.TestingModeProcess, nil)
-	relPool, err := relapp.CreateRelationPoolFrame(mode.TestingModeProcess, apool)
-	analyzer, err := app.CreateAnalyzer(analyzerConfig, ctx, relPool)
-	relPool.Register(analyzer, nil)
-	if err != nil {
-		panic("failed to create analyzer")
-	}
-	fmt.Printf("   ✅ Simplified pipeline with API server created\n")
-	apool.Register(relPool, nil)
-	// 4. 서버 생성
-	fmt.Println("\n4️⃣ Running simplified pipeline test with API server...")
+	relPool := relapp.ComposeRelPool(mode.TestingModeProcess, "feed_ingest_ee_test", apool)
 	monitoringServer := server.NewServer(":8080")
 	monitoringServer.SetupBasicRoutes()
 	relAPI := relapi.NewRelPoolAPIHandler(relPool)
@@ -118,6 +94,7 @@ func main() {
 		fmt.Printf("   ✅ Relation Pool API registered successfully\n")
 	}
 
+	fmt.Println("\n4️⃣ Running simplified pipeline test with API server...")
 	//*세팅 끝.본격적으로 시작하는 파트
 	// 1. 서버를 백그라운드에서 시작
 	go func() {

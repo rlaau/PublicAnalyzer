@@ -37,7 +37,7 @@ func main() {
 	config := &app.TripletConfig{
 		Name:                "Simple-Load-Test",
 		Mode:                mode.TestingModeProcess,
-		ChannelBufferSize:   500,
+		BusCapLimit:         500,
 		WorkerCount:         2,
 		MaxProcessingTime:   50_000_000,
 		StatsInterval:       3_000_000_000, // 3초
@@ -52,7 +52,7 @@ func main() {
 	defer cancel()
 	relPool, err := relapp.CreateRelationPoolFrame(mode.TestingModeProcess, nil)
 	// 분석기 생성
-	analyzer, err := app.CreateAnalyzer(config, ctx, relPool)
+	analyzer, err := app.CreateTriplet(config, relPool)
 	relPool.Register(analyzer, nil)
 	if err != nil {
 		log.Fatalf("❌ Failed to create analyzer: %v", err)

@@ -16,3 +16,13 @@ func (m ProcessingMode) IsTest() bool {
 	}
 	panic("mode: ProcessingMode.IsTest() -> 입략값 에러")
 }
+
+func (m ProcessingMode) String() string {
+	if m == TestingModeProcess {
+		return "mode.TestingModeProcess"
+	}
+	if m == ProductionModeProcess {
+		return "mode.ProductionModeProcess"
+	}
+	return "mode.UnknownValue"
+}

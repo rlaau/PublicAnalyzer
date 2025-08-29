@@ -11,12 +11,13 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/workerpool"
 )
 
-func NewInfraByConfig(config *TripletConfig, ctx context.Context) infra.TotalEOAAnalyzerInfra {
+func NewInfraByConfig(config *TripletConfig) infra.TotalEOAAnalyzerInfra {
 	var isolateColusre = computation.ComputeRelClosure(config.IsolatedDBPath)
 	log.Printf("EOA Analyzer의 Infra 세팅 중: %s (Mode: %s)", config.Name, config.Mode)
 	cexSet, err := loadCEXSet(isolateColusre("cex.txt"))
@@ -36,16 +37,21 @@ func NewInfraByConfig(config *TripletConfig, ctx context.Context) infra.TotalEOA
 	log.Printf("🧠 Ground knowledge loaded")
 
 	batchConsumer := loadKafkaBatchConsumer(config.Mode, config.Name)
-	//* 워커 풀에 쓸 채널 생성
-	txJobChannel := make(chan workerpool.Job, config.ChannelBufferSize)
+	// 워커 풀에 쓸 채널 생성
+	txJobBus, err := eventbus.NewWithPath[workerpool.Job](isolateColusre("workerPoolChan.jsonl"), config.BusCapLimit)
+	if err != nil {
+		panic("txJob EventBus생성 중 패닉 발생")
+	}
 	//* 워커풀 생성 및 채널 등록
-	workerPool := workerpool.New(ctx, config.WorkerCount, txJobChannel)
+	//*여기선 ctx를 그냥 백그라운드로 등록. 부모 컨텍스트는 Start시 기존 것 shuDown후 등록
+	ctx := context.Background()
+	workerPool := workerpool.New(ctx, config.WorkerCount, txJobBus)
 	log.Printf("🔧 WorkerPool initialized with %d workers", config.WorkerCount)
 	pendingDB, err := infra.NewFFBadgerPendingRelationRepo(isolateColusre("pending"))
 	if err != nil {
 		panic("펜딜 레포지토리를 열지 못함.")
 	}
-	return *infra.NewEOAInfra(groundKnowledge, txJobChannel, workerPool, batchConsumer, pendingDB)
+	return *infra.NewTripletInfra(groundKnowledge, txJobBus, workerPool, batchConsumer, pendingDB)
 
 }
 

@@ -1,4 +1,5 @@
-// Package eventbus: SPSC(다중생산자→단일소비자) 이벤트 버스
+// Package eventbus: SPSC(다중생산자→다중소비자) 이벤트 버스
+// 정확히 말하면 컨슈머는 단일 채널이긴 한데, 병렬로 채널에서 읽어도 문제가 없음
 // - 내부: pending []T + sync.Cond + out <-chan T(1개)
 // - 시작 시 JSONL 로드→삭제 / 종료 시 pending JSONL 저장 (동기)
 // - busy-wait 없음 (Cond 기반 대기)
@@ -36,6 +37,8 @@ type EventBus[T any] struct {
 // - 시작 시 filePath의 JSONL을 로드해 pending에 적재, 로드 후 파일 삭제.
 // - capLimit>0이면 Publish가 cap을 넘을 때 cond wait로 역압.
 func NewWithPath[T any](filePath string, capLimit int) (*EventBus[T], error) {
+	filePath = ensureJSONLExt(filePath) // ← 여기서 단 한 줄로 강제
+
 	b := &EventBus[T]{
 		out:      make(chan T),
 		filePath: filePath,
@@ -149,6 +152,18 @@ func (b *EventBus[T]) Close() {
 	b.cv.Broadcast() // 대기 중 전부 깨워서 종료 경로 진입
 	b.mu.Unlock()
 	b.wg.Wait()
+}
+
+// Len: 현재 pending 큐 길이(정확값). 내부 락으로 보호됨.
+func (b *EventBus[T]) Len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.pending)
+}
+
+// Cap: 설정된 capLimit을 반환. 0 또는 음수면 '무제한' 의미.
+func (b *EventBus[T]) Cap() int {
+	return b.capLimit
 }
 
 // ---- JSONL helpers ----

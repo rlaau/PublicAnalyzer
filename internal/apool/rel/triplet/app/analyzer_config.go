@@ -1,8 +1,6 @@
 package app
 
 import (
-	"context"
-
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
@@ -14,7 +12,7 @@ type TripletConfig struct {
 	Mode mode.ProcessingMode // 동작 모드 (production/testing)
 
 	// 성능 설정
-	ChannelBufferSize int   // 채널 버퍼 크기
+	BusCapLimit       int   // 채널 버퍼 크기
 	WorkerCount       int   // 워커 고루틴 수
 	MaxProcessingTime int64 // 트랜잭션 처리 최대 시간 (나노초)
 
@@ -35,15 +33,15 @@ type TripletConfig struct {
 // AnalyzerFactory 분석기 팩토리 함수
 type AnalyzerFactory func(config *TripletConfig) (CommonTriplet, error)
 
-// CreateAnalyzer 설정에 따라 적절한 분석기 생성
-func CreateAnalyzer(config *TripletConfig, ctx context.Context, relPool iface.RelPort) (CommonTriplet, error) {
+// CreateTriplet 설정에 따라 적절한 분석기 생성
+func CreateTriplet(config *TripletConfig, relPool iface.RelPort) (CommonTriplet, error) {
 	switch config.Mode {
 	case mode.ProductionModeProcess:
-		return NewProductionEOAAnalyzer(config, ctx, relPool)
+		return NewProductionEOAAnalyzer(config, relPool)
 	case mode.TestingModeProcess:
-		return NewTestingEOAAnalyzer(config, ctx, relPool)
+		return NewTestingEOAAnalyzer(config, relPool)
 	default:
-		return nil, ErrInvalidAnalyzerMode{Mode: string(config.Mode)}
+		return nil, ErrInvalidAnalyzerMode{Mode: config.Mode.String()}
 	}
 }
 

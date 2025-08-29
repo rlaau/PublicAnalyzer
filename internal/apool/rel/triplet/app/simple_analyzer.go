@@ -84,14 +84,14 @@ type SimpleAnalyzerStats struct {
 }
 
 // NewProductionEOAAnalyzer 프로덕션용 분석기 생성
-func NewProductionEOAAnalyzer(config *TripletConfig, ctx context.Context, relPool iface.RelPort) (CommonTriplet, error) {
-	infraStructure := NewInfraByConfig(config, ctx)
+func NewProductionEOAAnalyzer(config *TripletConfig, relPool iface.RelPort) (CommonTriplet, error) {
+	infraStructure := NewInfraByConfig(config)
 	return newSimpleAnalyzer(config, infraStructure, relPool)
 }
 
 // NewTestingEOAAnalyzer 테스트용 분석기 생성
-func NewTestingEOAAnalyzer(config *TripletConfig, ctx context.Context, relPool iface.RelPort) (CommonTriplet, error) {
-	infraStructure := NewInfraByConfig(config, ctx)
+func NewTestingEOAAnalyzer(config *TripletConfig, relPool iface.RelPort) (CommonTriplet, error) {
+	infraStructure := NewInfraByConfig(config)
 	return newSimpleAnalyzer(config, infraStructure, relPool)
 }
 
@@ -130,10 +130,10 @@ func (a *SimpleTriplet) RopeDB() ropeapp.RopeDB {
 }
 
 // Start 분석기 시작
-// TODO 추후엔 당연히!!! 배치 컨슈머 아니라 트리 형식으로 받을 것
+// TODO 추후엔 당연히!!! 배치 컨슈머에서 자기만 직접 받는게 아니라 apool에서부터 정식으로 받을 것
 func (a *SimpleTriplet) Start(ctx context.Context) error {
 	log.Printf("🚀 Starting Triplet: %s", a.config.Name)
-
+	a.infra.WorkerPool.Restart(ctx)
 	// Consumer 시작 (배치 모드 or 단건 모드)
 	if a.batchMode && a.infra.BatchConsumer != nil {
 		// 배치 모드: 배치 Consumer 시작
@@ -174,20 +174,20 @@ func (a *SimpleTriplet) Stop() error {
 // TODO TxJob의 Do()가 서로 경합 발생. 패닉은 아니지만, 암묵적 성능 저하 발생중
 // TODO 문제에 대한 진단 및 추후 개선 방안은 /debug의 upgrade_solution.md에 자세히 적어놨음.
 func (a *SimpleTriplet) ProcessTransaction(tx *shareddomain.MarkedTransaction) error {
-	job := NewTransactionJob(tx, a, 0) // workerID는 워커풀에서 자동 관리
-	select {
-	case a.infra.TxJobChannel <- job:
-		return nil
-	default:
+	job := NewTransactionJob(tx, a, 0)                    // workerID는 워커풀에서 자동 관리
+	if err := a.infra.TxJobBus.Publish(job); err != nil { // <- 블로킹
+		// 종료(stopping/closed) 중엔 에러가 날 수 있으니 드롭 카운트만 올림
 		atomic.AddInt64(&a.stats.DroppedTxs, 1)
-		return fmt.Errorf("channel full, dropped tx: %s", tx.TxID.String()[:8])
+		return fmt.Errorf("enqueue failed: %v", err)
 	}
+	return nil
 }
 
 // ProcessTransactions 배치 트랜잭션 처리
 func (a *SimpleTriplet) ProcessTransactions(txs []*shareddomain.MarkedTransaction) error {
 	for _, tx := range txs {
 		if err := a.ProcessTransaction(tx); err != nil {
+			atomic.AddInt64(&a.stats.DroppedTxs, 1)
 			continue // 개별 실패는 무시하고 계속 처리
 		}
 	}
@@ -260,14 +260,12 @@ func (a *SimpleTriplet) processTransactionParrell(messages []kafka.Message[*shar
 	for _, tx := range transactions {
 		// 워커풀로 작업 전달
 		job := NewTransactionJob(tx, a, 0)
-		select {
-		case a.infra.TxJobChannel <- job:
-			// 성공
-		default:
-			// 채널이 꽉 찬 경우 잠시 입력 멈추기
-			fmt.Printf("현재 EOA Analyzer의 워커풀 채널이 다 들어찼음. 0.1초간 입력을 블로킹함.")
+
+		if err := a.infra.TxJobBus.Publish(job); err != nil {
+			atomic.AddInt64(&a.stats.DroppedTxs, 1)
+			fmt.Printf("현재 EOA Analyzer의 워커풀 채널에 에러가 남. 0.1초간 입력을 블로킹함.")
 			time.Sleep(10 * time.Millisecond) // 너무 무거운 대기는 피하기
-			// 채널이 가득 찬 경우 드롭
+			continue                          // 개별 실패는 무시하고 계속 처리
 		}
 	}
 
@@ -346,8 +344,8 @@ func (a *SimpleTriplet) printStatistics() {
 	dropped := atomic.LoadInt64(&a.stats.DroppedTxs)
 
 	uptime := time.Since(a.stats.StartTime)
-	channelUsage := len(a.infra.TxJobChannel)
-	channelCapacity := cap(a.infra.TxJobChannel)
+	channelUsage := a.infra.TxJobBus.Len()
+	channelCapacity := a.infra.TxJobBus.Cap()
 	usagePercent := float64(channelUsage) / float64(channelCapacity) * 100
 
 	log.Printf("📊 [%s] %s Statistics:", a.config.Mode, a.config.Name)
@@ -378,7 +376,7 @@ func (a *SimpleTriplet) printStatistics() {
 // GetStatistics 통계 반환
 func (a *SimpleTriplet) GetStatistics() map[string]any {
 	return map[string]any{
-		"mode":               string(a.config.Mode),
+		"mode":               a.config.Mode.String(),
 		"name":               a.config.Name,
 		"total_processed":    atomic.LoadInt64(&a.stats.TotalProcessed),
 		"success_count":      atomic.LoadInt64(&a.stats.SuccessCount),
@@ -388,8 +386,8 @@ func (a *SimpleTriplet) GetStatistics() map[string]any {
 		"window_updates":     atomic.LoadInt64(&a.stats.WindowUpdates),
 		"dropped_txs":        atomic.LoadInt64(&a.stats.DroppedTxs),
 		"uptime_seconds":     time.Since(a.stats.StartTime).Seconds(),
-		"channel_usage":      len(a.infra.TxJobChannel),
-		"channel_capacity":   cap(a.infra.TxJobChannel),
+		"channel_usage":      a.infra.TxJobBus.Len(),
+		"channel_capacity":   a.infra.TxJobBus.Cap(),
 	}
 }
 
@@ -414,7 +412,7 @@ func (a *SimpleTriplet) IsHealthy() bool {
 
 // GetChannelStatus 채널 상태 반환
 func (a *SimpleTriplet) GetChannelStatus() (int, int) {
-	return len(a.infra.TxJobChannel), cap(a.infra.TxJobChannel)
+	return a.infra.TxJobBus.Len(), a.infra.TxJobBus.Cap()
 }
 
 // shutdown 우아한 종료
@@ -442,7 +440,7 @@ func (a *SimpleTriplet) shutdown() error {
 	}
 	// 활동이 종료된 채널을 닫기
 	a.shutdownOnce.Do(func() {
-		close(a.infra.TxJobChannel)
+		a.infra.TxJobBus.Close()
 	})
 
 	// 최종 통계 출력

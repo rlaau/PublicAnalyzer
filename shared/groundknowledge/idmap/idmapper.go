@@ -6,13 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/edsrzf/mmap-go"
 
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/workerpool"
 )
 
@@ -59,8 +62,8 @@ type Mapper struct {
 	dbDir         string
 
 	// 고정 경량 워커풀
-	jobCh chan workerpool.Job
-	wp    *workerpool.Pool
+	jobBus *eventbus.EventBus[workerpool.Job]
+	wp     *workerpool.Pool
 }
 
 // ===== 설정 =====
@@ -213,8 +216,19 @@ func openMapper(cfg Config) (*Mapper, error) {
 	if cfg.PoolQueueSize <= 0 {
 		cfg.PoolQueueSize = 2048
 	}
-	mp.jobCh = make(chan workerpool.Job, cfg.PoolQueueSize)
-	mp.wp = workerpool.New(context.Background(), cfg.NumWorkers, mp.jobCh)
+	root := filepath.Join(computation.FindTestingStorageRootPath(), "id_mapper_test")
+	// 2) 첫 번째 버스 생성
+	bus, err := eventbus.NewWithRoot[workerpool.Job](
+		func() string { return root },
+		"idmap.jsonl",
+		/*capLimit*/ 6,
+	)
+	if err != nil {
+		panic("이벤트 버스 생성에서 에러남")
+	}
+
+	mp.jobBus = bus
+	mp.wp = workerpool.New(context.Background(), cfg.NumWorkers, mp.jobBus)
 
 	return mp, nil
 }
@@ -224,8 +238,8 @@ func (m *Mapper) Close() error {
 	if m.wp != nil {
 		m.wp.Shutdown()
 	}
-	if m.jobCh != nil {
-		close(m.jobCh) // 더 이상 잡을 보내지 않음
+	if m.jobBus != nil {
+		m.jobBus.Close()
 	}
 
 	m.mu.Lock()
@@ -596,7 +610,7 @@ func (m *Mapper) LookupExistingBatch(ctx context.Context, addrs []domain.Address
 
 	// 잡 발행
 	for s := 0; s < n; s += chunkSize {
-		e := min(s + chunkSize, n)
+		e := min(s+chunkSize, n)
 		wg.Add(1)
 		job := &lookupChunkJob{
 			m:       m,
@@ -610,7 +624,7 @@ func (m *Mapper) LookupExistingBatch(ctx context.Context, addrs []domain.Address
 		// 완료 신호는 외부에서 wait
 		go func(j workerpool.Job) {
 			defer wg.Done()
-			m.jobCh <- j
+			m.jobBus.Publish(j)
 		}(job)
 	}
 
