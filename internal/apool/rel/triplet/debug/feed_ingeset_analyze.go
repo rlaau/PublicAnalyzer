@@ -10,10 +10,12 @@ import (
 	"syscall"
 	"time"
 
+	relapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/api"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	txFeeder "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/app"
 	feederdomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/domain"
 )
@@ -98,7 +100,9 @@ func main() {
 		AutoCleanup:     false,                          // ←★ 결과 보존 위해 비활성화
 		ResultReporting: true,
 	}
-	analyzer, err := app.CreateAnalyzer(analyzerConfig, ctx)
+	relPool, err := relapp.CreateRelationPoolFrame(mode.TestingModeProcess)
+	analyzer, err := app.CreateAnalyzer(analyzerConfig, ctx, relPool)
+	relPool.Register(analyzer, nil, nil)
 	if err != nil {
 		panic("failed to create analyzer")
 	}

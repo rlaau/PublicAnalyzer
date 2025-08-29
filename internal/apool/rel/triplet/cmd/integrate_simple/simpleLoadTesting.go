@@ -8,9 +8,11 @@ import (
 	"strings"
 	"time"
 
+	relapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	txFeeder "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/app"
 	feederDomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/domain"
 )
@@ -50,9 +52,10 @@ func main() {
 	// 컨텍스트 설정 (15초 테스트)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-
+	relPool, err := relapp.CreateRelationPoolFrame(mode.TestingModeProcess)
 	// 분석기 생성
-	analyzer, err := app.CreateAnalyzer(config, ctx)
+	analyzer, err := app.CreateAnalyzer(config, ctx, relPool)
+	relPool.Register(analyzer, nil, nil)
 	if err != nil {
 		log.Fatalf("❌ Failed to create analyzer: %v", err)
 	}

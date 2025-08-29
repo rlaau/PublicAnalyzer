@@ -7,7 +7,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/iface"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/roperepo"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
+	ropeapp "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
@@ -15,28 +18,21 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring/tools"
 )
 
-// RelationPool내의 관계 분석기들
-type TripletPort interface{}
-type CreationPort interface{}
-
-// 관계 분석기 간 커멘드 통신 위한 이벤드 정의
-type TripletEventMsg struct{}
-type CreationEventMsg struct{}
-
 // 관계 분석 시, 각 단일 분석기가 통신하기 위한 풀
 type RelationPool struct {
 	isTest mode.ProcessingMode
 
 	ports struct {
-		triplet  TripletPort
-		creation CreationPort
+		triplet  iface.TripletPort
+		creation iface.CreationPort
 	}
 
-	busTriplet  *eventbus.EventBus[TripletEventMsg]
-	busCreation *eventbus.EventBus[CreationEventMsg]
+	busTriplet  *eventbus.EventBus[iface.TripletEventMsg]
+	busCreation *eventbus.EventBus[iface.CreationEventMsg]
 
 	fanoutManager *TxFanoutManager
 	closed        atomic.Bool
+	RopeRepo      ropeapp.RopeDB
 }
 
 func CreateRelationPoolFrame(isTest mode.ProcessingMode) (*RelationPool, error) {
@@ -54,24 +50,30 @@ func CreateRelationPoolFrame(isTest mode.ProcessingMode) (*RelationPool, error) 
 	if !isTest.IsTest() {
 		capLimit = 8192
 	}
-	busTriplet, err := eventbus.NewWithRoot[TripletEventMsg](root, rel("triplet"), capLimit)
+	busTriplet, err := eventbus.NewWithRoot[iface.TripletEventMsg](root, rel("triplet"), capLimit)
 	if err != nil {
 		return nil, err
 	}
-	busCreation, err := eventbus.NewWithRoot[CreationEventMsg](root, rel("creation"), capLimit)
+	busCreation, err := eventbus.NewWithRoot[iface.CreationEventMsg](root, rel("creation"), capLimit)
 	if err != nil {
 		busTriplet.Close()
 		return nil, err
+	}
+	ropeRepo, err := roperepo.NewRelGraphDB(isTest)
+	if err != nil {
+		busTriplet.Close()
+		busCreation.Close()
 	}
 
 	return &RelationPool{
 		isTest:      isTest,
 		busTriplet:  busTriplet,
 		busCreation: busCreation,
+		RopeRepo:    ropeRepo,
 	}, nil
 }
 
-func (r *RelationPool) Register(triplet TripletPort, creation CreationPort, bp tools.CountingBackpressure) {
+func (r *RelationPool) Register(triplet iface.TripletPort, creation iface.CreationPort, bp tools.CountingBackpressure) {
 
 	defaultBatchSize := 5000
 	defTimeout := 300 //ms
@@ -106,27 +108,28 @@ func (r *RelationPool) Register(triplet TripletPort, creation CreationPort, bp t
 	}
 	r.ports.triplet = triplet
 	r.ports.creation = creation
+
 }
 
 // 포트 기반 뷰어
-func (r *RelationPool) GetTripletPort() TripletPort { return r.ports.triplet }
+func (r *RelationPool) GetTripletPort() iface.TripletPort { return r.ports.triplet }
 
-func (r *RelationPool) GetCreationPort() CreationPort { return r.ports.creation }
+func (r *RelationPool) GetCreationPort() iface.CreationPort { return r.ports.creation }
 
 // 이벤트 버스 기반 커멘더
-func (r *RelationPool) EnqueueToTriplet(v TripletEventMsg) error {
+func (r *RelationPool) EnqueueToTriplet(v iface.TripletEventMsg) error {
 	return r.busTriplet.Publish(v)
 }
-func (r *RelationPool) EnqueueToCreation(v CreationEventMsg) error {
+func (r *RelationPool) EnqueueToCreation(v iface.CreationEventMsg) error {
 	return r.busCreation.Publish(v)
 }
 
 // 이벤트 버스 기반 소비
 // 분선 모듈 상호 간의 이벤트버스
-func (r *RelationPool) DequeueTriplet() <-chan TripletEventMsg {
+func (r *RelationPool) DequeueTriplet() <-chan iface.TripletEventMsg {
 	return r.busTriplet.Dequeue()
 }
-func (r *RelationPool) DequeueCreation() <-chan CreationEventMsg {
+func (r *RelationPool) DequeueCreation() <-chan iface.CreationEventMsg {
 	return r.busCreation.Dequeue()
 }
 

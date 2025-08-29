@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	relapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
@@ -28,6 +29,7 @@ type DualManager struct {
 	frontIndex             int           // 가장 오래된 버킷 인덱스 (제거 대상)
 	rearIndex              int           // 가장 최신 버킷 인덱스 (추가 위치)
 	bucketCount            int           // 현재 버킷 개수 (0~21)
+	relPool                *relapp.RelationPool
 
 	// Synchronization (최적화된 뮤텍스)
 	mutex        sync.RWMutex // 전체 구조체 보호용 (구조 변경 등)
@@ -41,8 +43,8 @@ type TimeBucket struct {
 	ToUsers   map[domain.Address]chaintimer.ChainTime // to_address -> first_active_time
 }
 
-// NewTimeBucket creates a new time bucket
-func NewTimeBucket(startTime chaintimer.ChainTime) *TimeBucket {
+// newTimeBucket creates a new time bucket
+func newTimeBucket(startTime chaintimer.ChainTime) *TimeBucket {
 	return &TimeBucket{
 		StartTime: startTime,
 		EndTime:   startTime.Add(SlideInterval),
@@ -51,7 +53,7 @@ func NewTimeBucket(startTime chaintimer.ChainTime) *TimeBucket {
 }
 
 // NewDualManager creates a new dual manager instance
-func NewDualManager(managerInfra infra.DualManagerInfra) (*DualManager, error) {
+func NewDualManager(managerInfra infra.DualManagerInfra, pool *relapp.RelationPool) (*DualManager, error) {
 
 	dm := &DualManager{
 		infra:                  managerInfra,
@@ -59,6 +61,7 @@ func NewDualManager(managerInfra infra.DualManagerInfra) (*DualManager, error) {
 		frontIndex:             0, // 첫 번째 버킷이 들어갈 위치
 		rearIndex:              0, // 첫 번째 버킷이 들어갈 위치
 		bucketCount:            0, // 초기 버킷 개수
+		relPool:                pool,
 	}
 
 	return dm, nil
@@ -221,7 +224,7 @@ func (dm *DualManager) saveCexAndDepositToGraphDB(cex, deposit domain.Address, t
 		addrAndRule2,
 		txScala,
 	)
-	return dm.infra.GraphRepo.PushTraitEvent(traitEvent)
+	return dm.relPool.RopeRepo.PushTraitEvent(traitEvent)
 }
 
 // saveDualRelationToGraphDB saves a connection between two EOAs to the graph database
@@ -248,7 +251,7 @@ func (dm *DualManager) saveDualRelationToGraphDB(fromScala infra.FromScala, toAd
 		addressAndRule2,
 		txScala,
 	)
-	return dm.infra.GraphRepo.PushTraitEvent(traitEvent)
+	return dm.relPool.RopeRepo.PushTraitEvent(traitEvent)
 
 }
 
@@ -322,7 +325,7 @@ func (dm *DualManager) findOrCreateTimeBucket(txTime chaintimer.ChainTime) int {
 	// 첫 번째 트랜잭션인 경우 - 첫 트랜잭션 시간을 기준으로 첫 버킷 생성
 	if dm.bucketCount == 0 {
 		weekStart := dm.calculateWeekStart(txTime)
-		dm.firstActiveTimeBuckets[0] = NewTimeBucket(weekStart)
+		dm.firstActiveTimeBuckets[0] = newTimeBucket(weekStart)
 
 		// 순환 큐 초기화
 		dm.frontIndex = 0  // 첫 번째 버킷이 가장 오래된 버킷
@@ -372,7 +375,7 @@ func (dm *DualManager) addNewTimeBucket(txTime chaintimer.ChainTime) int {
 	if dm.bucketCount < MaxTimeBuckets {
 		// 공간이 남아있는 경우: rear 다음 위치에 새 버킷 추가
 		newRearIndex := (dm.rearIndex + 1) % MaxTimeBuckets
-		dm.firstActiveTimeBuckets[newRearIndex] = NewTimeBucket(weekStart)
+		dm.firstActiveTimeBuckets[newRearIndex] = newTimeBucket(weekStart)
 		dm.rearIndex = newRearIndex
 		dm.bucketCount++
 
@@ -402,7 +405,7 @@ func (dm *DualManager) addNewTimeBucket(txTime chaintimer.ChainTime) int {
 
 		// front 위치에 새 버킷 생성 (덮어쓰기)
 		newBucketIndex := dm.frontIndex
-		dm.firstActiveTimeBuckets[newBucketIndex] = NewTimeBucket(weekStart)
+		dm.firstActiveTimeBuckets[newBucketIndex] = newTimeBucket(weekStart)
 
 		// front를 다음 위치로 이동, rear는 새로 생성된 버킷으로 설정
 		dm.frontIndex = (dm.frontIndex + 1) % MaxTimeBuckets

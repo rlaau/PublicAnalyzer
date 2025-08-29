@@ -38,7 +38,6 @@ const (
 	gcDiscardRatio   = 0.5  // badger.RunValueLogGC 매개값
 )
 
-// NewBadgerGraphRepository creates a new BadgerDB graph repository
 func NewFFBadgerPendingRelationRepo(dbPath string) (*FFBadgerPendingRelationRepo, error) {
 	opts := badger.DefaultOptions(dbPath)
 	opts.Logger = nil // Disable badger logging
@@ -273,13 +272,13 @@ func (r *FFBadgerPendingRelationRepo) CountPendingRelations() int {
 // runGC: Badger GC 실행 (비동기)
 func (r *FFBadgerPendingRelationRepo) runGC() {
 	fmt.Printf("Running GC for pending relation repository (delete count reached %d)\n", gcDeleteTriggerN)
-	
+
 	// Badger의 내장 GC 실행
 	for {
 		if err := r.db.RunValueLogGC(gcDiscardRatio); err != nil {
 			break // reclaim 없음 혹은 에러 → 중단
 		}
 	}
-	
+
 	fmt.Println("Pending relation repository GC completed")
 }

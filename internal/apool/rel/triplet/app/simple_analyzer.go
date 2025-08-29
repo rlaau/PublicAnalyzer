@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	relapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
 	ropeapp "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/app"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
@@ -39,7 +40,7 @@ type TripletAnalyzer interface {
 	GraphDB() *badger.DB
 	RopeDB() ropeapp.RopeDB
 	GetRopeDBStats() map[string]any
-
+	//TODO 이딴건 당연히 금지임. 추후 로프DB관련 인터페이스 싹 제거하기
 	// 리소스 관리
 	io.Closer
 }
@@ -66,7 +67,8 @@ type SimpleEOAAnalyzer struct {
 	// Statistics (thread-safe atomic counters)
 	stats SimpleAnalyzerStats
 
-	infra infra.TotalEOAAnalyzerInfra
+	infra   infra.TotalEOAAnalyzerInfra
+	relPool *relapp.RelationPool
 }
 
 // SimpleAnalyzerStats 간단한 분석기 통계
@@ -82,26 +84,23 @@ type SimpleAnalyzerStats struct {
 }
 
 // NewProductionEOAAnalyzer 프로덕션용 분석기 생성
-func NewProductionEOAAnalyzer(config *EOAAnalyzerConfig, ctx context.Context) (TripletAnalyzer, error) {
+func NewProductionEOAAnalyzer(config *EOAAnalyzerConfig, ctx context.Context, relPool *relapp.RelationPool) (TripletAnalyzer, error) {
 	infraStructure := NewInfraByConfig(config, ctx)
-	return newSimpleAnalyzer(config, infraStructure)
+	return newSimpleAnalyzer(config, infraStructure, relPool)
 }
 
 // NewTestingEOAAnalyzer 테스트용 분석기 생성
-func NewTestingEOAAnalyzer(config *EOAAnalyzerConfig, ctx context.Context) (TripletAnalyzer, error) {
+func NewTestingEOAAnalyzer(config *EOAAnalyzerConfig, ctx context.Context, relPool *relapp.RelationPool) (TripletAnalyzer, error) {
 	infraStructure := NewInfraByConfig(config, ctx)
-	return newSimpleAnalyzer(config, infraStructure)
+	return newSimpleAnalyzer(config, infraStructure, relPool)
 }
 
 // newSimpleAnalyzer 공통 분석기 생성 로직
-func newSimpleAnalyzer(config *EOAAnalyzerConfig, infraStructure infra.TotalEOAAnalyzerInfra) (*SimpleEOAAnalyzer, error) {
+func newSimpleAnalyzer(config *EOAAnalyzerConfig, infraStructure infra.TotalEOAAnalyzerInfra, relPool *relapp.RelationPool) (*SimpleEOAAnalyzer, error) {
 	//전체 EOA인프라에서 꺼내 쓰는 형식
-	dualManagerInfra := infra.NewDualManagerInfra(infraStructure.GroundKnowledge, infraStructure.GraphRepo, infraStructure.PendingRelationRepo)
-	dualManager, err := NewDualManager(*dualManagerInfra)
-	if err != nil {
-		infraStructure.GraphRepo.Close()
-		return nil, fmt.Errorf("failed to create dual manager: %w", err)
-	}
+	dualManagerInfra := infra.NewDualManagerInfra(infraStructure.GroundKnowledge, infraStructure.PendingRelationRepo)
+	dualManager, _ := NewDualManager(*dualManagerInfra, relPool)
+
 	log.Printf("🔄 DualManager with pending DB at: %s", config.PendingDBPath)
 	log.Printf("듀얼 매니져 초기화. 현재 cex주소 개수: %d, 예시:%s", len(dualManager.infra.GroundKnowledge.GetCEXAddresses()), dualManager.infra.GroundKnowledge.GetCEXAddresses()[0])
 	analyzer := &SimpleEOAAnalyzer{
@@ -113,21 +112,23 @@ func newSimpleAnalyzer(config *EOAAnalyzerConfig, infraStructure infra.TotalEOAA
 		stats: SimpleAnalyzerStats{
 			StartTime: time.Now(),
 		},
+		relPool: relPool,
 	}
 
 	log.Printf("✅ Simple EOA Analyzer created: %s", config.Name)
+
+	log.Printf("✅ SimpleAnalyzer의 DB를  RelationPool로 포인팅함")
 	return analyzer, nil
 }
 func (a *SimpleEOAAnalyzer) GraphDB() *badger.DB {
-	if p, ok := a.infra.GraphRepo.(infra.RawBadgerProvider); ok {
+	if p, ok := a.relPool.RopeRepo.(infra.RawBadgerProvider); ok {
 		return p.RawBadgerDB()
 	}
 	return nil
 }
 
 func (a *SimpleEOAAnalyzer) RopeDB() ropeapp.RopeDB {
-	db := a.infra.GraphRepo
-	return db
+	return a.relPool.RopeRepo
 }
 
 // Start 분석기 시작
@@ -369,7 +370,7 @@ func (a *SimpleEOAAnalyzer) printStatistics() {
 			windowStats["active_buckets"], windowStats["pending_relations"])
 	}
 
-	graphStats := a.infra.GraphRepo.GetGraphStats()
+	graphStats := a.relPool.RopeRepo.GetGraphStats()
 	log.Printf("   Graph: %v nodes | %v edges",
 		graphStats["total_nodes"], graphStats["total_edges"])
 
@@ -394,7 +395,7 @@ func (a *SimpleEOAAnalyzer) GetStatistics() map[string]any {
 }
 
 func (a *SimpleEOAAnalyzer) GetRopeDBStats() map[string]any {
-	return a.infra.GraphRepo.GetGraphStats()
+	return a.relPool.RopeRepo.GetGraphStats()
 }
 
 // IsHealthy 헬스 상태 체크
@@ -456,7 +457,7 @@ func (a *SimpleEOAAnalyzer) shutdown() error {
 		log.Printf("⚠️ Error closing dual manager: %v", err)
 	}
 
-	if err := a.infra.GraphRepo.Close(); err != nil {
+	if err := a.relPool.RopeRepo.Close(); err != nil {
 		log.Printf("⚠️ Error closing graph repository: %v", err)
 	}
 
@@ -505,7 +506,7 @@ func (a *SimpleEOAAnalyzer) printFinalReport() {
 		}
 	}
 
-	graphStats := a.infra.GraphRepo.GetGraphStats()
+	graphStats := a.relPool.RopeRepo.GetGraphStats()
 	log.Printf("\n🗂️  Graph Database State:")
 	for key, value := range graphStats {
 		log.Printf("   %s: %v", key, value)
@@ -550,12 +551,6 @@ func (a *SimpleEOAAnalyzer) Close() error {
 // TODO 추후 삭제할 것. 어쩌다 프로세스 도중에 DB바꿀 일이 있고, 하필 그게 테스트코드라 일다 놔뒀음
 // TODO 추후 ropeDB테스트 리팩토링 후 제거할 것
 // !!프로덕션 환경에선 절대절대 쓰지 말겄!!!
-func (a *SimpleEOAAnalyzer) NullButAddDB(db ropeapp.RopeDB) {
-	a.infra.GraphRepo = db
-}
-
-// TODO 추후 ropeDB테스트 리팩토링 후 제거할 것
-// !!프로덕션 환경에선 절대절대 쓰지 말겄!!!
-func (a *SimpleEOAAnalyzer) NullButAddInfra(infra infra.TotalEOAAnalyzerInfra) {
-	a.infra = infra
+func (a *SimpleEOAAnalyzer) NullButAddDB(relPool *relapp.RelationPool) {
+	a.relPool = relPool
 }

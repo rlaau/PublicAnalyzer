@@ -100,6 +100,7 @@ func TestEventBus_PersistAndReload_JSONL(t *testing.T) {
 	}
 
 	// 더 이상 pending 없음 → Close 후 파일 새로 생기면 안 됨
+	//evt bus는 남은거 0시 파일 생성 x. 남은 값 있을 때 파일 생기는 것도 확인했었음
 	bus2.Close()
 	if _, err := os.Stat(jsonlPath); err == nil {
 		t.Fatalf("expected no JSONL after bus2.Close() with empty pending, but file exists")

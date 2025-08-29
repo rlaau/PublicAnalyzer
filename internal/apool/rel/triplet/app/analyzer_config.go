@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+
+	relapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
 )
 
 // AnalyzerMode 분석기 모드 정의
@@ -90,12 +92,12 @@ func TestingConfig(name string) *EOAAnalyzerConfig {
 type AnalyzerFactory func(config *EOAAnalyzerConfig) (TripletAnalyzer, error)
 
 // CreateAnalyzer 설정에 따라 적절한 분석기 생성
-func CreateAnalyzer(config *EOAAnalyzerConfig, ctx context.Context) (TripletAnalyzer, error) {
+func CreateAnalyzer(config *EOAAnalyzerConfig, ctx context.Context, relPool *relapp.RelationPool) (TripletAnalyzer, error) {
 	switch config.Mode {
 	case ProductionMode:
-		return NewProductionEOAAnalyzer(config, ctx)
+		return NewProductionEOAAnalyzer(config, ctx, relPool)
 	case TestingMode:
-		return NewTestingEOAAnalyzer(config, ctx)
+		return NewTestingEOAAnalyzer(config, ctx, relPool)
 	default:
 		return nil, ErrInvalidAnalyzerMode{Mode: string(config.Mode)}
 	}

@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
+	relapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/api"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/app"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
@@ -174,11 +174,11 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 	monitoringServer := server.NewServer(":8080")
 	monitoringServer.SetupBasicRoutes()
 	//TODO 그냥 서버용 API가 필요했기에 만듦.
-	eoaInfra := infra.TotalEOAAnalyzerInfra{
-		GraphRepo: db,
+	relPool := &relapp.RelationPool{
+		RopeRepo: db,
 	}
 	analyzer := &app.SimpleEOAAnalyzer{}
-	analyzer.NullButAddInfra(eoaInfra)
+	analyzer.NullButAddDB(relPool)
 	tripletAPI := api.NewTripletAPIHandler(analyzer) // analyzer.GraphDB()가 BadgerRopeDB를 물고 있어야 함
 	if err := monitoringServer.RegisterModule(tripletAPI); err != nil {
 		fmt.Printf("   ❌ Failed to register Triplet API: %v\n", err)
