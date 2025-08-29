@@ -5,7 +5,7 @@ import (
 	"log"
 	"math/rand"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/app"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/infra"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
@@ -23,7 +23,7 @@ func main() {
 	log.Printf("Opening ContractDB to sample %d contracts...", SAMPLE_SIZE)
 
 	// 프로덕션 모드로 ContractDB 열기
-	db, err := app.NewContractDB(mode.ProductionModeProcess)
+	db, err := infra.NewContractDB(mode.ProductionModeProcess, "")
 	if err != nil {
 		log.Fatalf("Failed to open ContractDB: %v", err)
 	}
@@ -62,7 +62,7 @@ func main() {
 	printStatistics(samples)
 }
 
-func getRandomSamples(db *app.ContractDB, sampleSize, totalCount int) ([]ContractSample, error) {
+func getRandomSamples(db *infra.ContractDB, sampleSize, totalCount int) ([]ContractSample, error) {
 	samples := make([]ContractSample, 0, sampleSize)
 
 	// 샘플링 비율 계산 (전체에서 몇 개를 골라야 할지)

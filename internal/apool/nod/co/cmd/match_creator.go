@@ -12,7 +12,7 @@ import (
 	"time"
 
 	mmap "github.com/edsrzf/mmap-go"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/app"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/infra"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
@@ -46,7 +46,7 @@ type CreationRecord struct {
 func main() {
 	// 프로덕션 모드로 ContractDB 열기
 	log.Printf("Opening ContractDB in production mode...")
-	db, err := app.NewContractDB(mode.ProductionModeProcess)
+	db, err := infra.NewContractDB(mode.ProductionModeProcess, "")
 	if err != nil {
 		log.Fatalf("Failed to open ContractDB: %v", err)
 	}
@@ -99,7 +99,7 @@ func main() {
 	log.Printf("Final operation count: %d", db.GetOperationCount())
 }
 
-func processFile(filePath string, db *app.ContractDB) (totalRecords, totalUpdated int, err error) {
+func processFile(filePath string, db *infra.ContractDB) (totalRecords, totalUpdated int, err error) {
 	// 파일 정보 확인
 	fi, err := os.Stat(filePath)
 	if err != nil {
@@ -175,7 +175,7 @@ func processFile(filePath string, db *app.ContractDB) (totalRecords, totalUpdate
 	return int(numRecords), totalUpdated, nil
 }
 
-func processBatch(mem []byte, start, end int64, db *app.ContractDB) (int, error) {
+func processBatch(mem []byte, start, end int64, db *infra.ContractDB) (int, error) {
 	batchSize := int(end - start)
 
 	// 1. 배치에서 레코드 읽고 contract addresses 수집

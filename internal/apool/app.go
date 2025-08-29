@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/iface"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/sharedface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
@@ -24,12 +24,12 @@ type AnalyzerPool struct {
 	isTest mode.ProcessingMode
 
 	ports struct {
-		rel iface.RelPort
-		nod iface.NodPort
+		rel sharedface.RelPort
+		nod sharedface.NodPort
 	}
 
-	busRel        *eventbus.EventBus[iface.RelMsg]
-	busNod        *eventbus.EventBus[iface.NodMsg]
+	busRel        *eventbus.EventBus[sharedface.RelMsg]
+	busNod        *eventbus.EventBus[sharedface.NodMsg]
 	fanoutManager *TxFanoutManager
 	closed        atomic.Bool
 }
@@ -56,11 +56,11 @@ func CreateAnalzerPoolFrame(isTest mode.ProcessingMode, bp tools.CountingBackpre
 		capLimit = 8192
 	}
 
-	busNod, err := eventbus.NewWithRoot[iface.NodMsg](root, rel("nod"), capLimit)
+	busNod, err := eventbus.NewWithRoot[sharedface.NodMsg](root, rel("nod"), capLimit)
 	if err != nil {
 		return nil, err
 	}
-	busRel, err := eventbus.NewWithRoot[iface.RelMsg](root, rel("rel"), capLimit)
+	busRel, err := eventbus.NewWithRoot[sharedface.RelMsg](root, rel("rel"), capLimit)
 	if err != nil {
 		busNod.Close()
 		return nil, err
@@ -100,28 +100,28 @@ func CreateAnalzerPoolFrame(isTest mode.ProcessingMode, bp tools.CountingBackpre
 	return a, nil
 }
 
-func (a *AnalyzerPool) Register(rel iface.RelPort, nod iface.NodPort) {
+func (a *AnalyzerPool) Register(rel sharedface.RelPort, nod sharedface.NodPort) {
 	a.busNod.Close()
 	a.busRel.Close()
 	a.ports.rel = rel
 	a.ports.nod = nod
 }
 
-func (a *AnalyzerPool) GetRelPort() iface.RelPort { return a.ports.rel }
-func (a *AnalyzerPool) GetNodPort() iface.NodPort { return a.ports.nod }
+func (a *AnalyzerPool) GetRelPort() sharedface.RelPort { return a.ports.rel }
+func (a *AnalyzerPool) GetNodPort() sharedface.NodPort { return a.ports.nod }
 
-func (a *AnalyzerPool) EnqueueToRel(v iface.RelMsg) error {
+func (a *AnalyzerPool) EnqueueToRel(v sharedface.RelMsg) error {
 	return a.busRel.Publish(v)
 }
-func (a *AnalyzerPool) EnqueueToNod(v iface.NodMsg) error {
+func (a *AnalyzerPool) EnqueueToNod(v sharedface.NodMsg) error {
 	return a.busNod.Publish(v)
 }
 
-func (a *AnalyzerPool) DeququeRel() <-chan iface.RelMsg {
+func (a *AnalyzerPool) DeququeRel() <-chan sharedface.RelMsg {
 	return a.busRel.Dequeue()
 }
 
-func (a *AnalyzerPool) DeququeNod() <-chan iface.NodMsg {
+func (a *AnalyzerPool) DeququeNod() <-chan sharedface.NodMsg {
 	return a.busNod.Dequeue()
 }
 

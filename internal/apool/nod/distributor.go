@@ -1,4 +1,4 @@
-package rel
+package nod
 
 import (
 	"fmt"
@@ -11,16 +11,15 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
 
+// TODO rel에도 동일한 디스트리뷰터 있음
+// TODO 추후 일반화하기
 // 새로운 단일 Kafka 배치 소비자 + eventbus 팬아웃
-// TODO 추후 일반화 가능하게 리팩토링하기
-// TODO 같은 코드가 nod에도 복붙임
-// TODO 지금은 머리가 너무 안돌아가... 조금만 미루자...
 type TxDistributor struct {
 	consumer <-chan domain.MarkedTransaction
 
 	// 각 모듈별 eventbus
-	busTriplet  *eventbus.EventBus[domain.MarkedTransaction]
-	busCreation *eventbus.EventBus[domain.MarkedTransaction]
+	busEo  *eventbus.EventBus[domain.MarkedTransaction]
+	busCo *eventbus.EventBus[domain.MarkedTransaction]
 
 	stop chan struct{}
 	wg   sync.WaitGroup
@@ -51,8 +50,8 @@ func NewTxDistributor(isTest mode.ProcessingMode, capLimit int, consumer <-chan 
 
 	f := &TxDistributor{
 		consumer:    consumer,
-		busCreation: busTriplet,
-		busTriplet:  busCreation,
+		busCo: busTriplet,
+		busEo:  busCreation,
 		stop:        make(chan struct{}),
 	}
 	f.wg.Add(1)
@@ -83,7 +82,7 @@ func (f *TxDistributor) fanoutTransaction(tx domain.MarkedTransaction) {
 	//TODO: 목표는 relation pool이 각 모듈에게 적절한 tx분배하는 것. 현재는 오직 Triplet모듈에만 tx주고 있음. 추후 MarkTransaction기반으로 올바르게 전달할 것.
 
 	// !!!!!!현재는 모든 트랜잭션을 Triplet 모듈에만 전달
-	if err := f.busCreation.Publish(tx); err != nil {
+	if err := f.busCo.Publish(tx); err != nil {
 		fmt.Printf("[TxFanoutManager] failed to publish to EE: %v\n", err)
 	}
 
@@ -111,8 +110,8 @@ func (f *TxDistributor) Close() error {
 	f.wg.Wait()   // goroutine 합류
 
 	// 자체 관리하는 transaction 버스들 정리
-	f.busCreation.Close()
-	f.busTriplet.Close()
+	f.busCo.Close()
+	f.busEo.Close()
 	// consumer는 이걸 선언한 상위에서 닫음
 	return nil
 }

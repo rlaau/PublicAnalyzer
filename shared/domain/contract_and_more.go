@@ -20,6 +20,21 @@ type Contract struct {
 	IsERC721 bool
 }
 
+func NewContract(a Address, cOz Address, ctOz TxId, cAt chaintimer.ChainTime,
+	OwnerOrzero Address, OwnerLogOrZero []Address, IsErc20 bool, IsERC721 Address) Contract {
+	return Contract{
+		Address:          a,
+		CreatorOrZero:    cOz,
+		CreationTxOrZero: ctOz,
+		CreatedAt:        cAt,
+		OwnerOrZero:      OwnerOrzero,
+		OwnerLogOrZero:   OwnerLogOrZero,
+		IsERC20:          IsErc20,
+		IsERC721:         IsErc20,
+	}
+
+}
+
 type Token struct {
 	//키
 	Address Address

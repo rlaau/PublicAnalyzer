@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/iface"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/sharedface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/app"
 	triplet "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
@@ -47,7 +48,7 @@ func ComposeRelPool(mode mode.ProcessingMode, processName string, apool iface.Ap
 		panic("preTriplet생성 중 에러")
 	}
 	//TODO 실구현 할것
-	var preCreation iface.CreationPort = nil
+	var preCreation sharedface.CreationPort = nil
 
 	preRelPool.Register(preTriplet, preCreation)
 	fmt.Println("rel pool에 두 모듈 등록 완료")

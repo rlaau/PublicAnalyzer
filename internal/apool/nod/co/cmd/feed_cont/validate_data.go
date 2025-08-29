@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/app"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/infra"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
@@ -25,7 +25,7 @@ type ValidationResult struct {
 }
 
 func main() {
-	contDB, err := app.NewContractDB(mode.ProductionModeProcess)
+	contDB, err := infra.NewContractDB(mode.ProductionModeProcess, "")
 	if err != nil {
 		log.Fatalf("Failed to create ContractDB: %v", err)
 	}
@@ -180,7 +180,7 @@ func extractRandomFromFile(filename string, count int) ([]ContractData, error) {
 	return contracts, nil
 }
 
-func validateContractsAgainstDB(contDB *app.ContractDB, jsonlContracts map[string]ContractData) []ValidationResult {
+func validateContractsAgainstDB(contDB *infra.ContractDB, jsonlContracts map[string]ContractData) []ValidationResult {
 	var results []ValidationResult
 
 	for address, jsonlData := range jsonlContracts {

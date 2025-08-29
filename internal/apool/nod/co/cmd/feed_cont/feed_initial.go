@@ -22,6 +22,8 @@ type ContractData struct {
 	LastSeenAt string `json:"last_seen_at"`
 }
 
+//* 해당 커멘드로 프로덕션 모드에 데이터 집어넣었음
+//* 증명용 코드임. 추후 지워도 됨
 // func main() {
 // 	contDB, err := app.NewContractDB(mode.ProductionModeProcess)
 // 	if err != nil {

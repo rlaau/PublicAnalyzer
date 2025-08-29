@@ -12,6 +12,7 @@ import (
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/roperepo"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/sharedface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	ropeapp "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
@@ -20,17 +21,20 @@ import (
 )
 
 // 관계 분석 시, 각 단일 분석기가 통신하기 위한 풀
+// TODO 대부분의 코드를 RelPool, NodPool에 대해 일반화하기!!
+// TODO 구조가 아주~ 많이 겹침!!
+// TODO 근데 지금은 진짜 하기가 힘이 듦. 조금 쉬고 시간 날때 ㄱ
 type RelationPool struct {
 	isTest mode.ProcessingMode
 	Apool  iface.ApoolPort
 
 	ports struct {
-		triplet  iface.TripletPort
-		creation iface.CreationPort
+		triplet  sharedface.TripletPort
+		creation sharedface.CreationPort
 	}
 
-	busTriplet  *eventbus.EventBus[iface.TripletEventMsg]
-	busCreation *eventbus.EventBus[iface.CreationEventMsg]
+	busTriplet  *eventbus.EventBus[sharedface.TripletEventMsg]
+	busCreation *eventbus.EventBus[sharedface.CreationEventMsg]
 
 	txDistributor *TxDistributor
 	closed        atomic.Bool
@@ -52,11 +56,11 @@ func CreateRelationPoolFrame(isTest mode.ProcessingMode, apool iface.ApoolPort) 
 	if !isTest.IsTest() {
 		capLimit = 8192
 	}
-	busTriplet, err := eventbus.NewWithRoot[iface.TripletEventMsg](root, rel("triplet"), capLimit)
+	busTriplet, err := eventbus.NewWithRoot[sharedface.TripletEventMsg](root, rel("triplet"), capLimit)
 	if err != nil {
 		return nil, err
 	}
-	busCreation, err := eventbus.NewWithRoot[iface.CreationEventMsg](root, rel("creation"), capLimit)
+	busCreation, err := eventbus.NewWithRoot[sharedface.CreationEventMsg](root, rel("creation"), capLimit)
 	if err != nil {
 		busTriplet.Close()
 		return nil, err
@@ -80,7 +84,7 @@ func CreateRelationPoolFrame(isTest mode.ProcessingMode, apool iface.ApoolPort) 
 func (r *RelationPool) RopeDB() ropeapp.RopeDB {
 	return r.RopeRepo
 }
-func (r *RelationPool) Register(triplet iface.TripletPort, creation iface.CreationPort) error {
+func (r *RelationPool) Register(triplet sharedface.TripletPort, creation sharedface.CreationPort) error {
 
 	capLimit := 2048
 	if !r.isTest.IsTest() {
@@ -99,24 +103,24 @@ func (r *RelationPool) Register(triplet iface.TripletPort, creation iface.Creati
 }
 
 // 포트 기반 뷰어
-func (r *RelationPool) GetTripletPort() iface.TripletPort { return r.ports.triplet }
+func (r *RelationPool) GetTripletPort() sharedface.TripletPort { return r.ports.triplet }
 
-func (r *RelationPool) GetCreationPort() iface.CreationPort { return r.ports.creation }
+func (r *RelationPool) GetCreationPort() sharedface.CreationPort { return r.ports.creation }
 
 // 이벤트 버스 기반 커멘더
-func (r *RelationPool) EnqueueToTriplet(v iface.TripletEventMsg) error {
+func (r *RelationPool) EnqueueToTriplet(v sharedface.TripletEventMsg) error {
 	return r.busTriplet.Publish(v)
 }
-func (r *RelationPool) EnqueueToCreation(v iface.CreationEventMsg) error {
+func (r *RelationPool) EnqueueToCreation(v sharedface.CreationEventMsg) error {
 	return r.busCreation.Publish(v)
 }
 
 // 이벤트 버스 기반 소비
 // 분선 모듈 상호 간의 이벤트버스
-func (r *RelationPool) DequeueTriplet() <-chan iface.TripletEventMsg {
+func (r *RelationPool) DequeueTriplet() <-chan sharedface.TripletEventMsg {
 	return r.busTriplet.Dequeue()
 }
-func (r *RelationPool) DequeueCreation() <-chan iface.CreationEventMsg {
+func (r *RelationPool) DequeueCreation() <-chan sharedface.CreationEventMsg {
 	return r.busCreation.Dequeue()
 }
 
