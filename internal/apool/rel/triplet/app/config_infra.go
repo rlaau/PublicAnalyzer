@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 	"time"
 
@@ -17,24 +16,9 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/workerpool"
 )
 
-func NewInfraByConfig(config *TripletConfig) infra.TotalEOAAnalyzerInfra {
+func NewInfraByConfig(config *TripletConfig) *infra.TripletAndDualManagerInfra {
 	var isolateColusre = computation.ComputeRelClosure(config.IsolatedDBPath)
 	log.Printf("EOA Analyzer의 Infra 세팅 중: %s (Mode: %s)", config.Name, config.Mode)
-	cexSet, err := loadCEXSet(isolateColusre("cex.txt"))
-	if err != nil {
-		fmt.Printf("CEX set로딩 중 에러남.")
-		panic("더 이상 작업 불가")
-	}
-	fmt.Printf("CEX 로드 완료")
-	depositRepo, err := loadDetectedDepositSet(config.IsolatedDBPath, config.Mode)
-	if err != nil {
-		fmt.Printf("디포짓 로딩 실패. (파일 경로: %s)", config.IsolatedDBPath)
-	}
-	groundKnowledge := infra.NewDomainKnowledge(cexSet, depositRepo)
-	if err := groundKnowledge.Load(); err != nil {
-		panic("그라운드 놀리지를 파일->(메모리,파일)로 로드하지 못함")
-	}
-	log.Printf("🧠 Ground knowledge loaded")
 
 	batchConsumer := loadKafkaBatchConsumer(config.Mode, config.Name)
 	// 워커 풀에 쓸 채널 생성
@@ -47,11 +31,16 @@ func NewInfraByConfig(config *TripletConfig) infra.TotalEOAAnalyzerInfra {
 	ctx := context.Background()
 	workerPool := workerpool.New(ctx, config.WorkerCount, txJobBus)
 	log.Printf("🔧 WorkerPool initialized with %d workers", config.WorkerCount)
-	pendingDB, err := infra.NewFFBadgerPendingRelationRepo(isolateColusre("pending"))
+	pendingDB, err := infra.NewBadgerPendingRelationRepo(isolateColusre("pending"))
 	if err != nil {
 		panic("펜딜 레포지토리를 열지 못함.")
 	}
-	return *infra.NewTripletInfra(groundKnowledge, txJobBus, workerPool, batchConsumer, pendingDB)
+	timeBucketManager, err := infra.NewTimeBucketManager(isolateColusre("timebucket"))
+	if err != nil {
+		panic("타임버킷 메니져 로드 중 에러 발생")
+	}
+	fmt.Printf("Triplet 인프라 전부 로드 완료")
+	return infra.NewTripletInfra(txJobBus, workerPool, batchConsumer, pendingDB, timeBucketManager)
 
 }
 
@@ -81,32 +70,32 @@ func loadKafkaBatchConsumer(mode mode.ProcessingMode, name string) *kafka.KafkaB
 	log.Printf("📡 Batch consumer initialized (test mode: %v, batch size: %d)", isTestMode, batchSize)
 	return batchConsumer
 }
-func loadCEXSet(cexFilePath string) (*shareddomain.CEXSet, error) {
-	if cexFilePath == "" {
-		// 기본 경로 사용 (후방 호환성)
-		cexFilePath = "internal/triplet/cex.txt"
-	}
-	cexRepo := infra.NewFileCEXRepository(cexFilePath)
-	cexSet, err := cexRepo.LoadCEXSet()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load CEX set from %s: %w", cexFilePath, err)
-	}
-	return cexSet, nil
-}
-func loadDetectedDepositSet(fileDBPath string, mode mode.ProcessingMode) (*infra.FileDepositRepository, error) {
-	// 데이터 디렉토리 생성
-	if err := os.MkdirAll(fileDBPath, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create data directory: %w", err)
-	}
-	// Deposit 저장소 초기화 - 모드에 따른 경로 설정
-	var detectedDepositFilePath string
-	//TODO 로직은 그럴듯 하지만, FileDBPath자체가 Isolated 폴더 내부라 실은 효용이 없음. 추후 isolated관련 feed_XX_XX.go수정 필요.
-	//TODO 테스트 시에만 isolated되게 해야 함.
-	if mode.IsTest() {
-		detectedDepositFilePath = fileDBPath + "/test_detected_deposits.csv"
-	} else {
-		detectedDepositFilePath = fileDBPath + "/production_detected_deposits.csv"
-	}
-	depositRepo := infra.NewFileDepositRepository(detectedDepositFilePath)
-	return depositRepo, nil
-}
+
+// func loadCEXSet(cexFilePath string) (*shareddomain.CEXSet, error) {
+// 	if cexFilePath == "" {
+// 		// 기본 경로 사용 (후방 호환성)
+// 		cexFilePath = "internal/triplet/cex.txt"
+// 	}
+// 	cexRepo := infra.NewFileCEXRepository(cexFilePath)
+// 	cexSet, err := cexRepo.LoadCEXSet()
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to load CEX set from %s: %w", cexFilePath, err)
+// 	}
+// 	return cexSet, nil
+// }
+// func loadDetectedDepositSet(fileDBPath string, mode mode.ProcessingMode) (*infra.FileDepositRepository, error) {
+// 	// 데이터 디렉토리 생성
+// 	if err := os.MkdirAll(fileDBPath, 0755); err != nil {
+// 		return nil, fmt.Errorf("failed to create data directory: %w", err)
+// 	}
+// 	// Deposit 저장소 초기화 - 모드에 따른 경로 설정
+// 	var detectedDepositFilePath string
+
+// 	if mode.IsTest() {
+// 		detectedDepositFilePath = fileDBPath + "/test_detected_deposits.csv"
+// 	} else {
+// 		detectedDepositFilePath = fileDBPath + "/production_detected_deposits.csv"
+// 	}
+// 	depositRepo := infra.NewFileDepositRepository(detectedDepositFilePath)
+// 	return depositRepo, nil
+// }

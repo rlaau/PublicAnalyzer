@@ -15,6 +15,8 @@ import (
 	relapi "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/api"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/sharedface"
 
+	nodapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod"
+	coapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
@@ -53,13 +55,13 @@ func main() {
 	//TxDefineLoader만들기 (결정론적 트랜잭션 로더)
 	//TxDefineLoader의 생성 설정에 집중한 컨피겨
 	txFeederGenConfig := &feederdomain.TxGeneratorConfig{
-		TotalTransactions:            4_000, // TxDefineLoader에서 생성할 결정론적 트랜잭션 수
-		TransactionsPerSecond:        1_000, // 전송 속도 (결정론적이므로 빠르게)
+		TotalTransactions:            400_000, // TxDefineLoader에서 생성할 결정론적 트랜잭션 수
+		TransactionsPerSecond:        1_000,   // 전송 속도 (결정론적이므로 빠르게)
 		StartTime:                    startTime,
-		TransactionsPerTimeIncrement: 1,               // 하나의 tx마다 1분이 지난 것으로 설정
-		TimeIncrementDuration:        1 * time.Minute, // 1분씩 시간 증가
-		DepositToCexRatio:            50,              // TxDefineLoader에서는 사용하지 않지만 호환성을 위해 유지
-		RandomToDepositRatio:         30,              // TxDefineLoader에서는 사용하지 않지만 호환성을 위해 유지
+		TransactionsPerTimeIncrement: 1,                  // 하나의 tx마다 1분이 지난 것으로 설정
+		TimeIncrementDuration:        1000 * time.Minute, // 1분씩 시간 증가
+		DepositToCexRatio:            50,                 // TxDefineLoader에서는 사용하지 않지만 호환성을 위해 유지
+		RandomToDepositRatio:         30,                 // TxDefineLoader에서는 사용하지 않지만 호환성을 위해 유지
 	}
 	relClouser := computation.ComputeRelClosure(isolatedDir)
 	//TxDefineLoader의 총 설정
@@ -84,7 +86,17 @@ func main() {
 	}
 
 	apool, err := aapp.CreateAnalzerPoolFrame(mode.TestingModeProcess, nil)
+	//* nodPool을 강제로 생성
+	nodPool := &nodapp.NodPool{}
+	//* CO생성 및 nodPool에 강제 등록
+	co := coapp.NewCo(coapp.CoCfg{Mode: mode.TestingModeProcess}, nodPool)
+	nodPool.SetCoPort(co)
+	//* 1차포 apool에 nolPool등록
+	apool.RegisterPorts(nodPool, nil)
+	//* 여기서 일단은 relPool이 apool로 nodPool접근
 	relPool := relapp.ComposeRelPool(mode.TestingModeProcess, "feed_ingest_ee_test", apool)
+	//* apool에 다시 강제로 등록
+	apool.RegisterPorts(nodPool, relPool)
 	monitoringServer := server.NewServer(":8080")
 	monitoringServer.SetupBasicRoutes()
 	relAPI := relapi.NewRelPoolAPIHandler(relPool)

@@ -7,23 +7,25 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/workerpool"
 )
 
-type TotalEOAAnalyzerInfra struct {
-	GroundKnowledge     *DomainKnowledge
+type TripletAndDualManagerInfra struct {
 	PendingRelationRepo PendingRelationRepo
+	TimeBucketManager   *TimeBucketManager
 	TxJobBus            *eventbus.EventBus[workerpool.Job]
 	WorkerPool          *workerpool.Pool
-	BatchConsumer       *kafka.KafkaBatchConsumer[*shareddomain.MarkedTransaction]
+	//TODO 추후 이것도 지울 것!! 얘가 직적 컨슈머를 왜 받누...
+	BatchConsumer *kafka.KafkaBatchConsumer[*shareddomain.MarkedTransaction]
 }
 
-func NewTripletInfra(domainKnowledge *DomainKnowledge,
+func NewTripletInfra(
 	txJobChannel *eventbus.EventBus[workerpool.Job], workerPool *workerpool.Pool,
 	batchConsumer *kafka.KafkaBatchConsumer[*shareddomain.MarkedTransaction], pendingRelationRepo PendingRelationRepo,
-) *TotalEOAAnalyzerInfra {
-	return &TotalEOAAnalyzerInfra{
-		GroundKnowledge:     domainKnowledge,
+	TimeBucketManager *TimeBucketManager,
+) *TripletAndDualManagerInfra {
+	return &TripletAndDualManagerInfra{
 		TxJobBus:            txJobChannel,
 		WorkerPool:          workerPool,
 		BatchConsumer:       batchConsumer,
 		PendingRelationRepo: pendingRelationRepo,
+		TimeBucketManager:   TimeBucketManager,
 	}
 }

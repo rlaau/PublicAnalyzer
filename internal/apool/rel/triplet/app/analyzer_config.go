@@ -35,21 +35,9 @@ type AnalyzerFactory func(config *TripletConfig) (CommonTriplet, error)
 
 // CreateTriplet 설정에 따라 적절한 분석기 생성
 func CreateTriplet(config *TripletConfig, relPool iface.RelPort) (CommonTriplet, error) {
-	switch config.Mode {
-	case mode.ProductionModeProcess:
-		return NewProductionEOAAnalyzer(config, relPool)
-	case mode.TestingModeProcess:
+	if config.Mode.IsTest() {
 		return NewTestingEOAAnalyzer(config, relPool)
-	default:
-		return nil, ErrInvalidAnalyzerMode{Mode: config.Mode.String()}
+	} else {
+		return NewProductionEOAAnalyzer(config, relPool)
 	}
-}
-
-// 에러 타입 정의
-type ErrInvalidAnalyzerMode struct {
-	Mode string
-}
-
-func (e ErrInvalidAnalyzerMode) Error() string {
-	return "invalid analyzer mode: " + e.Mode
 }

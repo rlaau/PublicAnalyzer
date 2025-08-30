@@ -13,7 +13,6 @@ import (
 
 	badger "github.com/dgraph-io/badger/v4"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	sharedDomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
@@ -71,11 +70,15 @@ func (r *DepositRepository) Close() error {
 	return r.db.Close()
 }
 
-// ---- DepositRepository 인터페이스 구현 ----
+// // ---- DepositRepository 인터페이스 구현 ----
+// func (r *DepositRepository) HandleDepositDetection(cexAddr, depositAddr sharedDomain.Address, tx *sharedDomain.MarkedTransaction, time chaintimer.ChainTime) error {
+// 	depositDetectWithEvidence
+
+// }
 
 // SaveDetectedDeposit: 신규면 Insert, 기존이면 변경 있을 때만 Update.
 // MVCC 충돌 시 3회까지 재시도, 실패 시 샤드 뮤텍스로 직렬화 후 1회 재시도.
-func (r *DepositRepository) SaveDetectedDeposit(deposit *domain.DetectedDepositWithEvidence) error {
+func (r *DepositRepository) SaveDetectedDeposit(deposit *sharedDomain.DetectedDeposit) error {
 	if deposit == nil {
 		return errors.New("nil deposit")
 	}
@@ -83,7 +86,7 @@ func (r *DepositRepository) SaveDetectedDeposit(deposit *domain.DetectedDepositW
 
 	fn := func(txn *badger.Txn) error {
 		// 현재 값 조회(없으면 신규)
-		var cur domain.DetectedDepositWithEvidence
+		var cur sharedDomain.DetectedDeposit
 		itm, err := txn.Get(key)
 		switch {
 		case err == nil:
@@ -135,8 +138,8 @@ func (r *DepositRepository) SaveDetectedDeposit(deposit *domain.DetectedDepositW
 }
 
 // LoadDetectedDeposits: prefix 스캔
-func (r *DepositRepository) LoadDetectedDeposits() ([]*domain.DetectedDepositWithEvidence, error) {
-	var out []*domain.DetectedDepositWithEvidence
+func (r *DepositRepository) LoadDetectedDeposits() ([]*sharedDomain.DetectedDeposit, error) {
+	var out []*sharedDomain.DetectedDeposit
 	err := r.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
@@ -147,7 +150,7 @@ func (r *DepositRepository) LoadDetectedDeposits() ([]*domain.DetectedDepositWit
 			if e != nil {
 				return e
 			}
-			var d domain.DetectedDepositWithEvidence
+			var d sharedDomain.DetectedDeposit
 			if e = json.Unmarshal(val, &d); e != nil {
 				return e
 			}
@@ -175,9 +178,9 @@ func (r *DepositRepository) IsDepositAddress(addr sharedDomain.Address) (bool, e
 }
 
 // GetDepositInfo: 1건 조회
-func (r *DepositRepository) GetDepositInfo(addr sharedDomain.Address) (*domain.DetectedDepositWithEvidence, error) {
+func (r *DepositRepository) GetDepositInfo(addr sharedDomain.Address) (*sharedDomain.DetectedDeposit, error) {
 	key := r.makeKey(addr)
-	var out *domain.DetectedDepositWithEvidence
+	var out *sharedDomain.DetectedDeposit
 	err := r.db.View(func(txn *badger.Txn) error {
 		itm, e := txn.Get(key)
 		if e != nil {
@@ -187,7 +190,7 @@ func (r *DepositRepository) GetDepositInfo(addr sharedDomain.Address) (*domain.D
 		if e != nil {
 			return e
 		}
-		var d domain.DetectedDepositWithEvidence
+		var d sharedDomain.DetectedDeposit
 		if e = json.Unmarshal(val, &d); e != nil {
 			return e
 		}
@@ -219,7 +222,7 @@ func (r *DepositRepository) UpdateTxCount(addr sharedDomain.Address, count int64
 		if e != nil {
 			return e
 		}
-		var d domain.DetectedDepositWithEvidence
+		var d sharedDomain.DetectedDeposit
 		if e = json.Unmarshal(val, &d); e != nil {
 			return e
 		}

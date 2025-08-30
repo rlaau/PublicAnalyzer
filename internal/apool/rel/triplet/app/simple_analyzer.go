@@ -29,8 +29,8 @@ type CommonTriplet interface {
 	Stop() error
 
 	// 트랜잭션 처리
-	ProcessTransaction(tx *shareddomain.MarkedTransaction) error
-	ProcessTransactions(txs []*shareddomain.MarkedTransaction) error
+	//ProcessTransaction(tx *shareddomain.MarkedTransaction) error
+	//ProcessTransactions(txs []*shareddomain.MarkedTransaction) error
 
 	// 상태 조회
 	GetStatistics() map[string]any
@@ -67,7 +67,7 @@ type SimpleTriplet struct {
 	// Statistics (thread-safe atomic counters)
 	stats SimpleAnalyzerStats
 
-	infra   infra.TotalEOAAnalyzerInfra
+	infra   *infra.TripletAndDualManagerInfra
 	relPool iface.RelPort
 }
 
@@ -96,12 +96,11 @@ func NewTestingEOAAnalyzer(config *TripletConfig, relPool iface.RelPort) (Common
 }
 
 // newSimpleAnalyzer 공통 분석기 생성 로직
-func newSimpleAnalyzer(config *TripletConfig, infraStructure infra.TotalEOAAnalyzerInfra, relPool iface.RelPort) (*SimpleTriplet, error) {
+func newSimpleAnalyzer(config *TripletConfig, infraStructure *infra.TripletAndDualManagerInfra, relPool iface.RelPort) (*SimpleTriplet, error) {
 	//전체 EOA인프라에서 꺼내 쓰는 형식
-	dualManagerInfra := infra.NewDualManagerInfra(infraStructure.GroundKnowledge, infraStructure.PendingRelationRepo)
-	dualManager, _ := NewDualManager(*dualManagerInfra, relPool)
-
-	log.Printf("듀얼 매니져 초기화. 현재 cex주소 개수: %d, 예시:%s", len(dualManager.infra.GroundKnowledge.GetCEXAddresses()), dualManager.infra.GroundKnowledge.GetCEXAddresses()[0])
+	dualManagerInfra := infra.NewDualManagerInfra(infraStructure.PendingRelationRepo, infraStructure.TimeBucketManager)
+	dualManager, _ := NewDualManager(dualManagerInfra, relPool)
+	log.Printf("듀얼 매니져 초기화. 현재 cex주소 개수: %d", len(dualManager.relPool.GetApooPort().GetNodPort().GetCoPort().CEXAddresses()))
 	analyzer := &SimpleTriplet{
 		infra:       infraStructure,
 		dualManager: dualManager,
@@ -134,6 +133,9 @@ func (a *SimpleTriplet) RopeDB() ropeapp.RopeDB {
 func (a *SimpleTriplet) Start(ctx context.Context) error {
 	log.Printf("🚀 Starting Triplet: %s", a.config.Name)
 	a.infra.WorkerPool.Restart(ctx)
+	// 워커풀 만든 직후
+	fmt.Printf("bus@pool   = %p\n", a.infra.WorkerPool.JobChan)
+
 	// Consumer 시작 (배치 모드 or 단건 모드)
 	if a.batchMode && a.infra.BatchConsumer != nil {
 		// 배치 모드: 배치 Consumer 시작
@@ -170,29 +172,32 @@ func (a *SimpleTriplet) Stop() error {
 }
 
 // ProcessTransaction 트랜잭션 처리 (non-blocking)
-// TODO 현재 이 부분에서 스레드 간 성능 저하 발생함. 스레드 1개나 16개나 동일 성능 보임
-// TODO TxJob의 Do()가 서로 경합 발생. 패닉은 아니지만, 암묵적 성능 저하 발생중
-// TODO 문제에 대한 진단 및 추후 개선 방안은 /debug의 upgrade_solution.md에 자세히 적어놨음.
-func (a *SimpleTriplet) ProcessTransaction(tx *shareddomain.MarkedTransaction) error {
-	job := NewTransactionJob(tx, a, 0)                    // workerID는 워커풀에서 자동 관리
-	if err := a.infra.TxJobBus.Publish(job); err != nil { // <- 블로킹
-		// 종료(stopping/closed) 중엔 에러가 날 수 있으니 드롭 카운트만 올림
-		atomic.AddInt64(&a.stats.DroppedTxs, 1)
-		return fmt.Errorf("enqueue failed: %v", err)
-	}
-	return nil
-}
+// // TODO 현재 이 부분에서 스레드 간 성능 저하 발생함. 스레드 1개나 16개나 동일 성능 보임
+// // TODO TxJob의 Do()가 서로 경합 발생. 패닉은 아니지만, 암묵적 성능 저하 발생중
+// // TODO 문제에 대한 진단 및 추후 개선 방안은 /debug의 upgrade_solution.md에 자세히 적어놨음.
+// func (a *SimpleTriplet) ProcessTransaction(tx *shareddomain.MarkedTransaction) error {
+// 	job := NewTransactionJob(tx, a, 0) // workerID는 워커풀에서 자동 관리
+// 	// 퍼블리시하는 쪽(Analyzer) 직전
+// 	fmt.Printf("bus@analyz = %p\n", a.infra.TxJobBus)
+// 	if err := a.infra.TxJobBus.Publish(job); err != nil { // <- 블로킹
+// 		// 종료(stopping/closed) 중엔 에러가 날 수 있으니 드롭 카운트만 올림
+// 		atomic.AddInt64(&a.stats.DroppedTxs, 1)
+// 		return fmt.Errorf("enqueue failed: %v", err)
+// 	}
+// 	return nil
+// }
 
-// ProcessTransactions 배치 트랜잭션 처리
-func (a *SimpleTriplet) ProcessTransactions(txs []*shareddomain.MarkedTransaction) error {
-	for _, tx := range txs {
-		if err := a.ProcessTransaction(tx); err != nil {
-			atomic.AddInt64(&a.stats.DroppedTxs, 1)
-			continue // 개별 실패는 무시하고 계속 처리
-		}
-	}
-	return nil
-}
+// // ProcessTransactions 배치 트랜잭션 처리
+// func (a *SimpleTriplet) ProcessTransactions(txs []*shareddomain.MarkedTransaction) error {
+// 	fmt.Printf("bus@analyz = %p\n", a.infra.TxJobBus)
+// 	for _, tx := range txs {
+// 		if err := a.ProcessTransaction(tx); err != nil {
+// 			atomic.AddInt64(&a.stats.DroppedTxs, 1)
+// 			continue // 개별 실패는 무시하고 계속 처리
+// 		}
+// 	}
+// 	return nil
+// }
 
 // transactionWorker는 이제 워커풀에 의해 대체됨 - 하위 호환성을 위해 주석 처리
 // 실제 작업은 TransactionJob.Do()에서 처리됨
@@ -241,7 +246,7 @@ func (a *SimpleTriplet) processTransactionParrell(messages []kafka.Message[*shar
 	processedCount := atomic.LoadInt64(&a.stats.TotalProcessed)
 
 	// 배치 처리 시작 로깅 (처음 몇 배치만)
-	if processedCount < 500 {
+	if processedCount < 5 {
 		log.Printf("📦 Processing batch of %d messages (total processed: %d)", batchSize, processedCount)
 	}
 
@@ -257,11 +262,14 @@ func (a *SimpleTriplet) processTransactionParrell(messages []kafka.Message[*shar
 	}
 
 	// 2. 트랜잭션 처리 (배치로 처리)
+
+	fmt.Printf("bus@analyzer   = %p\n", a.infra.TxJobBus)
 	for _, tx := range transactions {
 		// 워커풀로 작업 전달
 		job := NewTransactionJob(tx, a, 0)
 
-		if err := a.infra.TxJobBus.Publish(job); err != nil {
+		err := a.infra.TxJobBus.Publish(job)
+		if err != nil {
 			atomic.AddInt64(&a.stats.DroppedTxs, 1)
 			fmt.Printf("현재 EOA Analyzer의 워커풀 채널에 에러가 남. 0.1초간 입력을 블로킹함.")
 			time.Sleep(10 * time.Millisecond) // 너무 무거운 대기는 피하기
@@ -287,7 +295,7 @@ func (a *SimpleTriplet) analyzeTransactionResult(tx *shareddomain.MarkedTransact
 	processedCount := atomic.LoadInt64(&a.stats.SuccessCount)
 
 	// 입금 주소 탐지
-	isCEX := a.infra.GroundKnowledge.IsCEXAddress(tx.To)
+	isCEX := a.dualManager.IsCEXAddress(tx.To)
 	if processedCount <= 5 {
 		log.Printf("🔍 CEX Check #%d: To=%s → IsCEX=%t",
 			processedCount, tx.To.String(), isCEX)
@@ -300,7 +308,7 @@ func (a *SimpleTriplet) analyzeTransactionResult(tx *shareddomain.MarkedTransact
 	}
 
 	// 그래프/윈도우 업데이트 분류
-	if a.infra.GroundKnowledge.IsDepositAddress(tx.To) && isDebug {
+	if a.dualManager.IsDepositAddress(tx.To) && isDebug {
 		graphCount := atomic.AddInt64(&a.stats.GraphUpdates, 1)
 		log.Printf("📊 GRAPH UPDATE #%d: From: %s → Deposit: %s",
 			graphCount, tx.From.String()[:10]+"...", tx.To.String()[:10]+"...")

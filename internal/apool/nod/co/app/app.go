@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 
 	"github.com/ethereum/go-ethereum/rlp"
-	codomain "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/infra"
 
@@ -38,6 +37,7 @@ func NewCo(coCfg CoCfg, nodPool iface.NodPort) *Co {
 		//프로덕션 환경에선 고유 루트 디렉터리 사용
 		rootDir = computation.ComputeThisProductionStorage("nod/co")
 	}
+
 	contDbDir := filepath.Join(rootDir, "cont")
 	contDB, err := infra.NewContractDB(coCfg.Mode, contDbDir)
 	if err != nil {
@@ -76,12 +76,16 @@ func (co *Co) RegisterContract(creator domain.Address, nonce domain.Nonce, block
 	return inferedCreated, nil
 }
 
-func (co *Co) SaveDetectedDeposit(deposit *codomain.DetectedDepositWithEvidence) error {
+func (co *Co) SaveDetectedDeposit(deposit *domain.DetectedDeposit) error {
 	return co.depositDB.SaveDetectedDeposit(deposit)
 }
 
 func (co *Co) IsDepositAddress(addr domain.Address) (bool, error) {
 	return co.depositDB.IsDepositAddress(addr)
+}
+
+func (co *Co) CEXAddresses() map[string]struct{} {
+	return co.cexDB.GetCexSet()
 }
 func (co *Co) IsCex(addr domain.Address) bool {
 	return co.cexDB.IsContain(addr.String())
@@ -90,7 +94,7 @@ func (co *Co) UpdateDepositTxCount(addr domain.Address, count int64) error {
 	return co.depositDB.UpdateTxCount(addr, count)
 }
 
-func (co *Co) GetDepositInfo(addr domain.Address) (*codomain.DetectedDepositWithEvidence, error) {
+func (co *Co) GetDepositInfo(addr domain.Address) (*domain.DetectedDeposit, error) {
 	return co.depositDB.GetDepositInfo(addr)
 }
 

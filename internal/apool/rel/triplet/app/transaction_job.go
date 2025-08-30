@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sync/atomic"
 
@@ -34,7 +35,6 @@ func (j *TransactionJob) Do(ctx context.Context) error {
 // processSingleTransactionJob processes a single transaction (refactored from processSingleTransaction)
 func (a *SimpleTriplet) processSingleTransactionJob(tx *shareddomain.MarkedTransaction, workerID int) error {
 	processedCount := atomic.AddInt64(&a.stats.TotalProcessed, 1)
-
 	// 처음 몇 개 트랜잭션은 디버깅 로그 출력
 	if processedCount <= 5 {
 		log.Printf("🔄 Worker %d: processing tx #%d | From: %s | To: %s",
@@ -50,7 +50,6 @@ func (a *SimpleTriplet) processSingleTransactionJob(tx *shareddomain.MarkedTrans
 		return nil
 	}
 
-	// DualManager를 통한 트랜잭션 처리
 	//* 모나드 처리로 로직 간명화
 	_, err := fp.NewMonadFlow[*domain.MarkedTransaction]().
 		RegisterInput(tx).
@@ -61,6 +60,7 @@ func (a *SimpleTriplet) processSingleTransactionJob(tx *shareddomain.MarkedTrans
 
 	if err != nil {
 		atomic.AddInt64(&a.stats.ErrorCount, 1)
+		fmt.Printf("프로세싱에서 에러 발생 %s\n", err.Error())
 		errorCount := atomic.LoadInt64(&a.stats.ErrorCount)
 		if errorCount <= 5 { // 처음 5개 에러는 모두 로깅 (디버깅용)
 			log.Printf("⚠️ Worker %d: processing error #%d: %v | From: %s | To: %s",

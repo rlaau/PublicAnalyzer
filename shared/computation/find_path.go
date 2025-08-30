@@ -12,6 +12,7 @@ func FindWebDir() string {
 
 }
 
+// func(...name)=> root/n1/n2
 func ComputeRelClosure(root string) func(...string) string {
 	return func(subpaths ...string) string {
 		return filepath.Join(append([]string{root}, subpaths...)...)

@@ -72,9 +72,9 @@ type TxDefineLoader struct {
 	doneChannel chan struct{}
 
 	// 동기화
-	mutex    sync.RWMutex
-	stopOnce sync.Once
-
+	mutex       sync.RWMutex
+	stopOnce    sync.Once
+	targetTotal int // ✅ 목표 총 트랜잭션 수 (예: 400_000)
 	// 통계
 	stats PipelineStats
 }
@@ -99,9 +99,15 @@ func NewTxDefineLoader(config *TxFeederConfig) (*TxDefineLoader, error) {
 		batchTimeout:     config.BatchTimeout,
 		stopChannel:      make(chan struct{}),
 		doneChannel:      make(chan struct{}),
+		targetTotal:      config.GenConfig.TotalTransactions,
 		stats: PipelineStats{
 			StartTime: time.Now(),
 		},
+	}
+
+	// ✅ GenConfig.TotalTransactions 값을 사용 (있으면 스케일링)
+	if config.GenConfig != nil && config.GenConfig.TotalTransactions > 0 {
+		loader.targetTotal = config.GenConfig.TotalTransactions
 	}
 
 	// 배치 모드 설정
@@ -161,7 +167,7 @@ func (loader *TxDefineLoader) generateDeterministicGraph() error {
 	if loader.mockDepositAddrs.Size() < 200 {
 		return fmt.Errorf("insufficient mock deposit addresses: need 200, got %d", loader.mockDepositAddrs.Size())
 	}
-	
+
 	// 결정론적으로 선택 (시드 기반)
 	for i := 0; i < 200; i++ {
 		// 결정론적 인덱스 계산 (랜덤이 아닌 시드 기반)
@@ -279,7 +285,6 @@ func (loader *TxDefineLoader) generateDetailedTransactions(graph *DeterministicG
 
 	transactions := make([]sharedDomain.MarkedTransaction, 0, 4000)
 
-	// 1. MultiDeposit Users -> Deposits 트랜잭션 (평균 3.5개 × 500명 = 1750개)
 	for _, user := range graph.MultiDepositUsers {
 		deposits := graph.UserToDeposits[user]
 		for _, deposit := range deposits {
@@ -287,7 +292,7 @@ func (loader *TxDefineLoader) generateDetailedTransactions(graph *DeterministicG
 			transactions = append(transactions, tx)
 			graph.TransactionsByCategory["user_to_deposit"]++
 
-			currentTime = currentTime.Add(30 * time.Second)
+			currentTime = currentTime.Add(30 * time.Minute)
 		}
 	}
 
@@ -300,7 +305,7 @@ func (loader *TxDefineLoader) generateDetailedTransactions(graph *DeterministicG
 			transactions = append(transactions, tx)
 			graph.TransactionsByCategory["user_to_deposit"]++
 
-			currentTime = currentTime.Add(30 * time.Second)
+			currentTime = currentTime.Add(30 * time.Minute)
 		}
 	}
 
@@ -310,13 +315,13 @@ func (loader *TxDefineLoader) generateDetailedTransactions(graph *DeterministicG
 		tx1 := loader.createMarkedTransaction(pair[0], pair[1], len(transactions), currentTime)
 		transactions = append(transactions, tx1)
 		graph.TransactionsByCategory["user_to_user"]++
-		currentTime = currentTime.Add(1 * time.Minute)
+		currentTime = currentTime.Add(30 * time.Minute)
 
 		// User2 -> User1 (양방향)
 		tx2 := loader.createMarkedTransaction(pair[1], pair[0], len(transactions), currentTime)
 		transactions = append(transactions, tx2)
 		graph.TransactionsByCategory["user_to_user"]++
-		currentTime = currentTime.Add(1 * time.Minute)
+		currentTime = currentTime.Add(30 * time.Minute)
 	}
 
 	// 4. Deposit -> CEX 트랜잭션 (각 Deposit에서 무작위 CEX로, 500개)
@@ -328,7 +333,7 @@ func (loader *TxDefineLoader) generateDetailedTransactions(graph *DeterministicG
 		transactions = append(transactions, tx)
 		graph.TransactionsByCategory["deposit_to_cex"]++
 
-		currentTime = currentTime.Add(3 * time.Minute)
+		currentTime = currentTime.Add(30 * time.Minute)
 	}
 
 	graph.PredefinedTransactions = transactions
@@ -350,7 +355,7 @@ func (loader *TxDefineLoader) generateDeterministicAddress(seed int) sharedDomai
 func (loader *TxDefineLoader) getDeterministicDepositAddress(index int) sharedDomain.Address {
 	// MockDepositAddressSet에서 특정 인덱스의 주소를 가져오기 위해
 	// 임시로 결정론적 방식 사용 (실제로는 파일에서 순서대로 읽어야 함)
-	
+
 	// 결정론적 방식으로 주소 생성 (실제 파일 기반)
 	var addr sharedDomain.Address
 	for i := 0; i < 20; i++ {

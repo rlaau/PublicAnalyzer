@@ -1,10 +1,13 @@
+// file: internal/apool/rel/triplet/infra/pending_repo.go
 package infra
 
 import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"math"
+	"sync"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
@@ -19,7 +22,7 @@ type PendingRelationRepo interface {
 	CountPendingRelations() int
 }
 
-// PendingDB의 key는 toAddress, Val은 FromScala
+// PendingDB의 key는 toAddress, Val은 []FromScala
 type FromScala struct {
 	FromAddress domain.Address       `json:"from_address"`
 	LastTxId    domain.TxId          `json:"last_tx_id"`
@@ -27,8 +30,12 @@ type FromScala struct {
 	Volume      int32                `json:"volum"`
 }
 
-type FFBadgerPendingRelationRepo struct {
+type BadgerPendingRelationRepo struct {
 	db *badger.DB
+	// --- MVCC 재시도 + 샤드 락(필수 처리 경로) ---
+	shards     []sync.Mutex
+	shardMask  uint32
+	maxRetries int
 }
 
 const (
@@ -38,16 +45,15 @@ const (
 	gcDiscardRatio   = 0.5  // badger.RunValueLogGC 매개값
 )
 
-func NewFFBadgerPendingRelationRepo(dbPath string) (*FFBadgerPendingRelationRepo, error) {
-	opts := badger.DefaultOptions(dbPath)
-	opts.Logger = nil // Disable badger logging
-
+// NewBadgerPendingRelationRepo: 기본 셋업(샤드=256, maxRetries=3)
+func NewBadgerPendingRelationRepo(dbPath string) (*BadgerPendingRelationRepo, error) {
+	opts := badger.DefaultOptions(dbPath).WithLogger(nil) // Disable badger logging
 	db, err := badger.Open(opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open BadgerDB: %w", err)
 	}
 
-	// 메타 카운터 키 초기화
+	// 메타 카운터 키 초기화(없으면 0)
 	_ = db.Update(func(txn *badger.Txn) error {
 		if _, err := txn.Get([]byte(metaCountKey)); err == badger.ErrKeyNotFound {
 			var z [8]byte
@@ -64,13 +70,16 @@ func NewFFBadgerPendingRelationRepo(dbPath string) (*FFBadgerPendingRelationRepo
 		return nil
 	})
 
-	return &FFBadgerPendingRelationRepo{db: db}, nil
+	numShards := nextPow2(256)
+	return &BadgerPendingRelationRepo{
+		db:         db,
+		shards:     make([]sync.Mutex, numShards),
+		shardMask:  uint32(numShards - 1),
+		maxRetries: 3,
+	}, nil
 }
 
-// Close closes the BadgerDB connection
-func (r *FFBadgerPendingRelationRepo) Close() error {
-	return r.db.Close()
-}
+func (r *BadgerPendingRelationRepo) Close() error { return r.db.Close() }
 
 // ───────────────────────────────────────────────────────────────────────────────
 // 내부: 카운터 유틸
@@ -116,7 +125,7 @@ func incrU64(txn *badger.Txn, key []byte, delta int64) error {
 
 // ───────────────────────────────────────────────────────────────────────────────
 
-func (r *FFBadgerPendingRelationRepo) GetPendingRelations(toAddr domain.Address) ([]FromScala, error) {
+func (r *BadgerPendingRelationRepo) GetPendingRelations(toAddr domain.Address) ([]FromScala, error) {
 	var list []FromScala
 	err := r.db.View(func(txn *badger.Txn) error {
 		itm, err := txn.Get([]byte(toAddr.String()))
@@ -133,7 +142,7 @@ func (r *FFBadgerPendingRelationRepo) GetPendingRelations(toAddr domain.Address)
 	return list, err
 }
 
-func (r *FFBadgerPendingRelationRepo) DeletePendingRelations(toAddr domain.Address) error {
+func (r *BadgerPendingRelationRepo) DeletePendingRelations(toAddr domain.Address) error {
 	key := []byte(toAddr.String())
 	return r.db.Update(func(txn *badger.Txn) error {
 		// 존재할 때만 삭제 및 카운터 감소/삭제수 증가
@@ -146,43 +155,74 @@ func (r *FFBadgerPendingRelationRepo) DeletePendingRelations(toAddr domain.Addre
 		if err := txn.Delete(key); err != nil {
 			return err
 		}
-
-		// to-key 개수 감소
 		if err := incrU64(txn, []byte(metaCountKey), -1); err != nil {
 			return err
 		}
-		// 삭제 횟수 증가
 		if err := incrU64(txn, []byte(metaDeleteCntKey), 1); err != nil {
 			return err
-		}
-
-		// 임계치 도달 시 GC 시도
-		delCnt, err := readU64(txn, []byte(metaDeleteCntKey))
-		if err == nil && delCnt%gcDeleteTriggerN == 0 {
-			// 트랜잭션 외부에서 GC를 돌려야 하므로 여기서는 마킹만 하고
-			// 커밋 후 호출자가 끝나면 아래 defer에서 GC
 		}
 		return nil
 	})
 }
 
 // AddToPendingRelations:
-// - FromAddress 가 없으면 append (Volum==0이면 1로 보정)
-// - 있으면 LastTxId/LastTime 덮어쓰기 + Volum++
-func (r *FFBadgerPendingRelationRepo) AddToPendingRelations(toAddr domain.Address, from FromScala) error {
+// - FromAddress 가 없으면 append (Volume<=0 이면 1로 보정)
+// - 있으면 LastTxId/LastTime 덮어쓰기 + Volume++
+func (r *BadgerPendingRelationRepo) AddToPendingRelations(toAddr domain.Address, from FromScala) error {
 	key := []byte(toAddr.String())
 	var needGC bool
 
-	err := r.db.Update(func(txn *badger.Txn) error {
+	fn := func(txn *badger.Txn) error {
 		var list []FromScala
 		itm, err := txn.Get(key)
-		if err == badger.ErrKeyNotFound {
-			// 신규 키 생성 → 카운터 +1
+		switch err {
+		case nil:
+			// 기존 값 → 디코드
+			if err := itm.Value(func(val []byte) error {
+				return json.Unmarshal(val, &list)
+			}); err != nil {
+				return err
+			}
+			// 업데이트 or append
+			found := false
+			for i := range list {
+				if list[i].FromAddress == from.FromAddress {
+					list[i].LastTxId = from.LastTxId
+					list[i].LastTime = from.LastTime
+					if list[i].Volume < math.MaxInt32 {
+						list[i].Volume++
+					}
+					found = true
+					break
+				}
+			}
+			if !found {
+				if from.Volume <= 0 {
+					from.Volume = 1
+				}
+				list = append(list, from)
+			}
+			b, e := json.Marshal(list)
+			if e != nil {
+				return e
+			}
+			if e = txn.Set(key, b); e != nil {
+				return e
+			}
+
+			// 삭제 횟수 기반 GC 트리거 판단(선택)
+			delCnt, e := readU64(txn, []byte(metaDeleteCntKey))
+			if e == nil && delCnt%gcDeleteTriggerN == 0 && delCnt > 0 {
+				needGC = true
+			}
+			return nil
+
+		case badger.ErrKeyNotFound:
+			// 신규 키
 			if from.Volume <= 0 {
 				from.Volume = 1
 			}
 			list = []FromScala{from}
-
 			b, e := json.Marshal(list)
 			if e != nil {
 				return e
@@ -194,67 +234,46 @@ func (r *FFBadgerPendingRelationRepo) AddToPendingRelations(toAddr domain.Addres
 				return e
 			}
 			return nil
-		}
-		if err != nil {
+
+		default:
 			return err
 		}
-
-		if err := itm.Value(func(val []byte) error {
-			return json.Unmarshal(val, &list)
-		}); err != nil {
-			return err
-		}
-
-		// 존재 여부 체크
-		found := false
-		for i := range list {
-			if list[i].FromAddress == from.FromAddress {
-				// 업데이트: Tx/Time 덮어쓰기 + Volum++
-				list[i].LastTxId = from.LastTxId
-				list[i].LastTime = from.LastTime
-				if list[i].Volume < math.MaxInt32 {
-					list[i].Volume++
-				}
-				found = true
-				break
-			}
-		}
-		if !found {
-			// 신입 추가
-			if from.Volume <= 0 {
-				from.Volume = 1
-			}
-			list = append(list, from)
-		}
-
-		b, e := json.Marshal(list)
-		if e != nil {
-			return e
-		}
-		if e = txn.Set(key, b); e != nil {
-			return e
-		}
-
-		// add도 공간 변동이 크면 주기적으로 GC를 고려할 수 있음:
-		// 여기서는 삭제 횟수 기준으로만 GC → 삭제 카운터 읽어서 트리거 판단
-		delCnt, e := readU64(txn, []byte(metaDeleteCntKey))
-		if e == nil && delCnt%gcDeleteTriggerN == 0 && delCnt > 0 {
-			needGC = true
-		}
-		return nil
-	})
-	if err != nil {
-		return err
 	}
 
-	// 트랜잭션 밖에서 value log GC 시도 (비동기)
+	// 1) MVCC 낙관적 재시도
+	var lastErr error
+	for i := 0; i < r.maxRetries; i++ {
+		if err := r.db.Update(fn); err != nil {
+			lastErr = err
+			if err == badger.ErrConflict {
+				continue // 재시도
+			}
+			// 다른 에러는 즉시 리턴
+			return fmt.Errorf("AddToPendingRelations: update failed: %w", err)
+		}
+		lastErr = nil
+		break
+	}
+
+	// 2) 계속 충돌이면 샤드 락으로 직렬화 → mustProcess 1회
+	if lastErr == badger.ErrConflict {
+		ix := r.shardIndex(key)
+		r.shards[ix].Lock()
+		defer r.shards[ix].Unlock()
+
+		if err := r.db.Update(fn); err != nil {
+			return fmt.Errorf("AddToPendingRelations: serialized update failed: %w", err)
+		}
+	}
+
+	// 3) 트랜잭션 밖에서 value log GC(선택적)
 	if needGC {
-		go r.runGC() // 고루틴으로 비동기 실행
+		go r.runGC()
 	}
 	return nil
 }
 
-func (r *FFBadgerPendingRelationRepo) CountPendingRelations() int {
+func (r *BadgerPendingRelationRepo) CountPendingRelations() int {
 	var v uint64
 	_ = r.db.View(func(txn *badger.Txn) error {
 		n, err := readU64(txn, []byte(metaCountKey))
@@ -270,15 +289,29 @@ func (r *FFBadgerPendingRelationRepo) CountPendingRelations() int {
 }
 
 // runGC: Badger GC 실행 (비동기)
-func (r *FFBadgerPendingRelationRepo) runGC() {
-	fmt.Printf("Running GC for pending relation repository (delete count reached %d)\n", gcDeleteTriggerN)
-
-	// Badger의 내장 GC 실행
+func (r *BadgerPendingRelationRepo) runGC() {
 	for {
 		if err := r.db.RunValueLogGC(gcDiscardRatio); err != nil {
-			break // reclaim 없음 혹은 에러 → 중단
+			break // reclaim 없음 또는 에러 → 중단
 		}
 	}
+}
 
-	fmt.Println("Pending relation repository GC completed")
+// ---- 내부 유틸 (샤딩/해시/보조) ----
+
+func (r *BadgerPendingRelationRepo) shardIndex(key []byte) uint32 {
+	h := fnv.New32a()
+	_, _ = h.Write(key)
+	return h.Sum32() & r.shardMask
+}
+
+func nextPow2(n int) int {
+	if n <= 1 {
+		return 1
+	}
+	x := 1
+	for x < n {
+		x <<= 1
+	}
+	return x
 }

@@ -15,3 +15,4 @@
 ### 요약
 1. "형제와 자식"의 인터페이스는 공유 sharedface로 참조한다
 2. "부모"의 인터페이스는 로컬 iface로 참조한다.
+3. 이미지로 생각해 보면, 삼각형의 각 꼭지점이 iface파일, 그 무게중심이 sharedface파일임. 이때 밑변에 있는 두 iface는 형제-자식 참조 시 무게중심의 sharedface, 아래의 sharedface를 참조하고, 부모 참고 시 iface참고함

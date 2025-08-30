@@ -187,3 +187,10 @@ func (a *AnalyzerPool) Close() error {
 	fmt.Printf("apool버스들 종료 완료 \n")
 	return nil
 }
+
+// TODO 추후 지울것.
+// TODO 포트 등록은 정식 생성자 통해서 할것!!!
+func (a *AnalyzerPool) RegisterPorts(n sharedface.NodPort, r sharedface.RelPort) {
+	a.ports.nod = n
+	a.ports.rel = r
+}

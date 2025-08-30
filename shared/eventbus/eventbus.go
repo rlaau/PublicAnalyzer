@@ -40,7 +40,7 @@ func NewWithPath[T any](filePath string, capLimit int) (*EventBus[T], error) {
 	filePath = ensureJSONLExt(filePath) // ← 여기서 단 한 줄로 강제
 
 	b := &EventBus[T]{
-		out:      make(chan T),
+		out:      make(chan T, 10),
 		filePath: filePath,
 		capLimit: capLimit,
 	}
@@ -96,6 +96,7 @@ func (b *EventBus[T]) run(backlog []T) {
 		b.mu.Unlock()
 
 		// out 으로 블로킹 전송
+		//log.Printf("[bus %p] send one (out=%p)", b, b.out)
 		b.out <- v
 
 		// 다음 루프 준비

@@ -83,6 +83,9 @@ func (r *FileCEXRepository) IsContain(address string) bool {
 	return ok
 }
 
+func (r *FileCEXRepository) GetCexSet() map[string]struct{} {
+	return r.set
+}
 func (r *FileCEXRepository) Add(address string) error {
 	addr := normalizeAddr(address)
 	if addr == "" {

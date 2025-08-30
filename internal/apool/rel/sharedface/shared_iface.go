@@ -3,8 +3,6 @@ package sharedface
 import (
 	"context"
 	"io"
-
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
 
 type TripletEventMsg any
@@ -14,8 +12,8 @@ type TripletPort interface {
 	Stop() error
 
 	// 트랜잭션 처리
-	ProcessTransaction(tx *domain.MarkedTransaction) error
-	ProcessTransactions(txs []*domain.MarkedTransaction) error
+	//ProcessTransaction(tx *domain.MarkedTransaction) error
+	//ProcessTransactions(txs []*domain.MarkedTransaction) error
 
 	// 상태 조회
 	GetStatistics() map[string]any

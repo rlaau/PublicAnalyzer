@@ -33,9 +33,15 @@ func (n *NodPool) GetCoPort() sharedface.CoPort {
 	return n.ports.co
 }
 
+// TODO 수직 슬라이스 테스트를 위해 어쩔 수 없이 만든 함수임.
+// TODO 추후 정식 생성자 통해서 모든 것을 제대로 초기화 할 것!!
+func (n *NodPool) SetCoPort(c sharedface.CoPort) {
+	n.ports.co = c
+}
+
 func (n *NodPool) Start(ctx context.Context) error {
 	panic("구현 안함 아직")
 }
-func (n *NodPool) Close() {
+func (n *NodPool) Close() error {
 	panic("아직 미구현")
 }

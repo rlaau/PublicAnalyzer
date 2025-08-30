@@ -102,6 +102,10 @@ func (r *RelationPool) Register(triplet sharedface.TripletPort, creation sharedf
 	return nil
 }
 
+func (r *RelationPool) GetApooPort() iface.ApoolPort {
+	return r.Apool
+}
+
 // 포트 기반 뷰어
 func (r *RelationPool) GetTripletPort() sharedface.TripletPort { return r.ports.triplet }
 

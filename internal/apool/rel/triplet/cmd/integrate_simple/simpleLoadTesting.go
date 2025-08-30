@@ -10,8 +10,7 @@ import (
 
 	relapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/app"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
-	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	txFeeder "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/app"
 	feederDomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/txfeeder/domain"
@@ -67,13 +66,13 @@ func main() {
 		analyzerDone <- analyzer.Start(ctx)
 	}()
 
-	// TxGenerator 설정 및 시작
-	cexRepo := infra.NewFileCEXRepository("internal/triplet/cex.txt")
-	cexSet, err := cexRepo.LoadCEXSet()
-	if err != nil {
-		log.Printf("⚠️ Failed to load CEX set: %v", err)
-		cexSet = shareddomain.NewCEXSet() // 빈 CEX 세트로 계속
-	}
+	// // TxGenerator 설정 및 시작
+	// cexRepo := infra.NewFileCEXRepository("internal/triplet/cex.txt")
+	// cexSet, err := cexRepo.LoadCEXSet()
+	// if err != nil {
+	// 	log.Printf("⚠️ Failed to load CEX set: %v", err)
+	// 	cexSet = shareddomain.NewCEXSet() // 빈 CEX 세트로 계속
+	// }
 
 	genConfig := &feederDomain.TxGeneratorConfig{
 		TotalTransactions:     5000, // 5000개 트랜잭션
@@ -83,6 +82,7 @@ func main() {
 		DepositToCexRatio:     50,
 		RandomToDepositRatio:  20,
 	}
+	cexSet := &domain.CEXSet{}
 
 	txGenerator := txFeeder.GetRawTxFeeder(genConfig, cexSet)
 
@@ -106,26 +106,26 @@ func main() {
 			select {
 			case <-ctx.Done():
 				return
-			case tx, ok := <-txChannel:
+			case _, ok := <-txChannel:
 				if !ok {
 					return
 				}
 
 				// 트랜잭션 포인터로 변환
-				txPtr := &shareddomain.MarkedTransaction{
-					BlockTime: tx.BlockTime,
-					TxID:      tx.TxID,
-					TxSyntax:  tx.TxSyntax,
-					Nonce:     tx.Nonce,
-					From:      tx.From,
-					To:        tx.To,
-				}
+				// txPtr := &shareddomain.MarkedTransaction{
+				// 	BlockTime: tx.BlockTime,
+				// 	TxID:      tx.TxID,
+				// 	TxSyntax:  tx.TxSyntax,
+				// 	Nonce:     tx.Nonce,
+				// 	From:      tx.From,
+				// 	To:        tx.To,
+				// }
 
-				// 분석기로 전송
-				if err := analyzer.ProcessTransaction(txPtr); err != nil {
-					// 백프레셔 발생 시 무시하고 계속
-					continue
-				}
+				// // 분석기로 전송
+				// if err := analyzer.ProcessTransaction(txPtr); err != nil {
+				// 	// 백프레셔 발생 시 무시하고 계속
+				// 	continue
+				// }
 			}
 		}
 	}()
