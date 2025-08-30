@@ -11,6 +11,7 @@ import (
 	"time"
 
 	aapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool"
+	eoapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/eo/app"
 	relapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
 	relapi "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/api"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/sharedface"
@@ -55,14 +56,15 @@ func main() {
 	//TxDefineLoader만들기 (결정론적 트랜잭션 로더)
 	//TxDefineLoader의 생성 설정에 집중한 컨피겨
 	txFeederGenConfig := &feederdomain.TxGeneratorConfig{
-		TotalTransactions:            400_000, // TxDefineLoader에서 생성할 결정론적 트랜잭션 수
-		TransactionsPerSecond:        1_000,   // 전송 속도 (결정론적이므로 빠르게)
+		TotalTransactions:            400_000, // ✅ 목표 총 개수
+		TransactionsPerSecond:        1_000,
 		StartTime:                    startTime,
-		TransactionsPerTimeIncrement: 1,                  // 하나의 tx마다 1분이 지난 것으로 설정
-		TimeIncrementDuration:        1000 * time.Minute, // 1분씩 시간 증가
-		DepositToCexRatio:            50,                 // TxDefineLoader에서는 사용하지 않지만 호환성을 위해 유지
-		RandomToDepositRatio:         30,                 // TxDefineLoader에서는 사용하지 않지만 호환성을 위해 유지
+		TransactionsPerTimeIncrement: 1,
+		TimeIncrementDuration:        10 * time.Minute,
+		DepositToCexRatio:            50, // 호환성 플래그(이번 로더에선 직접 쓰진 않음)
+		RandomToDepositRatio:         30,
 	}
+
 	relClouser := computation.ComputeRelClosure(isolatedDir)
 	//TxDefineLoader의 총 설정
 	txFeederConfig := &txFeeder.TxFeederConfig{
@@ -90,7 +92,9 @@ func main() {
 	nodPool := &nodapp.NodPool{}
 	//* CO생성 및 nodPool에 강제 등록
 	co := coapp.NewCo(coapp.CoCfg{Mode: mode.TestingModeProcess}, nodPool)
+	eo := eoapp.NewEo(mode.TestingModeProcess, nodPool)
 	nodPool.SetCoPort(co)
+	nodPool.SetEoPort(eo)
 	//* 1차포 apool에 nolPool등록
 	apool.RegisterPorts(nodPool, nil)
 	//* 여기서 일단은 relPool이 apool로 nodPool접근

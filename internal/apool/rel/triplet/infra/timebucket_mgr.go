@@ -214,6 +214,7 @@ func (m *TimeBucketManager) ensureBucketLocked(txTime chaintimer.ChainTime) (int
 	}
 	// 가득 참 → front 로테이션
 	old := m.buckets[m.frontIndex]
+	fmt.Printf("tikeBucket:버킷이 가득 참. %d개 원소가 있는 old버킷을 제거함\n", len(old.ToUsers))
 	newIdx := m.frontIndex
 	m.buckets[newIdx] = newTimeBucket(ws)
 	m.frontIndex = (m.frontIndex + 1) % MaxTimeBuckets

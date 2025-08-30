@@ -29,6 +29,24 @@ func NewDualManager(managerInfra *infra.DualManagerInfra, pool iface.RelPort) (*
 		infra:   managerInfra,
 		relPool: pool,
 	}
+	//* 타임 버킷이 버려질 땐 펜딩 릴레이션도 버려지게 설정
+	// 타임버킷 로테이트 시, 해당 버킷의 to-user 펜딩 릴레이션 정리
+	managerInfra.TimeBucketManager.OnRotate = func(oldBucket *infra.TimeBucket) {
+		// 1) 키 스냅샷을 먼저 뜬다 (동시 수정/삭제로부터 보호)
+		keys := make([]domain.Address, 0, len(oldBucket.ToUsers))
+		for to := range oldBucket.ToUsers {
+			keys = append(keys, to)
+		}
+
+		deleted, err := dm.infra.PendingRelationRepo.DeletePendingRelationsBatch(keys)
+		if err != nil {
+			fmt.Printf("   ⚠️ Failed to delete pending relations for %s: %v\n",
+				keys[0].String()[:10]+"...", err)
+		}
+
+		// 3) 출력은 스냅샷 길이 기준 (맵이 비워졌더라도 정확한 개수 출력)
+		fmt.Printf("%d개의 펜딩 to user를 두 저장소에서 제거함\n", deleted)
+	}
 
 	return dm, nil
 }
@@ -69,7 +87,7 @@ func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.Mark
 	toAddr := tx.To
 
 	// 디버깅: 모든 트랜잭션의 케이스 분류 과정 로깅 (처음에는 항상 로깅)
-	debugEnabled := true //성능 이슈로 디버깅 취소//true // 일단 모든 트랜잭션 디버깅
+	debugEnabled := false //성능 이슈로 디버깅 취소//true // 일단 모든 트랜잭션 디버깅
 	allDbg := false
 	if allDbg {
 		fmt.Printf("🔀 DualManager: From=%s To=%s\n",
@@ -146,7 +164,7 @@ func (dm *DualManager) DetectNewDepositAddress(dd *domain.DetectedDeposit) error
 // handleDepositDetection handles detection of new deposit addresses
 func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Address, tx *domain.MarkedTransaction, time chaintimer.ChainTime) error {
 	//fmt.Printf("💰 handleDepositDetection: %s → CEX %s\n", depositAddr.String()[:10]+"...", cexAddr.String()[:10]+"...")
-	debugEnabled := true
+	debugEnabled := false
 	// 1. 새로운 입금주소를 detectedDepositAddress에 추가
 	dd := &domain.DetectedDeposit{
 		CEXAddress: cexAddr,
@@ -251,13 +269,8 @@ func (dm *DualManager) AddToWindowBuffer(tx *domain.MarkedTransaction) (*domain.
 	txTime := tx.BlockTime
 	toAddr := tx.To
 	fromAddr := tx.From
-	debugEnabled := true
 
 	static_counter++
-	if (static_counter%50 == 0 || static_counter <= 20) && debugEnabled {
-		fmt.Printf("⏰ TX #%d time: %s (1주=1008분≈17tx, 21버킷=357tx 순환)\n",
-			static_counter, txTime.Format("2006-01-02 15:04:05"))
-	}
 
 	// 윈도 내 미존재시에만 현재 주 버킷에 추가
 	_, _ = dm.infra.TimeBucketManager.AddIfAbsent(toAddr, txTime)

@@ -5,9 +5,11 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"math"
+	"runtime"
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
@@ -18,6 +20,8 @@ type PendingRelationRepo interface {
 	Close() error
 	GetPendingRelations(toAddr domain.Address) ([]FromScala, error)
 	DeletePendingRelations(toAddr domain.Address) error
+	// 새로 추가: 배치 삭제 (반환값: 실제 삭제된 키 개수)
+	DeletePendingRelationsBatch(addrs []domain.Address) (int, error)
 	AddToPendingRelations(toAddr domain.Address, from FromScala) error
 	CountPendingRelations() int
 }
@@ -32,28 +36,34 @@ type FromScala struct {
 
 type BadgerPendingRelationRepo struct {
 	db *badger.DB
-	// --- MVCC 재시도 + 샤드 락(필수 처리 경로) ---
+
+	// per-key 직렬화(핫키)용 샤드 락 (1024 샤드)
 	shards     []sync.Mutex
 	shardMask  uint32
 	maxRetries int
+
+	// 전역 메타 키(__meta:*) 직렬화용 락
+	metaMu sync.Mutex
 }
 
 const (
-	metaCountKey     = "__meta:pending_relations_count__" // 현재 to-key 개수
+	metaCountKey     = "__meta:pending_relations_count__"
 	metaDeleteCntKey = "__meta:pending_relations_delete_cnt__"
-	gcDeleteTriggerN = 1024 // 삭제 N회마다 GC 시도
-	gcDiscardRatio   = 0.5  // badger.RunValueLogGC 매개값
+	gcDeleteTriggerN = 1024
+	gcDiscardRatio   = 0.5
 )
 
-// NewBadgerPendingRelationRepo: 기본 셋업(샤드=256, maxRetries=3)
+// 기존 호출자와 이름 호환
 func NewBadgerPendingRelationRepo(dbPath string) (*BadgerPendingRelationRepo, error) {
-	opts := badger.DefaultOptions(dbPath).WithLogger(nil) // Disable badger logging
+	opts := badger.DefaultOptions(dbPath)
+	opts.Logger = nil
+
 	db, err := badger.Open(opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open BadgerDB: %w", err)
 	}
 
-	// 메타 카운터 키 초기화(없으면 0)
+	// 메타 키 초기화(없으면 0 설정)
 	_ = db.Update(func(txn *badger.Txn) error {
 		if _, err := txn.Get([]byte(metaCountKey)); err == badger.ErrKeyNotFound {
 			var z [8]byte
@@ -70,7 +80,7 @@ func NewBadgerPendingRelationRepo(dbPath string) (*BadgerPendingRelationRepo, er
 		return nil
 	})
 
-	numShards := nextPow2(256)
+	numShards := 1024 // 2^10
 	return &BadgerPendingRelationRepo{
 		db:         db,
 		shards:     make([]sync.Mutex, numShards),
@@ -124,9 +134,30 @@ func incrU64(txn *badger.Txn, key []byte, delta int64) error {
 }
 
 // ───────────────────────────────────────────────────────────────────────────────
+// 샤드 유틸
+
+func (r *BadgerPendingRelationRepo) shardIndexFromAddr(a domain.Address) uint32 {
+	// 1024 샤드 → 하위 10비트 사용 후 마스크
+	return uint32(a.HashAddress1024()) & r.shardMask
+}
+
+// writer 직렬화가 진행 중이면 “짧게 대기 후 통과”
+//
+//nolint:staticcheck // SA2001: 의도적으로 writer 종료 대기(빈 크리티컬 섹션)
+func (r *BadgerPendingRelationRepo) waitShardFree(ix uint32) {
+	r.shards[ix].Lock()
+	r.shards[ix].Unlock()
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
 
 func (r *BadgerPendingRelationRepo) GetPendingRelations(toAddr domain.Address) ([]FromScala, error) {
 	var list []FromScala
+
+	// 읽기는 MVCC로 자유롭게. 다만 같은 샤드에 writer 직렬화 중이면 잠깐 대기.
+	ix := r.shardIndexFromAddr(toAddr)
+	r.waitShardFree(ix)
+
 	err := r.db.View(func(txn *badger.Txn) error {
 		itm, err := txn.Get([]byte(toAddr.String()))
 		if err != nil {
@@ -142,31 +173,140 @@ func (r *BadgerPendingRelationRepo) GetPendingRelations(toAddr domain.Address) (
 	return list, err
 }
 
+// 삭제(단건): 낙관적 재시도 → 충돌 시 샤드락+메타락 직렬화 경로 재시도
 func (r *BadgerPendingRelationRepo) DeletePendingRelations(toAddr domain.Address) error {
-	key := []byte(toAddr.String())
-	return r.db.Update(func(txn *badger.Txn) error {
-		// 존재할 때만 삭제 및 카운터 감소/삭제수 증가
-		if _, err := txn.Get(key); err == badger.ErrKeyNotFound {
-			return nil
-		} else if err != nil {
-			return err
+	_, err := r.DeletePendingRelationsBatch([]domain.Address{toAddr})
+	return err
+}
+
+// 배치 삭제: 샤드별로 묶어 정렬 → 샤드 단위로 트랜잭션 수행(메타키 보정은 델타 합산 1회)
+func (r *BadgerPendingRelationRepo) DeletePendingRelationsBatch(addrs []domain.Address) (int, error) {
+	if len(addrs) == 0 {
+		return 0, nil
+	}
+
+	// 1) 중복 제거 & 샤드별 묶기
+	perShard := make(map[uint32][]domain.Address, 64)
+	seen := make(map[domain.Address]struct{}, len(addrs))
+	for _, a := range addrs {
+		if _, ok := seen[a]; ok {
+			continue
+		}
+		seen[a] = struct{}{}
+		ix := r.shardIndexFromAddr(a)
+		perShard[ix] = append(perShard[ix], a)
+	}
+
+	// 2) 샤드 인덱스 정렬(락 순서 고정)
+	ixs := make([]int, 0, len(perShard))
+	for ix := range perShard {
+		ixs = append(ixs, int(ix))
+	}
+	sort.Ints(ixs)
+
+	totalDeleted := 0
+
+	// 3) 샤드 단위로 처리
+	for _, ixi := range ixs {
+		ix := uint32(ixi)
+		keys := perShard[ix]
+
+		// 낙관적 재시도 함수
+		try := func(txn *badger.Txn) (int, error) {
+			deleted := 0
+			for _, a := range keys {
+				k := []byte(a.String())
+				if _, err := txn.Get(k); err == badger.ErrKeyNotFound {
+					continue
+				} else if err != nil {
+					return 0, err
+				}
+				if err := txn.Delete(k); err != nil {
+					return 0, err
+				}
+				deleted++
+			}
+			if deleted > 0 {
+				if err := incrU64(txn, []byte(metaCountKey), -int64(deleted)); err != nil {
+					return 0, err
+				}
+				if err := incrU64(txn, []byte(metaDeleteCntKey), int64(deleted)); err != nil {
+					return 0, err
+				}
+			}
+			return deleted, nil
 		}
 
-		if err := txn.Delete(key); err != nil {
-			return err
+		// 3-1) 낙관적 재시도
+		var lastErr error
+		var shardDeleted int
+		for i := 0; i < r.maxRetries; i++ {
+			err := r.db.Update(func(txn *badger.Txn) error {
+				n, e := try(txn)
+				if e == nil {
+					shardDeleted = n
+				}
+				return e
+			})
+			if err == nil {
+				lastErr = nil
+				break
+			}
+			lastErr = err
+			if err != badger.ErrConflict {
+				return totalDeleted, fmt.Errorf("DeletePendingRelationsBatch: update failed: %w", err)
+			}
+			runtime.Gosched()
 		}
-		if err := incrU64(txn, []byte(metaCountKey), -1); err != nil {
-			return err
+
+		// 3-2) 여전히 충돌 → 샤드락+메타락 직렬화 경로에서 성공할 때까지 재시도
+		if lastErr == badger.ErrConflict {
+			r.shards[ix].Lock()
+			r.metaMu.Lock()
+
+			const (
+				maxSpin   = 256
+				baseSleep = 100 * time.Microsecond
+				maxSleep  = 2 * time.Millisecond
+			)
+			var err error
+			for attempt := 0; attempt < maxSpin; attempt++ {
+				err = r.db.Update(func(txn *badger.Txn) error {
+					n, e := try(txn)
+					if e == nil {
+						shardDeleted = n
+					}
+					return e
+				})
+				if err == nil {
+					break
+				}
+				if err != badger.ErrConflict {
+					break
+				}
+				d := time.Duration(attempt+1) * baseSleep
+				if d > maxSleep {
+					d = maxSleep
+				}
+				time.Sleep(d)
+			}
+
+			r.metaMu.Unlock()
+			r.shards[ix].Unlock()
+
+			if err != nil {
+				return totalDeleted, fmt.Errorf("DeletePendingRelationsBatch: serialized update failed: %w", err)
+			}
 		}
-		if err := incrU64(txn, []byte(metaDeleteCntKey), 1); err != nil {
-			return err
-		}
-		return nil
-	})
+
+		totalDeleted += shardDeleted
+	}
+
+	return totalDeleted, nil
 }
 
 // AddToPendingRelations:
-// - FromAddress 가 없으면 append (Volume<=0 이면 1로 보정)
+// - FromAddress 없으면 append (Volume<=0 → 1 보정) + metaCountKey++
 // - 있으면 LastTxId/LastTime 덮어쓰기 + Volume++
 func (r *BadgerPendingRelationRepo) AddToPendingRelations(toAddr domain.Address, from FromScala) error {
 	key := []byte(toAddr.String())
@@ -218,7 +358,7 @@ func (r *BadgerPendingRelationRepo) AddToPendingRelations(toAddr domain.Address,
 			return nil
 
 		case badger.ErrKeyNotFound:
-			// 신규 키
+			// 신규 키: metaCountKey++ (메타 키 수정)
 			if from.Volume <= 0 {
 				from.Volume = 1
 			}
@@ -240,33 +380,59 @@ func (r *BadgerPendingRelationRepo) AddToPendingRelations(toAddr domain.Address,
 		}
 	}
 
-	// 1) MVCC 낙관적 재시도
+	// 1) 낙관적 재시도 (빠름)
 	var lastErr error
 	for i := 0; i < r.maxRetries; i++ {
 		if err := r.db.Update(fn); err != nil {
 			lastErr = err
 			if err == badger.ErrConflict {
-				continue // 재시도
+				// 가벼운 양보
+				runtime.Gosched()
+				continue
 			}
-			// 다른 에러는 즉시 리턴
 			return fmt.Errorf("AddToPendingRelations: update failed: %w", err)
 		}
 		lastErr = nil
 		break
 	}
 
-	// 2) 계속 충돌이면 샤드 락으로 직렬화 → mustProcess 1회
+	// 2) 계속 충돌 → 샤드락 + (신규키 가능성 대비) 메타락으로 직렬화 경로
 	if lastErr == badger.ErrConflict {
-		ix := r.shardIndex(key)
+		ix := r.shardIndexFromAddr(toAddr)
 		r.shards[ix].Lock()
-		defer r.shards[ix].Unlock()
+		r.metaMu.Lock()
 
-		if err := r.db.Update(fn); err != nil {
+		const (
+			maxSpin   = 256
+			baseSleep = 100 * time.Microsecond
+			maxSleep  = 2 * time.Millisecond
+		)
+		var err error
+		for attempt := 0; attempt < maxSpin; attempt++ {
+			err = r.db.Update(fn)
+			if err == nil {
+				break
+			}
+			if err != badger.ErrConflict {
+				break
+			}
+			// 백오프 (선형 + 캡)
+			d := time.Duration(attempt+1) * baseSleep
+			if d > maxSleep {
+				d = maxSleep
+			}
+			time.Sleep(d)
+		}
+
+		r.metaMu.Unlock()
+		r.shards[ix].Unlock()
+
+		if err != nil {
 			return fmt.Errorf("AddToPendingRelations: serialized update failed: %w", err)
 		}
 	}
 
-	// 3) 트랜잭션 밖에서 value log GC(선택적)
+	// 3) 트랜잭션 밖에서 GC(선택)
 	if needGC {
 		go r.runGC()
 	}
@@ -288,30 +454,11 @@ func (r *BadgerPendingRelationRepo) CountPendingRelations() int {
 	return int(v)
 }
 
-// runGC: Badger GC 실행 (비동기)
+// Badger GC (비동기)
 func (r *BadgerPendingRelationRepo) runGC() {
 	for {
 		if err := r.db.RunValueLogGC(gcDiscardRatio); err != nil {
 			break // reclaim 없음 또는 에러 → 중단
 		}
 	}
-}
-
-// ---- 내부 유틸 (샤딩/해시/보조) ----
-
-func (r *BadgerPendingRelationRepo) shardIndex(key []byte) uint32 {
-	h := fnv.New32a()
-	_, _ = h.Write(key)
-	return h.Sum32() & r.shardMask
-}
-
-func nextPow2(n int) int {
-	if n <= 1 {
-		return 1
-	}
-	x := 1
-	for x < n {
-		x <<= 1
-	}
-	return x
 }

@@ -60,7 +60,7 @@ func (a *SimpleTriplet) processSingleTransactionJob(tx *shareddomain.MarkedTrans
 
 	if err != nil {
 		atomic.AddInt64(&a.stats.ErrorCount, 1)
-		fmt.Printf("프로세싱에서 에러 발생 %s\n", err.Error())
+		fmt.Printf("processSignleTransaction에서 에러 발생 %s\n", err.Error())
 		errorCount := atomic.LoadInt64(&a.stats.ErrorCount)
 		if errorCount <= 5 { // 처음 5개 에러는 모두 로깅 (디버깅용)
 			log.Printf("⚠️ Worker %d: processing error #%d: %v | From: %s | To: %s",

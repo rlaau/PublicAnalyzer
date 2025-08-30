@@ -257,13 +257,13 @@ func (a *SimpleTriplet) processTransactionParrell(messages []kafka.Message[*shar
 		if msg.Value != nil {
 			transactions = append(transactions, msg.Value)
 		} else {
+			fmt.Printf("processTransactionParrell 에러:메시지를 받지 않음")
 			atomic.AddInt64(&a.stats.ErrorCount, 1)
 		}
 	}
 
 	// 2. 트랜잭션 처리 (배치로 처리)
 
-	fmt.Printf("bus@analyzer   = %p\n", a.infra.TxJobBus)
 	for _, tx := range transactions {
 		// 워커풀로 작업 전달
 		job := NewTransactionJob(tx, a, 0)
@@ -271,7 +271,7 @@ func (a *SimpleTriplet) processTransactionParrell(messages []kafka.Message[*shar
 		err := a.infra.TxJobBus.Publish(job)
 		if err != nil {
 			atomic.AddInt64(&a.stats.DroppedTxs, 1)
-			fmt.Printf("현재 EOA Analyzer의 워커풀 채널에 에러가 남. 0.1초간 입력을 블로킹함.")
+			fmt.Printf("현재 EOA Analyzer의 워커풀 채널 다 참. 0.1초간 입력을 블로킹함.")
 			time.Sleep(10 * time.Millisecond) // 너무 무거운 대기는 피하기
 			continue                          // 개별 실패는 무시하고 계속 처리
 		}

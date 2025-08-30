@@ -196,7 +196,7 @@ func (b *BadgerRopeDB) Close() error {
 // * PushTraitEvent가 빠르게 작동하면 됨
 // *근데, Vertex 읽기 쓰기 외엔 전부 비동기로 동작 중임
 func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
-	debugEnabled := true
+	debugEnabled := false
 	if b.publishCounter%10 == 0 && debugEnabled {
 		fmt.Printf(`
 		========ev정보=========
