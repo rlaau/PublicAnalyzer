@@ -10,6 +10,7 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
 
+// TODO 추후 일반화하기
 type NodPool struct {
 	isTest mode.ProcessingMode
 	Apool  iface.ApoolPort
