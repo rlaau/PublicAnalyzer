@@ -7,7 +7,7 @@ import (
 	"time"
 
 	relapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/api"
+	relapi "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/api"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
@@ -51,6 +51,16 @@ var PolyTraitLegend = map[domain.PolyTraitCode]domain.PolyNameAndTraits{
 	},
 }
 
+var (
+	TrapFraude domain.TrapCode = 1
+)
+var TrapLegend = map[domain.TrapCode]domain.TrapNameAndTraits{
+	TrapFraude: {
+		Name:   "TrapFraud",
+		Traits: []domain.TraitCode{TraitSomeOther, TraitAnother},
+	},
+}
+
 // 트레이트 코드 → 이름 매핑
 var TraitLegend = map[domain.TraitCode]string{
 	TraitCexAndDeposit:     "TraitCexAndDeposit",
@@ -82,6 +92,12 @@ var RuleLegend = map[domain.RuleCode]string{
 	RuleTheother: "RuleTheother",
 }
 
+const AuthorSystem domain.AuthorCode = 1
+
+var AuthorLegend = map[domain.AuthorCode]string{
+	AuthorSystem: "AuthorSystem",
+}
+
 func link(t *testing.T, db RopeDB, a1, a2 shareddomain.Address, trait domain.TraitCode) {
 	t.Helper()
 	cexOrDeposit := uint16(trait)%2 == 0
@@ -91,7 +107,7 @@ func link(t *testing.T, db RopeDB, a1, a2 shareddomain.Address, trait domain.Tra
 	} else {
 		rc = RuleCEX
 	}
-	ev := domain.NewTraitEvent(trait, domain.AddressAndRule{
+	ev := domain.NewTraitEvent(AuthorSystem, trait, domain.AddressAndRule{
 		Address: a1,
 		Rule:    rc,
 	}, domain.AddressAndRule{
@@ -164,7 +180,7 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 
 	testDir := computation.FindTestingStorageRootPath() + "/rope_visual"
 	computation.SetCleanedDir(testDir)
-	db, err := NewRopeDBWithRoot(mode.TestingModeProcess, testDir, "rope_test", TraitLegend, RuleLegend, PolyTraitLegend)
+	db, err := NewRopeDBWithRoot(mode.TestingModeProcess, testDir, "rope_test", TraitLegend, RuleLegend, PolyTraitLegend, TrapLegend, AuthorLegend)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,8 +195,8 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 	}
 	analyzer := &app.SimpleTriplet{}
 	analyzer.NullButAddDB(relPool)
-	tripletAPI := api.NewTripletAPIHandler(analyzer) // analyzer.GraphDB()가 BadgerRopeDB를 물고 있어야 함
-	if err := monitoringServer.RegisterModule(tripletAPI); err != nil {
+	relAPI := relapi.NewRelPoolAPIHandler(relPool) // analyzer.GraphDB()가 BadgerRopeDB를 물고 있어야 함
+	if err := monitoringServer.RegisterModule(relAPI); err != nil {
 		fmt.Printf("   ❌ Failed to register Triplet API: %v\n", err)
 	} else {
 		fmt.Printf("   ✅ Triplet Analyzer API registered successfully\n")
@@ -318,6 +334,24 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 	t.Logf("✅ addr(5) and addr(2) are in different PolyRope groups: %v", inSame5_2)
 
 	t.Log("=== PolyTrait 테스트 완료 ===")
+	isV12Trap := impl.GetOrCreateVertex(addr(12)).Traps.IsContatin(TrapFraude)
+	if !isV12Trap {
+		t.Fatalf("12번은 Fraude여야 함 %v", impl.GetOrCreateVertex(addr(12)))
+	}
+	v11 := impl.GetOrCreateVertex(addr(11))
+	if v11.Traps.IsContatin(TrapFraude) {
+		t.Fatalf("11은 트랩이면 안됨")
+	}
+	if isContain, traps := impl.AreTrapsInMyRopes(v11); !isContain {
+		t.Fatalf("11의 로프는 트랩 %v를 지녀야 함", traps)
+	}
+	v10 := impl.GetOrCreateVertex(addr(10))
+	if isContain, _ := impl.AreTrapsInMyPolyRope(v10, PolyTraitSameCluster); isContain {
+		t.Fatalf("10의 same Cluster 폴리 로프는 트랩 없어야 함")
+	}
+	if isContatin, _ := impl.AreTrapsInMyPolyRope(v10, PolyTraitOthers); !isContatin {
+		t.Fatalf("10은 others 폴리 로프에선 트랩 지녀야 함")
+	}
 
 	// 필요하면 테스트 로그에 경로 출력
 	t.Log("wrote graph_frame.html & index.html")

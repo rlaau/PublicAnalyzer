@@ -25,6 +25,10 @@ const (
 	TraitCexAndDeposit  ropedomain.TraitCode = 2
 	//* Creation의 트레이트
 	TraitCreatorAndCreatedContract ropedomain.TraitCode = 3
+
+	//*임의의 예시를 위한 트레이트 코드
+	TraitFraudCondition1 ropedomain.TraitCode = 1001
+	TraitFraudCondition2 ropedomain.TraitCode = 1002
 )
 
 // 트레이트의 해석 방법.
@@ -36,14 +40,26 @@ var TraitLegend = map[ropedomain.TraitCode]string{
 }
 
 // ! append- only
-var (
+const (
 	PolyTraitSameCluster ropedomain.PolyTraitCode = 1
 )
+
 var PolyTraitLegend = map[ropedomain.PolyTraitCode]ropedomain.PolyNameAndTraits{
 	PolyTraitSameCluster: {
 		Name: "PolyTraitSameCluster",
 		//* CEX_Deposit의 관계나 Creator_Created의 관계는 둘다 "same cluser"의 다형 트레이트에 속함
 		Traits: []ropedomain.TraitCode{TraitDepositAndUser, TraitCreatorAndCreatedContract},
+	},
+}
+
+const (
+	TrapFraud ropedomain.TrapCode = 1
+)
+
+var TrapLegend = map[ropedomain.TrapCode]ropedomain.TrapNameAndTraits{
+	TrapFraud: {
+		Name:   "TrapFraud",
+		Traits: []ropedomain.TraitCode{TraitFraudCondition1, TraitFraudCondition2},
 	},
 }
 
@@ -64,4 +80,20 @@ var RuleLegend = map[ropedomain.RuleCode]string{
 	RuleCex:             "RuleCex",
 	RuleCreator:         "RuleCreator",
 	RuleCreatedContract: "RuleCreatedContract",
+}
+
+//! append-onlt
+
+const (
+	AuthorSystem ropedomain.AuthorCode = 1
+	AuthorKMH    ropedomain.AuthorCode = 2
+	AuthorKSW    ropedomain.AuthorCode = 3
+	AuthorJHL    ropedomain.AuthorCode = 4
+)
+
+var AuthorLegend = map[ropedomain.AuthorCode]string{
+	AuthorSystem: "AuthorSystem",
+	AuthorKMH:    "AuthorKMH",
+	AuthorKSW:    "AuthorKSW",
+	AuthorJHL:    "AuthorJHL",
 }

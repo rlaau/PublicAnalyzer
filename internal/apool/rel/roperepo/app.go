@@ -13,7 +13,7 @@ type RawBadgerProvider interface {
 }
 
 func NewRelGraphDB(mode mode.ProcessingMode) (ropeapp.RopeDB, error) {
-	db, err := ropeapp.NewRopeDB(mode, "RelGraphDB", TraitLegend, RuleLegend, PolyTraitLegend)
+	db, err := ropeapp.NewRopeDB(mode, "RelGraphDB", TraitLegend, RuleLegend, PolyTraitLegend, TrapLegend, AuthorLegend)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open rope db")
 	}

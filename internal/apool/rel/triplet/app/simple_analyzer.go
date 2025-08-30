@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/roperepo"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
 	ropeapp "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/app"
@@ -100,7 +101,7 @@ func newSimpleAnalyzer(config *TripletConfig, infraStructure *infra.TripletAndDu
 	//전체 EOA인프라에서 꺼내 쓰는 형식
 	dualManagerInfra := infra.NewDualManagerInfra(infraStructure.PendingRelationRepo, infraStructure.TimeBucketManager)
 	dualManager, _ := NewDualManager(dualManagerInfra, relPool)
-	log.Printf("듀얼 매니져 초기화. 현재 cex주소 개수: %d", len(dualManager.relPool.GetApooPort().GetNodPort().GetCoPort().CEXAddresses()))
+	log.Printf("듀얼 매니져 초기화. 현재 cex주소 개수: %d", len(dualManager.relPool.GetApooPort().GetNodPort().GetEoPort().CEXAddresses()))
 	analyzer := &SimpleTriplet{
 		infra:       infraStructure,
 		dualManager: dualManager,
@@ -118,7 +119,7 @@ func newSimpleAnalyzer(config *TripletConfig, infraStructure *infra.TripletAndDu
 	return analyzer, nil
 }
 func (a *SimpleTriplet) GraphDB() *badger.DB {
-	if p, ok := a.relPool.RopeDB().(infra.RawBadgerProvider); ok {
+	if p, ok := a.relPool.RopeDB().(roperepo.RawBadgerProvider); ok {
 		return p.RawBadgerDB()
 	}
 	return nil

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -38,14 +39,18 @@ const (
 	maxRopeSize = 1000 // 도메인 상한
 )
 
-func NewRopeDB(isTest mode.ProcessingMode, dbName string, traitLegend map[domain.TraitCode]string, ruleLegend map[domain.RuleCode]string, polyTraits map[domain.PolyTraitCode]domain.PolyNameAndTraits) (RopeDB, error) {
+func NewRopeDB(isTest mode.ProcessingMode, dbName string, traitLegend map[domain.TraitCode]string,
+	ruleLegend map[domain.RuleCode]string,
+	polyTraits map[domain.PolyTraitCode]domain.PolyNameAndTraits,
+	trapLegend map[domain.TrapCode]domain.TrapNameAndTraits,
+	authorLegned map[domain.AuthorCode]string) (RopeDB, error) {
 	var root string
 	if isTest.IsTest() {
 		root = computation.FindTestingStorageRootPath()
 	} else {
 		root = computation.FindProductionStorageRootPath()
 	}
-	return NewRopeDBWithRoot(isTest, root, dbName, traitLegend, ruleLegend, polyTraits)
+	return NewRopeDBWithRoot(isTest, root, dbName, traitLegend, ruleLegend, polyTraits, trapLegend, authorLegned)
 }
 
 type RopeDB interface {
@@ -70,7 +75,7 @@ type RopeDB interface {
 // ------------------------------------------------------------
 // 5) 구현체
 // ------------------------------------------------------------
-// * BadgerDB자체가 SWMR모델이라서, 내 설계에 부합함. 쓰기는 비동기로 미루면서, 읽기 핫패스는 부담 줄이기 가능
+
 type BadgerRopeDB struct {
 	db     *badger.DB
 	isTest bool
@@ -79,13 +84,17 @@ type BadgerRopeDB struct {
 	wg     sync.WaitGroup
 
 	// 범례 (코드 → 문자열 매핑)
-	traitLegend map[domain.TraitCode]string
-	ruleLegend  map[domain.RuleCode]string
+	traitLegend  map[domain.TraitCode]string
+	ruleLegend   map[domain.RuleCode]string
+	authorLegend map[domain.AuthorCode]string
 
 	// PolyTrait 매핑 (PolyTraitCode → 정의)
 	polyTraits map[domain.PolyTraitCode]domain.PolyNameAndTraits
 	// Trait → PolyTrait 역방향 매핑 (빠른 조회용)
-	traitToPolyTrait map[domain.TraitCode][]domain.PolyTraitCode
+	traitToPolyTraits map[domain.TraitCode][]domain.PolyTraitCode
+
+	// Trap-> Traits의 매핑
+	trapToTraits map[domain.TrapCode][]domain.TraitCode
 
 	// 비동기 쓰기 버스
 	busRope     *eventbus.EventBus[domain.RopeMarkUpsert]
@@ -109,7 +118,11 @@ type PolyRopeMarkUpsert struct {
 }
 
 // NewRopeDBWithRoot: 모드(true=test, false=prod)로 루트 분기
-func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, traitLegend map[domain.TraitCode]string, ruleLegend map[domain.RuleCode]string, polyTraits map[domain.PolyTraitCode]domain.PolyNameAndTraits) (RopeDB, error) {
+func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, traitLegend map[domain.TraitCode]string,
+	ruleLegend map[domain.RuleCode]string,
+	polyTraits map[domain.PolyTraitCode]domain.PolyNameAndTraits,
+	trapLegend map[domain.TrapCode]domain.TrapNameAndTraits,
+	authorLegend map[domain.AuthorCode]string) (RopeDB, error) {
 	// Badger
 	dbDir := filepath.Join(root, "rope_db", dbname, "badger")
 	opts := badger.DefaultOptions(dbDir).WithLogger(nil)
@@ -143,24 +156,30 @@ func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, t
 	}
 
 	// Trait → PolyTrait 역방향 매핑 구축
-	traitToPolyTrait := make(map[domain.TraitCode][]domain.PolyTraitCode)
+	traitToPolyTraits := make(map[domain.TraitCode][]domain.PolyTraitCode)
 	for polyCode, polyDef := range polyTraits {
 		for _, traitCode := range polyDef.Traits {
-			traitToPolyTrait[traitCode] = append(traitToPolyTrait[traitCode], polyCode)
+			traitToPolyTraits[traitCode] = append(traitToPolyTraits[traitCode], polyCode)
 		}
+	}
+	trapToTraits := make(map[domain.TrapCode][]domain.TraitCode)
+	for trapCode, trapNameAndTraits := range trapLegend {
+		trapToTraits[trapCode] = trapNameAndTraits.Traits
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	b := &BadgerRopeDB{
 		db: db, isTest: isTest.IsTest(),
 		ctx: ctx, cancel: cancel,
-		traitLegend:      traitLegend,
-		ruleLegend:       ruleLegend,
-		polyTraits:       polyTraits,
-		traitToPolyTrait: traitToPolyTrait,
-		busRope:          busR,
-		busTrait:         busT,
-		busPolyRope:      busPR,
+		traitLegend:       traitLegend,
+		ruleLegend:        ruleLegend,
+		authorLegend:      authorLegend,
+		polyTraits:        polyTraits,
+		traitToPolyTraits: traitToPolyTraits,
+		trapToTraits:      trapToTraits,
+		busRope:           busR,
+		busTrait:          busT,
+		busPolyRope:       busPR,
 	}
 
 	// GC 스케쥴러 설정
@@ -197,7 +216,7 @@ func (b *BadgerRopeDB) Close() error {
 // *근데, Vertex 읽기 쓰기 외엔 전부 비동기로 동작 중임
 func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 	debugEnabled := false
-	if b.publishCounter%10 == 0 && debugEnabled {
+	if b.publishCounter%1000 == 0 && debugEnabled {
 		fmt.Printf(`
 		========ev정보=========
 		Trait: %v,
@@ -208,6 +227,8 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 		`, b.traitLegend[ev.Trait], ev.AddressA.String(),
 			b.ruleLegend[ev.RuleA], ev.AddressB.String(), b.ruleLegend[ev.RuleB])
 	}
+	//순서에 맞추어 교환
+	//AddressA가 먼저 오는 알파벳
 	a1 := ev.AddressA
 	a2 := ev.AddressB
 	if shareddomain.IsNullAddress(a1) || shareddomain.IsNullAddress(a2) {
@@ -227,6 +248,8 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 
 	// --- 3) TraitMark Upsert 큐잉(단일 커맨드)
 	_ = b.busTrait.Publish(domain.TraitMarkUpsert{
+		AuthorCode:  ev.Author,
+		LastTx:      ev.TxID,
 		TraitID:     tid,
 		Trait:       ev.Trait,
 		AddressA:    ev.AddressA,
@@ -318,13 +341,16 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 			})
 		}
 	}
+	//트레이트 등록 & 로프까지 다 등록 이후=> 트랩 여부 체크
+	b.HandleTrapDetection(v1)
+	b.HandleTrapDetection(v2)
 
 	// --- 5) Vertex 동기 저장
 	b.putVertex(v1)
 	b.putVertex(v2)
 
 	// --- 6) PolyTrait 처리 (해당 Trait가 PolyTrait에 속하는 경우)
-	if polyTraitCodes, exists := b.traitToPolyTrait[ev.Trait]; exists {
+	if polyTraitCodes, exists := b.traitToPolyTraits[ev.Trait]; exists {
 		for _, polyTraitCode := range polyTraitCodes {
 			b.processPolyTrait(v1, v2, polyTraitCode, ev)
 		}
@@ -460,39 +486,6 @@ func setRopeForTrait(v *domain.Vertex, id domain.RopeID, t domain.TraitCode) {
 	v.Ropes = append(v.Ropes, domain.RopeRef{ID: id, Trait: t})
 }
 
-func (b *BadgerRopeDB) ViewRopeByNode(a shareddomain.Address) (*domain.Rope, error) {
-	v := b.getOrCreateVertex(a)
-	if len(v.Ropes) == 0 {
-		return nil, nil
-	}
-	ref := v.Ropes[0]
-	return b.ViewRope(ref.ID)
-}
-
-func (b *BadgerRopeDB) ViewRope(id domain.RopeID) (*domain.Rope, error) {
-	rm := b.getRopeMark(id)
-	if rm.ID == 0 {
-		return nil, nil
-	}
-	nodes := make([]domain.Vertex, 0, len(rm.Members))
-	for _, addr := range rm.Members {
-		nodes = append(nodes, *b.getOrCreateVertex(addr))
-	}
-	return &domain.Rope{ID: rm.ID, Trait: rm.Trait, Nodes: nodes}, nil
-}
-
-func (b *BadgerRopeDB) ViewInSameRope(a1, a2 shareddomain.Address) (bool, error) {
-	v1 := b.getOrCreateVertex(a1)
-	v2 := b.getOrCreateVertex(a2)
-	return inSameRope(v1, v2), nil
-}
-
-func (b *BadgerRopeDB) ViewInSameRopeByPolyTrait(a1, a2 shareddomain.Address, polyTrait domain.PolyTraitCode) (bool, error) {
-	v1 := b.getOrCreateVertex(a1)
-	v2 := b.getOrCreateVertex(a2)
-	return inSamePolyRopeByPolyTrait(v1, v2, polyTrait), nil
-}
-
 // ------------------------------------------------------------
 // 7) 워커(비동기 Upsert 적용)
 // ------------------------------------------------------------
@@ -552,27 +545,36 @@ func (b *BadgerRopeDB) applyTraitUpsert(op domain.TraitMarkUpsert) {
 		if tm.ID == 0 {
 			// 신규 생성
 			tm = domain.TraitMark{
-				ID:       op.TraitID,
-				Trait:    op.Trait,
-				AddressA: op.AddressA,
-				RuleA:    op.RuleA,
-				AddressB: op.AddressB,
-				RuleB:    op.RuleB,
-				Score:    0,
-				Volume:   0,
-				LastSeen: op.LastSeen,
+				AuthorCodes: []domain.AuthorCode{op.AuthorCode},
+				LastTx:      op.LastTx,
+				ID:          op.TraitID,
+				Trait:       op.Trait,
+				AddressA:    op.AddressA,
+				RuleA:       op.RuleA,
+				AddressB:    op.AddressB,
+				RuleB:       op.RuleB,
+				Score:       0,
+				Volume:      0,
+				LastSeen:    op.LastSeen,
 			}
 		}
 		tm.Score += op.ScoreDelta
 		tm.Volume += op.VolumeDelta
 		if op.LastSeen.After(tm.LastSeen) {
+			tm.LastTx = op.LastTx
 			tm.LastSeen = op.LastSeen
 		}
+		tm.AuthorCodes = mergeAuthor(tm.AuthorCodes, op.AuthorCode)
 		data, _ := json.Marshal(tm)
 		return txn.Set(key, data)
 	})
 }
-
+func mergeAuthor(authors []domain.AuthorCode, target domain.AuthorCode) []domain.AuthorCode {
+	if slices.Contains(authors, target) {
+		return authors
+	}
+	return append(authors, target)
+}
 func (b *BadgerRopeDB) applyRopeUpsert(op domain.RopeMarkUpsert) {
 	key := []byte(fmt.Sprintf("%s%d", kR, uint64(op.RopeID)))
 	_ = b.db.Update(func(txn *badger.Txn) error {
@@ -617,11 +619,43 @@ func (b *BadgerRopeDB) applyRopeUpsert(op domain.RopeMarkUpsert) {
 		if int(rm.Size) != len(rm.Members) {
 			rm.Size = uint32(len(rm.Members))
 		}
+		if op.TrapVertexes != nil && len(op.TrapVertexes) > 0 {
+			rm.TrapVertexes = MergeTrapVerticesUniquePairs(rm.TrapVertexes, op.TrapVertexes)
+		}
+
 		data, _ := json.Marshal(rm)
 		return txn.Set(key, data)
 	})
 }
 
+// 주소·트랩 "쌍" 기준으로 유니크하게 합치기 (첫 등장 순서 유지)
+func MergeTrapVerticesUniquePairs(slices ...[]domain.TrapVertex) []domain.TrapVertex {
+	type pair struct {
+		Addr shareddomain.Address
+		Trap domain.TrapCode
+	}
+
+	// 대략 용량 예측(선택): 전체 길이 합을 잡아주면 리할로 줄일 수 있음
+	total := 0
+	for _, s := range slices {
+		total += len(s)
+	}
+
+	seen := make(map[pair]struct{}, total)
+	out := make([]domain.TrapVertex, 0, total)
+
+	for _, s := range slices {
+		for _, v := range s {
+			k := pair{Addr: v.Address, Trap: v.Trap}
+			if _, ok := seen[k]; ok {
+				continue
+			}
+			seen[k] = struct{}{}
+			out = append(out, v)
+		}
+	}
+	return out
+}
 func (b *BadgerRopeDB) applyPolyRopeUpsert(op PolyRopeMarkUpsert) {
 	key := []byte(fmt.Sprintf("%s%d", kPR, uint64(op.PolyRopeID)))
 	_ = b.db.Update(func(txn *badger.Txn) error {
@@ -927,111 +961,6 @@ func (b *BadgerRopeDB) updateAllVerticesPolyRope(sourcePolyRopeID, targetPolyRop
 	}
 }
 
-// GetGraphStas returns basic graph statistics:
-// - nodes:  total number of vertices (keys with prefix "v:")
-// - ropes:  total number of rope marks (keys with prefix "r:")
-// - traits: total number of trait marks (keys with prefix "t:")
-// - polyRopes: total number of poly rope marks (keys with prefix "pr:")
-func (b *BadgerRopeDB) GetGraphStats() map[string]any {
-	var nodes, ropes, traits, polyRopes uint64
-
-	_ = b.db.View(func(txn *badger.Txn) error {
-		// 공통 카운터 헬퍼
-		countPrefix := func(pfx []byte) uint64 {
-			var c uint64
-			itOpts := badger.DefaultIteratorOptions
-			itOpts.PrefetchValues = false // 키 개수만 필요
-			it := txn.NewIterator(itOpts)
-			defer it.Close()
-
-			for it.Seek(pfx); it.ValidForPrefix(pfx); it.Next() {
-				c++
-			}
-			return c
-		}
-
-		nodes = countPrefix([]byte(kV))      // "v:"
-		ropes = countPrefix([]byte(kR))      // "r:"
-		traits = countPrefix([]byte(kT))     // "t:"
-		polyRopes = countPrefix([]byte(kPR)) // "pr:"
-		return nil
-	})
-
-	return map[string]any{
-		"nodes":     nodes,
-		"ropes":     ropes,
-		"traits":    traits,
-		"polyRopes": polyRopes,
-	}
-}
-
-// ViewAllTraitMarkByCode returns all TraitMark records with the given trait code
-func (b *BadgerRopeDB) ViewAllTraitMarkByCode(t domain.TraitCode) ([]domain.TraitMark, error) {
-	var result []domain.TraitMark
-	err := b.db.View(func(txn *badger.Txn) error {
-		itOpts := badger.DefaultIteratorOptions
-		it := txn.NewIterator(itOpts)
-		defer it.Close()
-
-		pfx := []byte(kT) // "t:" prefix for trait marks
-		for it.Seek(pfx); it.ValidForPrefix(pfx); it.Next() {
-			item := it.Item()
-			var tm domain.TraitMark
-			err := item.Value(func(val []byte) error {
-				return json.Unmarshal(val, &tm)
-			})
-			if err != nil {
-				continue // skip invalid entries
-			}
-			if tm.Trait == t {
-				result = append(result, tm)
-			}
-		}
-		return nil
-	})
-	return result, err
-}
-
-// ViewAllTraitMarkByString returns all TraitMark records with the trait name matching the given string
-func (b *BadgerRopeDB) ViewAllTraitMarkByString(s string) ([]domain.TraitMark, error) {
-	// Find trait code by string using legend
-	var targetCode domain.TraitCode
-	found := false
-	for code, name := range b.traitLegend {
-		if name == s {
-			targetCode = code
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		return []domain.TraitMark{}, nil // return empty slice if string not found in legend
-	}
-
-	return b.ViewAllTraitMarkByCode(targetCode)
-}
-
-// TODO 테스트 용으로 퍼블릭하게 만들다보니 의도치 않게 전환해버림... 추후 리팩토링 할 것
-func (b *BadgerRopeDB) GetOrCreateVertex(a shareddomain.Address) *domain.Vertex {
-	return b.getOrCreateVertex(a)
-}
-
-// TODO 테스트 용으로 퍼블릭하게 만들다보니 의도치 않게 전환해버림... 추후 리팩토링 할 것
-func (b *BadgerRopeDB) RopeIDByTrait(v *domain.Vertex, t domain.TraitCode) (domain.RopeID, bool) {
-	return b.ropeIDByTrait(v, t)
-}
-
-// TODO 테스트 용으로 퍼블릭하게 만들다보니 의도치 않게 전환해버림... 추후 리팩토링 할 것
-
-func (b *BadgerRopeDB) GetRopeMark(rid domain.RopeID) domain.RopeMark {
-	return b.getRopeMark(rid)
-}
-
-func (b *BadgerRopeDB) GetPolyTraitLegend() map[domain.PolyTraitCode]domain.PolyNameAndTraits {
-	return b.polyTraits
-}
-
 // ------------------------------------------------------------
 // 9) GC (Garbage Collection) 관련 로직
 // ------------------------------------------------------------
@@ -1121,138 +1050,6 @@ func (b *BadgerRopeDB) runGC() {
 			duration)
 	}
 }
-
-// // cleanOldTraits: 낮은 볼륨과 스코어의 Trait 정리
-// func (b *BadgerRopeDB) cleanOldTraits() int {
-// 	var cleaned int
-
-// 	_ = b.db.Update(func(txn *badger.Txn) error {
-// 		opts := badger.DefaultIteratorOptions
-// 		it := txn.NewIterator(opts)
-// 		defer it.Close()
-
-// 		prefix := []byte(kT) // "t:" prefix for traits
-// 		var keysToDelete [][]byte
-
-// 		for it.Seek(prefix); it.ValidForPrefix(prefix) && len(keysToDelete) < gcBatchSize; it.Next() {
-// 			item := it.Item()
-// 			var tm domain.TraitMark
-
-// 			err := item.Value(func(val []byte) error {
-// 				return json.Unmarshal(val, &tm)
-// 			})
-
-// 			if err != nil {
-// 				continue
-// 			}
-
-// 			// 조건: 볼륨이 낮고 스코어가 낮은 경우만 정리
-// 			if tm.Volume < gcLowVolumeLimit && tm.Score < gcLowScoreLimit {
-// 				key := make([]byte, len(item.Key()))
-// 				copy(key, item.Key())
-// 				keysToDelete = append(keysToDelete, key)
-// 			}
-// 		}
-
-// 		// 배치 삭제
-// 		for _, key := range keysToDelete {
-// 			_ = txn.Delete(key)
-// 			cleaned++
-// 		}
-
-// 		return nil
-// 	})
-
-// 	return cleaned
-// }
-
-// // cleanEmptyRopes: 멤버가 없거나 낮은 볼륨의 Rope 정리
-// func (b *BadgerRopeDB) cleanEmptyRopes() int {
-// 	var cleaned int
-
-// 	_ = b.db.Update(func(txn *badger.Txn) error {
-// 		opts := badger.DefaultIteratorOptions
-// 		it := txn.NewIterator(opts)
-// 		defer it.Close()
-
-// 		prefix := []byte(kR) // "r:" prefix for ropes
-// 		var keysToDelete [][]byte
-
-// 		for it.Seek(prefix); it.ValidForPrefix(prefix) && len(keysToDelete) < gcBatchSize; it.Next() {
-// 			item := it.Item()
-// 			var rm domain.RopeMark
-
-// 			err := item.Value(func(val []byte) error {
-// 				return json.Unmarshal(val, &rm)
-// 			})
-
-// 			if err != nil {
-// 				continue
-// 			}
-
-// 			// 조건: 멤버가 없거나, 매우 낮은 볼륨
-// 			if len(rm.Members) == 0 || rm.Volume < 3 {
-// 				key := make([]byte, len(item.Key()))
-// 				copy(key, item.Key())
-// 				keysToDelete = append(keysToDelete, key)
-// 			}
-// 		}
-
-// 		// 배치 삭제
-// 		for _, key := range keysToDelete {
-// 			_ = txn.Delete(key)
-// 			cleaned++
-// 		}
-
-// 		return nil
-// 	})
-
-// 	return cleaned
-// }
-
-// // cleanOrphanVertices: 고아 Vertex 정리 (Rope나 Trait 참조가 없는 경우)
-// func (b *BadgerRopeDB) cleanOrphanVertices() int {
-// 	var cleaned int
-
-// 	_ = b.db.Update(func(txn *badger.Txn) error {
-// 		opts := badger.DefaultIteratorOptions
-// 		it := txn.NewIterator(opts)
-// 		defer it.Close()
-
-// 		prefix := []byte(kV) // "v:" prefix for vertices
-// 		var keysToDelete [][]byte
-
-// 		for it.Seek(prefix); it.ValidForPrefix(prefix) && len(keysToDelete) < gcBatchSize; it.Next() {
-// 			item := it.Item()
-// 			var v domain.Vertex
-
-// 			err := item.Value(func(val []byte) error {
-// 				return json.Unmarshal(val, &v)
-// 			})
-
-// 			if err != nil {
-// 				continue
-// 			}
-
-// 			// 조건: Rope나 Trait 참조가 전혀 없는 고아 Vertex
-// 			if len(v.Ropes) == 0 && len(v.Traits) == 0 {
-// 				key := make([]byte, len(item.Key()))
-// 				copy(key, item.Key())
-// 				keysToDelete = append(keysToDelete, key)
-// 			}
-// 		}
-
-// 		// 배치 삭제
-// 		for _, key := range keysToDelete {
-// 			_ = txn.Delete(key)
-// 			cleaned++
-// 		}
-
-// 		return nil
-// 	})
-
-// 	return cleaned
-// }
 
 // runBadgerGC: Badger 내장 GC 실행
 func (b *BadgerRopeDB) runBadgerGC() {

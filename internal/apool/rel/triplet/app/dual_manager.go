@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/roperepo"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
 
@@ -73,11 +74,11 @@ func (dm *DualManager) CheckTransaction(tx *domain.MarkedTransaction) (*domain.M
 }
 
 func (dm *DualManager) IsCEXAddress(addr domain.Address) bool {
-	return dm.relPool.GetApooPort().GetNodPort().GetCoPort().IsCex(addr)
+	return dm.relPool.GetApooPort().GetNodPort().GetEoPort().IsCex(addr)
 }
 
 func (dm *DualManager) IsDepositAddress(addr domain.Address) bool {
-	isDeposit, _ := dm.relPool.GetApooPort().GetNodPort().GetCoPort().IsDepositAddress(addr)
+	isDeposit, _ := dm.relPool.GetApooPort().GetNodPort().GetEoPort().IsDepositAddress(addr)
 	return isDeposit
 }
 
@@ -132,7 +133,7 @@ func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.Mark
 			fmt.Printf("   → Case 4: Address → Detected Deposit (saveToGraphDB)\n")
 		}
 		if dm.IsCEXAddress(fromAddr) {
-			dm.relPool.GetApooPort().GetNodPort().GetCoPort().UpdateDepositTxCount(toAddr, 1)
+			dm.relPool.GetApooPort().GetNodPort().GetEoPort().UpdateDepositTxCount(toAddr, 1)
 		}
 		fromScala := infra.FromScala{
 			FromAddress: fromAddr,
@@ -158,7 +159,7 @@ func (dm *DualManager) handleExceptionalAddress(_ domain.Address, _ string) erro
 
 // 새 디포짓 주소 발견한 경우
 func (dm *DualManager) DetectNewDepositAddress(dd *domain.DetectedDeposit) error {
-	return dm.relPool.GetApooPort().GetNodPort().GetCoPort().SaveDetectedDeposit(dd)
+	return dm.relPool.GetApooPort().GetNodPort().GetEoPort().SaveDetectedDeposit(dd)
 }
 
 // handleDepositDetection handles detection of new deposit addresses
@@ -213,14 +214,14 @@ func (dm *DualManager) saveDualToGraphDB(fromScala infra.FromScala, toAddr domai
 }
 
 func (dm *DualManager) saveCexAndDepositToGraphDB(cex, deposit domain.Address, txId domain.TxId, lastTime chaintimer.ChainTime) error {
-	trait := infra.TraitCexAndDeposit
+	trait := roperepo.TraitCexAndDeposit
 	addrAndRule1 := ropedomain.AddressAndRule{
 		Address: cex,
-		Rule:    infra.RuleCex,
+		Rule:    roperepo.RuleCex,
 	}
 	addrAndRule2 := ropedomain.AddressAndRule{
 		Address: deposit,
-		Rule:    infra.RuleDeposit,
+		Rule:    roperepo.RuleDeposit,
 	}
 	txScala := ropedomain.TxScala{
 		TxId:     txId,
@@ -228,6 +229,7 @@ func (dm *DualManager) saveCexAndDepositToGraphDB(cex, deposit domain.Address, t
 		ScoreInc: 1,
 	}
 	traitEvent := ropedomain.NewTraitEvent(
+		roperepo.AuthorSystem,
 		trait,
 		addrAndRule1,
 		addrAndRule2,
@@ -238,14 +240,14 @@ func (dm *DualManager) saveCexAndDepositToGraphDB(cex, deposit domain.Address, t
 
 // saveDualRelationToGraphDB saves a connection between two EOAs to the graph database
 func (dm *DualManager) saveDualRelationToGraphDB(fromScala infra.FromScala, toAddr domain.Address) error {
-	trait := infra.TraitDepositAndUser
+	trait := roperepo.TraitDepositAndUser
 	addressAndRule1 := ropedomain.AddressAndRule{
 		Address: fromScala.FromAddress,
-		Rule:    infra.RuleUser,
+		Rule:    roperepo.RuleUser,
 	}
 	addressAndRule2 := ropedomain.AddressAndRule{
 		Address: toAddr,
-		Rule:    infra.RuleDeposit,
+		Rule:    roperepo.RuleDeposit,
 	}
 	txScala := ropedomain.TxScala{
 		TxId: fromScala.LastTxId,
@@ -255,6 +257,7 @@ func (dm *DualManager) saveDualRelationToGraphDB(fromScala infra.FromScala, toAd
 	}
 
 	traitEvent := ropedomain.NewTraitEvent(
+		roperepo.AuthorSystem,
 		trait,
 		addressAndRule1,
 		addressAndRule2,

@@ -18,11 +18,8 @@ import (
 )
 
 type Co struct {
-	contDB    *infra.ContractDB
-	cexDB     *infra.FileCEXRepository
-	depositDB *infra.DepositRepository
-
-	mode mode.ProcessingMode
+	contDB *infra.ContractDB
+	mode   mode.ProcessingMode
 }
 
 type CoCfg struct {
@@ -43,19 +40,10 @@ func NewCo(coCfg CoCfg, nodPool iface.NodPort) *Co {
 	if err != nil {
 		panic("contDB오픈 중에 에러 발생")
 	}
-	cexDB, err := infra.NewFileCEXRepository(coCfg.Mode, filepath.Join(rootDir, "cex.txt"))
-	if err != nil {
-		panic("cexDB열기 중 에러 발생")
-	}
-	depDb, err := infra.NewBadgerDepositRepository(coCfg.Mode, filepath.Join(rootDir, "deposit"), 128)
-	if err != nil {
-		panic("deposit열기 중 에러 발생")
-	}
+
 	return &Co{
-		contDB:    contDB,
-		cexDB:     cexDB,
-		depositDB: depDb,
-		mode:      coCfg.Mode,
+		contDB: contDB,
+		mode:   coCfg.Mode,
 	}
 }
 
@@ -74,28 +62,6 @@ func (co *Co) RegisterContract(creator domain.Address, nonce domain.Nonce, block
 	//TODO 추후엔 인퍼링 강화, 추가시 바이트 코드 분석 통한 토큰이나 프로토콜 심볼 파악 등이 추가될 것!!!
 	//TODO 보통은 디멘디드 분석이 맞을듯. 기본적으로 싹다 false인데, 좀 의심되는 놈이다 싶음 추가 분석으로
 	return inferedCreated, nil
-}
-
-func (co *Co) SaveDetectedDeposit(deposit *domain.DetectedDeposit) error {
-	return co.depositDB.SaveDetectedDeposit(deposit)
-}
-
-func (co *Co) IsDepositAddress(addr domain.Address) (bool, error) {
-	return co.depositDB.IsDepositAddress(addr)
-}
-
-func (co *Co) CEXAddresses() map[string]struct{} {
-	return co.cexDB.GetCexSet()
-}
-func (co *Co) IsCex(addr domain.Address) bool {
-	return co.cexDB.IsContain(addr.String())
-}
-func (co *Co) UpdateDepositTxCount(addr domain.Address, count int64) error {
-	return co.depositDB.UpdateTxCount(addr, count)
-}
-
-func (co *Co) GetDepositInfo(addr domain.Address) (*domain.DetectedDeposit, error) {
-	return co.depositDB.GetDepositInfo(addr)
 }
 
 func (co *Co) CheckIsContract(address domain.Address) bool {
@@ -130,16 +96,7 @@ func tryPredictCreatedContractAddress(from domain.Address, nonce domain.Nonce) (
 func (co *Co) ChangeDBPath(target string, path string) {
 	var err error
 	switch target {
-	case "CEX":
-		co.cexDB, err = infra.NewFileCEXRepository(co.mode, path)
-		if err != nil {
-			panic("Co DB 바꾸는 중 에러 발생")
-		}
-	case "DEP":
-		co.depositDB, err = infra.NewBadgerDepositRepository(co.mode, path, 128)
-		if err != nil {
-			panic("Co DB 바꾸는 중 에러 발생")
-		}
+
 	case "CON":
 		co.contDB, err = infra.NewContractDB(co.mode, path)
 		if err != nil {

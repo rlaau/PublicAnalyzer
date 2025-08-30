@@ -1,13 +1,35 @@
 package domain
 
 import (
+	"slices"
+
 	chaintimer "github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
 
-// ------------------------------------------------------------
-// 1) 간소화된 도메인
-// ------------------------------------------------------------
+// 이벤트를 승인한 측
+// 권한을 가진 사람은 "트레이트"를 승인함
+// 권한 이벤트는 "트레이트"로 알 수 있음
+type AuthorCode int
+
+// 트랩의 코드
+// 트랩은 로프에 걸쳐 전파됨
+// PolyTrait가 "속성의 합집합"이라면
+// Trap은 "속성의 교집합"임
+type Trap struct {
+	TrapCode   TraitCode
+	TraitCodes []TraitCode
+}
+type TrapVertex struct {
+	Address shareddomain.Address
+	Trap    TrapCode
+}
+type TrapCode int
+
+type TrapNameAndTraits struct {
+	Name   string
+	Traits []TraitCode
+}
 
 type PolyTrait struct {
 	PolyTraitCode PolyTraitCode
@@ -43,7 +65,32 @@ type Vertex struct {
 	PolyRopes []PolyRopeRef
 	Ropes     []RopeRef  // (RopeID, Trait) 목록
 	Traits    []TraitRef // (Partner, Trait, TraitID)
+	Traps     SatisfyingTraps
 }
+type SatisfyingTraps []TrapCode
+
+func (s *SatisfyingTraps) Add(t TrapCode) bool {
+	st := *s
+	if slices.Contains(st, t) {
+		return false
+	}
+	*s = append(st, t)
+	return true
+}
+
+func (s SatisfyingTraps) IsContatin(t TrapCode) bool {
+	for _, trap := range s {
+		//이미 존재 시 리턴
+		if trap == t {
+			return true
+		} else {
+			continue
+		}
+	}
+	return false
+
+}
+
 type PolyRopeRef struct {
 	Id PolyRopeID
 	//로프는 트레이트에 걸치고, 폴리로프는 폴리 트레이트에 걸침
@@ -69,6 +116,7 @@ type RopeRef struct {
 }
 
 type TraitRef struct {
+	//*추가됨. 권한 코드
 	TraitID     TraitID
 	Trait       TraitCode
 	Partner     shareddomain.Address
@@ -78,17 +126,22 @@ type TraitRef struct {
 
 // RopeMark: Rope에 대한 저장 문서(조회 시 조립의 근간)
 type RopeMark struct {
-	ID       RopeID
-	Trait    TraitCode
-	Size     uint32 // Members 길이(정합성 위해 함께 유지)
-	Members  []shareddomain.Address
-	Volume   uint32
-	LastSeen chaintimer.ChainTime
+	ID           RopeID
+	TrapVertexes []TrapVertex
+	Trait        TraitCode
+	Size         uint32 // Members 길이(정합성 위해 함께 유지)
+	Members      []shareddomain.Address
+	Volume       uint32
+	LastSeen     chaintimer.ChainTime
 }
 
 // TraitMark: Trait(엣지)에 대한 저장 문서
 // 20+8+2(20+8)+8+8= 100
 type TraitMark struct {
+	//*추가됨. 권한 코드
+	AuthorCodes []AuthorCode
+	LastTx      shareddomain.TxId
+
 	ID    TraitID
 	Trait TraitCode
 
@@ -116,19 +169,22 @@ type Rope struct {
 
 // 한 Tx/이벤트로 들어오는 도메인 입력(버텍스 간 Trait 관계 이벤트)
 type TraitEvent struct {
+	Author AuthorCode
+	TxID   shareddomain.TxId
+
 	Trait    TraitCode
 	AddressA shareddomain.Address
 	RuleA    RuleCode
 	AddressB shareddomain.Address
 	RuleB    RuleCode
-	TxID     shareddomain.TxId
 	Time     chaintimer.ChainTime
 	Score    int32 // 이번 이벤트가 의미하는 점수 증분
 }
 
-func NewTraitEvent(trait TraitCode, ar1, ar2 AddressAndRule, txScala TxScala) TraitEvent {
+func NewTraitEvent(author AuthorCode, trait TraitCode, ar1, ar2 AddressAndRule, txScala TxScala) TraitEvent {
 	if ar2.Address.LessThan(ar1.Address) {
 		return TraitEvent{
+			Author:   author,
 			Trait:    trait,
 			AddressA: ar2.Address,
 			RuleA:    ar2.Rule,
@@ -140,6 +196,7 @@ func NewTraitEvent(trait TraitCode, ar1, ar2 AddressAndRule, txScala TxScala) Tr
 		}
 	}
 	return TraitEvent{
+		Author:   author,
 		Trait:    trait,
 		AddressA: ar1.Address,
 		RuleA:    ar1.Rule,
@@ -165,6 +222,8 @@ type TxScala struct {
 
 // 내부 비동기 큐용: TraitMark Upsert
 type TraitMarkUpsert struct {
+	AuthorCode  AuthorCode
+	LastTx      shareddomain.TxId
 	TraitID     TraitID
 	Trait       TraitCode
 	AddressA    shareddomain.Address
@@ -178,13 +237,21 @@ type TraitMarkUpsert struct {
 
 // 내부 비동기 큐용: RopeMark Upsert
 type RopeMarkUpsert struct {
-	RopeID      RopeID
-	Trait       TraitCode
-	AddMembers  []shareddomain.Address // dedup해서 추가
-	SizeDelta   int32                  // 보통 len(AddMembers)와 동일하게 씀
-	VolumeDelta uint32                 // 트랜잭션 볼륨 증분
-	LastSeen    chaintimer.ChainTime
+	RopeID       RopeID
+	TrapVertexes []TrapVertex
+	Trait        TraitCode
+	AddMembers   []shareddomain.Address // dedup해서 추가
+	SizeDelta    int32                  // 보통 len(AddMembers)와 동일하게 씀
+	VolumeDelta  uint32                 // 트랜잭션 볼륨 증분
+	LastSeen     chaintimer.ChainTime
 
 	// (옵션) 병합: 나열된 Source Rope들을 대상 RopeID로 흡수
 	MergeFrom []RopeID
+}
+
+func (t1 TrapVertex) IsSame(t2 TrapVertex) bool {
+	if t1.Address == t2.Address && t1.Trap == t2.Trap {
+		return true
+	}
+	return false
 }
