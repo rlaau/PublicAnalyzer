@@ -169,11 +169,6 @@ func main() {
 
 	//*종료 후 결과 보고 - TxDefineLoader용
 	printDeterministicResults(transactionFeeder, relPool.GetTripletPort())
-	if err := generateGraphReportWithDB(isolatedPathConfig, relPool.RopeRepo.RawBadgerDB()); err != nil {
-		fmt.Printf("   ⚠️ Graph report failed: %v\n", err)
-	} else {
-		fmt.Printf("   📁 Graph report saved under: %s\n", filepath.Join(isolatedDir, "report"))
-	}
 
 	// TxDefineLoader 결과 검증
 	validateTripletResults(transactionFeeder, relPool.GetTripletPort())

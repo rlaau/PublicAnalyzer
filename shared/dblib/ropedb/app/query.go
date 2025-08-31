@@ -1,10 +1,11 @@
 package app
 
 import (
-	"encoding/json"
+	"bytes"
 	"fmt"
+	"slices"
+	"sort"
 
-	"github.com/dgraph-io/badger/v4"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
@@ -16,6 +17,133 @@ func (b *BadgerRopeDB) ViewRopeByNode(a shareddomain.Address) (*domain.Rope, err
 	}
 	ref := v.Ropes[0]
 	return b.ViewRope(ref.ID)
+}
+
+// v가 trap일 경우 true. 아니면 false
+func (b *BadgerRopeDB) needToAddTrap(v *domain.Vertex, trapCode domain.TrapCode) bool {
+	//1. 해당 트랩을 이미 소유하고 있는지 검증
+	if v.Traps.IsContatin(trapCode) {
+		//소유했다면 추가하지 않음
+		return false
+	}
+	//2. 소유하지 않은경우, 만족 여부 검증
+	ownedTraits := make(map[domain.TraitCode]struct{})
+	for _, t := range v.Traits {
+		ownedTraits[t.Trait] = struct{}{}
+	}
+	//트랩 코드가 요구하는 모든 트레이트를 만족해야 트랩이고, 아니면 false
+	for _, trapTraitCode := range b.trapToTraits[trapCode] {
+		if _, exists := ownedTraits[trapTraitCode]; !exists {
+			return false
+		}
+		continue
+	}
+	// 결국 전부 만족하면 트랩을 추가해야 함
+	requiredRuleOrZero := b.trapToRequiredRuleOrNot[trapCode]
+	if len(requiredRuleOrZero) == 0 {
+		return true
+	}
+
+	//트랩이 되기 위해 특별히 지녀야할 역할 있을 경우
+	//역할 존재 확인
+	return slices.ContainsFunc(requiredRuleOrZero, v.IsContainRule)
+}
+
+// 유틸: dedup + 정렬(순서 안정성)
+func dedupAppend(base, inc []shareddomain.Address) []shareddomain.Address {
+	if len(inc) == 0 {
+		return base
+	}
+	m := map[shareddomain.Address]struct{}{}
+	out := make([]shareddomain.Address, 0, len(base)+len(inc))
+	for _, x := range base {
+		m[x] = struct{}{}
+		out = append(out, x)
+	}
+	for _, y := range inc {
+		if _, ok := m[y]; ok {
+			continue
+		}
+		m[y] = struct{}{}
+		out = append(out, y)
+	}
+	sort.Slice(out, func(i, j int) bool { return bytes.Compare([]byte(out[i].String()), []byte(out[j].String())) < 0 })
+	return out
+}
+
+func sizeOf(rm domain.RopeMark) int { return int(rm.Size) }
+
+// getPolyRopeFromVertex: Vertex에서 특정 PolyTrait의 PolyRope ID 가져오기
+func (b *BadgerRopeDB) getPolyRopeFromVertex(v *domain.Vertex, polyTrait domain.PolyTraitCode) (domain.PolyRopeID, bool) {
+	for _, pr := range v.PolyRopes {
+		if pr.PolyTrait == polyTrait {
+			return pr.Id, true
+		}
+	}
+	return 0, false
+}
+
+// setPolyRopeInVertex: Vertex에 PolyRope 설정
+func (b *BadgerRopeDB) setPolyRopeInVertex(v *domain.Vertex, polyRopeID domain.PolyRopeID, polyTrait domain.PolyTraitCode) {
+	for i, pr := range v.PolyRopes {
+		if pr.PolyTrait == polyTrait {
+			v.PolyRopes[i].Id = polyRopeID
+			return
+		}
+	}
+	// 없으면 새로 추가
+	v.PolyRopes = append(v.PolyRopes, domain.PolyRopeRef{
+		Id:        polyRopeID,
+		PolyTrait: polyTrait,
+	})
+}
+
+// calculatePolyRopeSize: PolyRope의 실제 멤버 수 계산
+func (b *BadgerRopeDB) calculatePolyRopeSize(ropeIDs []domain.RopeID) int {
+	totalSize := 0
+	for _, ropeID := range ropeIDs {
+		ropeMark := b.getRopeMark(ropeID)
+		totalSize += int(ropeMark.Size)
+	}
+	return totalSize
+}
+
+// dedupRopes: RopeID 중복 제거
+func dedupRopes(base, inc []domain.RopeID) []domain.RopeID {
+	if len(inc) == 0 {
+		return base
+	}
+	m := map[domain.RopeID]struct{}{}
+	out := make([]domain.RopeID, 0, len(base)+len(inc))
+	for _, x := range base {
+		m[x] = struct{}{}
+		out = append(out, x)
+	}
+	for _, y := range inc {
+		if _, ok := m[y]; ok {
+			continue
+		}
+		m[y] = struct{}{}
+		out = append(out, y)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+// updateAllVerticesPolyRope: source PolyRope에 속한 모든 Vertex를 target PolyRope로 업데이트
+func (b *BadgerRopeDB) updateAllVerticesPolyRope(sourcePolyRopeID, targetPolyRopeID domain.PolyRopeID, polyTrait domain.PolyTraitCode) {
+	// source PolyRope의 모든 Rope 가져오기
+	srcMark := b.getPolyRopeMark(sourcePolyRopeID)
+
+	// 각 Rope의 모든 멤버 Vertex 업데이트
+	for _, ropeID := range srcMark.Ropes {
+		ropeMark := b.getRopeMark(ropeID)
+		for _, addr := range ropeMark.Members {
+			v := b.getOrCreateVertex(addr)
+			b.setPolyRopeInVertex(v, targetPolyRopeID, polyTrait)
+			b.putVertex(v)
+		}
+	}
 }
 
 func (b *BadgerRopeDB) ViewRope(id domain.RopeID) (*domain.Rope, error) {
@@ -40,33 +168,6 @@ func (b *BadgerRopeDB) ViewInSameRopeByPolyTrait(a1, a2 shareddomain.Address, po
 	v1 := b.getOrCreateVertex(a1)
 	v2 := b.getOrCreateVertex(a2)
 	return inSamePolyRopeByPolyTrait(v1, v2, polyTrait), nil
-}
-
-// ViewAllTraitMarkByCode returns all TraitMark records with the given trait code
-func (b *BadgerRopeDB) ViewAllTraitMarkByCode(t domain.TraitCode) ([]domain.TraitMark, error) {
-	var result []domain.TraitMark
-	err := b.db.View(func(txn *badger.Txn) error {
-		itOpts := badger.DefaultIteratorOptions
-		it := txn.NewIterator(itOpts)
-		defer it.Close()
-
-		pfx := []byte(kT) // "t:" prefix for trait marks
-		for it.Seek(pfx); it.ValidForPrefix(pfx); it.Next() {
-			item := it.Item()
-			var tm domain.TraitMark
-			err := item.Value(func(val []byte) error {
-				return json.Unmarshal(val, &tm)
-			})
-			if err != nil {
-				continue // skip invalid entries
-			}
-			if tm.Trait == t {
-				result = append(result, tm)
-			}
-		}
-		return nil
-	})
-	return result, err
 }
 
 // ViewAllTraitMarkByString returns all TraitMark records with the trait name matching the given string
@@ -209,45 +310,6 @@ func (b *BadgerRopeDB) PropagateTrap(v *domain.Vertex, trapCodes []domain.TrapCo
 		)
 	}
 	return nil
-}
-
-
-// GetGraphStas returns basic graph statistics:
-// - nodes:  total number of vertices (keys with prefix "v:")
-// - ropes:  total number of rope marks (keys with prefix "r:")
-// - traits: total number of trait marks (keys with prefix "t:")
-// - polyRopes: total number of poly rope marks (keys with prefix "pr:")
-func (b *BadgerRopeDB) GetGraphStats() map[string]any {
-	var nodes, ropes, traits, polyRopes uint64
-
-	_ = b.db.View(func(txn *badger.Txn) error {
-		// 공통 카운터 헬퍼
-		countPrefix := func(pfx []byte) uint64 {
-			var c uint64
-			itOpts := badger.DefaultIteratorOptions
-			itOpts.PrefetchValues = false // 키 개수만 필요
-			it := txn.NewIterator(itOpts)
-			defer it.Close()
-
-			for it.Seek(pfx); it.ValidForPrefix(pfx); it.Next() {
-				c++
-			}
-			return c
-		}
-
-		nodes = countPrefix([]byte(kV))      // "v:"
-		ropes = countPrefix([]byte(kR))      // "r:"
-		traits = countPrefix([]byte(kT))     // "t:"
-		polyRopes = countPrefix([]byte(kPR)) // "pr:"
-		return nil
-	})
-
-	return map[string]any{
-		"nodes":     nodes,
-		"ropes":     ropes,
-		"traits":    traits,
-		"polyRopes": polyRopes,
-	}
 }
 
 // TODO 테스트 용으로 퍼블릭하게 만들다보니 의도치 않게 전환해버림... 추후 리팩토링 할 것

@@ -279,7 +279,7 @@ func (a *SimpleTriplet) processTransactionParrell(messages []kafka.Message[*shar
 	}
 
 	// 배치 처리 완료 로깅 (처음 몇 배치만)
-	if processedCount < 500 {
+	if processedCount < 5 {
 		log.Printf("📦 Batch processed: %d messages → %d transactions", batchSize, len(transactions))
 	}
 }

@@ -14,9 +14,12 @@ import (
 
 func DefaultTestingTripletConfig(processName string) *triplet.TripletConfig {
 	return &triplet.TripletConfig{
-		Name:           "Simple-Triplet",
-		Mode:           mode.TestingModeProcess,
-		BusCapLimit:    50_000,
+		Name:        "Simple-Triplet",
+		Mode:        mode.TestingModeProcess,
+		BusCapLimit: 50_000,
+		//TODO 현재 RopeDB의 병렬 취약성때매 그냥 워커 카운트 1로 함
+		//TODO 그렇다고 뮤텍스 락 걸기엔, 추후 병렬화 시킬기고, 분석 시 성능 저하 이슈로 그냥 락 거는 대신
+		//TODO알아서 직렬화시킴
 		WorkerCount:    2,
 		IsolatedDBPath: filepath.Join(computation.FindTestingStorageRootPath(), processName),
 

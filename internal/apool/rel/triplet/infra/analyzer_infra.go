@@ -13,7 +13,7 @@ type TripletAndDualManagerInfra struct {
 	TxJobBus            *eventbus.EventBus[workerpool.Job]
 	WorkerPool          *workerpool.Pool
 	//TODO 추후 이것도 지울 것!! 얘가 직적 컨슈머를 왜 받누...
-	BatchConsumer *kafka.KafkaBatchConsumer[*shareddomain.MarkedTransaction]
+	BatchConsumer *`kafka.KafkaBatchConsumer[*shareddomain.MarkedTransaction]`
 }
 
 func NewTripletInfra(

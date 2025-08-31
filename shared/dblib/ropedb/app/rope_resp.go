@@ -558,7 +558,7 @@ func (b *BadgerRopeDB) generateLegend(nodes []NodeInfo, edges []EdgeInfo) Legend
 // 내부: RopeMark 중 최대 Volume 선택(동률이면 Size, 그 다음 LastSeen)
 func (b *BadgerRopeDB) topRopeByVolume() (ropedomain.RopeID, ropedomain.RopeMark) {
 	var best ropedomain.RopeMark
-	_ = b.db.View(func(txn *badger.Txn) error {
+	_ = b.dbM.View(func(txn *badger.Txn) error {
 		itOpts := badger.DefaultIteratorOptions
 		it := txn.NewIterator(itOpts)
 		defer it.Close()
@@ -596,7 +596,7 @@ func betterRope(a, b ropedomain.RopeMark) bool {
 func (b *BadgerRopeDB) getTraitMark(id ropedomain.TraitID) ropedomain.TraitMark {
 	key := []byte(fmt.Sprintf("%s%d", kT, uint64(id)))
 	var tm ropedomain.TraitMark
-	_ = b.db.View(func(txn *badger.Txn) error {
+	_ = b.dbM.View(func(txn *badger.Txn) error {
 		itm, err := txn.Get(key)
 		if err != nil {
 			return nil
