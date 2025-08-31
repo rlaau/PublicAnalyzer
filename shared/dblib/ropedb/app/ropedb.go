@@ -94,7 +94,8 @@ type BadgerRopeDB struct {
 	traitToPolyTraits map[domain.TraitCode][]domain.PolyTraitCode
 
 	// Trap-> Traits의 매핑
-	trapToTraits map[domain.TrapCode][]domain.TraitCode
+	trapToTraits            map[domain.TrapCode][]domain.TraitCode
+	trapToRequiredRuleOrNot map[domain.TrapCode]domain.RequiredRuleOrZero
 
 	// 비동기 쓰기 버스
 	busRope     *eventbus.EventBus[domain.RopeMarkUpsert]
@@ -163,23 +164,25 @@ func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, t
 		}
 	}
 	trapToTraits := make(map[domain.TrapCode][]domain.TraitCode)
+	trapToRequiredRules := make(map[domain.TrapCode]domain.RequiredRuleOrZero)
 	for trapCode, trapNameAndTraits := range trapLegend {
 		trapToTraits[trapCode] = trapNameAndTraits.Traits
+		trapToRequiredRules[trapCode] = trapNameAndTraits.RuleExpectingOrZero
 	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	b := &BadgerRopeDB{
 		db: db, isTest: isTest.IsTest(),
 		ctx: ctx, cancel: cancel,
-		traitLegend:       traitLegend,
-		ruleLegend:        ruleLegend,
-		authorLegend:      authorLegend,
-		polyTraits:        polyTraits,
-		traitToPolyTraits: traitToPolyTraits,
-		trapToTraits:      trapToTraits,
-		busRope:           busR,
-		busTrait:          busT,
-		busPolyRope:       busPR,
+		traitLegend:             traitLegend,
+		ruleLegend:              ruleLegend,
+		authorLegend:            authorLegend,
+		polyTraits:              polyTraits,
+		traitToPolyTraits:       traitToPolyTraits,
+		trapToRequiredRuleOrNot: trapToRequiredRules,
+		trapToTraits:            trapToTraits,
+		busRope:                 busR,
+		busTrait:                busT,
+		busPolyRope:             busPR,
 	}
 
 	// GC 스케쥴러 설정
@@ -870,6 +873,36 @@ func (b *BadgerRopeDB) ensureLink(v1, v2 *domain.Vertex, t domain.TraitCode, rul
 		})
 		return id, true
 	}
+}
+
+// v가 trap일 경우 true. 아니면 false
+func (b *BadgerRopeDB) needToAddTrap(v *domain.Vertex, trapCode domain.TrapCode) bool {
+	//1. 해당 트랩을 이미 소유하고 있는지 검증
+	if v.Traps.IsContatin(trapCode) {
+		//소유했다면 추가하지 않음
+		return false
+	}
+	//2. 소유하지 않은경우, 만족 여부 검증
+	ownedTraits := make(map[domain.TraitCode]struct{})
+	for _, t := range v.Traits {
+		ownedTraits[t.Trait] = struct{}{}
+	}
+	//트랩 코드가 요구하는 모든 트레이트를 만족해야 트랩이고, 아니면 false
+	for _, trapTraitCode := range b.trapToTraits[trapCode] {
+		if _, exists := ownedTraits[trapTraitCode]; !exists {
+			return false
+		}
+		continue
+	}
+	// 결국 전부 만족하면 트랩을 추가해야 함
+	requiredRuleOrZero := b.trapToRequiredRuleOrNot[trapCode]
+	if len(requiredRuleOrZero) == 0 {
+		return true
+	}
+
+	//트랩이 되기 위해 특별히 지녀야할 역할 있을 경우
+	//역할 존재 확인
+	return slices.ContainsFunc(requiredRuleOrZero, v.IsContainRule)
 }
 
 // 유틸: dedup + 정렬(순서 안정성)

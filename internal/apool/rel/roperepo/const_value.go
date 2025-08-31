@@ -23,8 +23,14 @@ const (
 	// * Triplet의 트레이트
 	TraitDepositAndUser ropedomain.TraitCode = 1
 	TraitCexAndDeposit  ropedomain.TraitCode = 2
+	//* Triplet의 예외 상황 마킹용 트레이트
+	//Tx의 from이 cex인 경우. 받은 대상은 특별한 것이라 추정
+	TraitCexToOther ropedomain.TraitCode = 3
+	//Tx의 from이 Deposit인데, to가 cex가 아닐 경우
+	TraitDepositToOther ropedomain.TraitCode = 4
+
 	//* Creation의 트레이트
-	TraitCreatorAndCreatedContract ropedomain.TraitCode = 3
+	TraitCreatorAndCreatedContract ropedomain.TraitCode = 5
 
 	//*임의의 예시를 위한 트레이트 코드
 	TraitFraudCondition1 ropedomain.TraitCode = 1001
@@ -34,8 +40,12 @@ const (
 // 트레이트의 해석 방법.
 // *이 부분의 문자열 값은 바꾸기 가능. 의미만 잘 전달되면 됨
 var TraitLegend = map[ropedomain.TraitCode]string{
-	TraitDepositAndUser:            "TraitDepositAndUser",
-	TraitCexAndDeposit:             "TraitCexAndDeposit",
+	TraitDepositAndUser: "TraitDepositAndUser",
+	TraitCexAndDeposit:  "TraitCexAndDeposit",
+
+	TraitCexToOther:     "TraitCexToOther",
+	TraitDepositToOther: "TraitDepositToOther",
+
 	TraitCreatorAndCreatedContract: "TraitCreatorAndCreatedContract",
 }
 
@@ -69,15 +79,23 @@ const (
 	RuleUser    ropedomain.RuleCode = 1
 	RuleDeposit ropedomain.RuleCode = 2
 	RuleCex     ropedomain.RuleCode = 3
+
+	RuleRecievingFromCex ropedomain.RuleCode = 4
+	//디포짓에서 tx를 받았고&&동시에 cex주소도 아닌 경우
+	RuleRecievingFromDeposit ropedomain.RuleCode = 5
 	//* Creation의 룰
-	RuleCreator         ropedomain.RuleCode = 4
-	RuleCreatedContract ropedomain.RuleCode = 5
+	RuleCreator         ropedomain.RuleCode = 6
+	RuleCreatedContract ropedomain.RuleCode = 7
 )
 
 var RuleLegend = map[ropedomain.RuleCode]string{
-	RuleUser:            "RuleUser",
-	RuleDeposit:         "RuleDeposit",
-	RuleCex:             "RuleCex",
+	RuleUser:    "RuleUser",
+	RuleDeposit: "RuleDeposit",
+	RuleCex:     "RuleCex",
+
+	RuleRecievingFromCex:     "RuleRecievingFromCex",
+	RuleRecievingFromDeposit: "RuleRecievingFromDeposit",
+
 	RuleCreator:         "RuleCreator",
 	RuleCreatedContract: "RuleCreatedContract",
 }

@@ -605,3 +605,48 @@ func (b *BadgerRopeDB) getTraitMark(id ropedomain.TraitID) ropedomain.TraitMark 
 	})
 	return tm
 }
+
+// GetTraitDetail TraitMark 상세 정보 조회
+func (b *BadgerRopeDB) GetTraitDetail(id ropedomain.TraitID) (map[string]interface{}, error) {
+	tm := b.getTraitMark(id)
+	if tm.ID == 0 {
+		return nil, fmt.Errorf("trait not found: %d", id)
+	}
+
+	// Rule Legend 가져오기
+	ruleLegend := b.GetRuleLegend()
+	traitLegend := b.GetTraitLegend()
+
+	// Rule 이름 찾기
+	ruleAName := fmt.Sprintf("Rule %d", tm.RuleA)
+	ruleBName := fmt.Sprintf("Rule %d", tm.RuleB)
+	if name, ok := ruleLegend[fmt.Sprintf("%d", tm.RuleA)]; ok {
+		ruleAName = name.Name
+	}
+	if name, ok := ruleLegend[fmt.Sprintf("%d", tm.RuleB)]; ok {
+		ruleBName = name.Name
+	}
+
+	// Trait 이름 찾기
+	traitName := fmt.Sprintf("Trait %d", tm.Trait)
+	if name, ok := traitLegend[fmt.Sprintf("%d", tm.Trait)]; ok {
+		traitName = name.Name
+	}
+
+	return map[string]interface{}{
+		"id":          tm.ID,
+		"traitCode":   tm.Trait,
+		"traitName":   traitName,
+		"authorCodes": tm.AuthorCodes,
+		"lastTx":      tm.LastTx.String(),
+		"addressA":    tm.AddressA.String(),
+		"ruleA":       tm.RuleA,
+		"ruleAName":   ruleAName,
+		"addressB":    tm.AddressB.String(),
+		"ruleB":       tm.RuleB,
+		"ruleBName":   ruleBName,
+		"score":       tm.Score,
+		"volume":      tm.Volume,
+		"lastSeen":    tm.LastSeen.Unix(),
+	}, nil
+}

@@ -16,10 +16,14 @@ type AuthorCode int
 // 트랩은 로프에 걸쳐 전파됨
 // PolyTrait가 "속성의 합집합"이라면
 // Trap은 "속성의 교집합"임
+// RuleCond은 멤버십 논리임. 해당 룰 중 하나라도 포함하면 되는 것
+// RuleCond가 zero시 아무 조건 없는 것. 그냥 트레이트만 가져도 트랩으로 판별
 type Trap struct {
-	TrapCode   TraitCode
-	TraitCodes []TraitCode
+	TrapCode           TraitCode
+	TraitCodes         []TraitCode
+	RequiredRuleOrZero RequiredRuleOrZero
 }
+type RequiredRuleOrZero []RuleCode
 type TrapVertex struct {
 	Address shareddomain.Address
 	Trap    TrapCode
@@ -27,8 +31,9 @@ type TrapVertex struct {
 type TrapCode int
 
 type TrapNameAndTraits struct {
-	Name   string
-	Traits []TraitCode
+	Name                string
+	Traits              []TraitCode
+	RuleExpectingOrZero RequiredRuleOrZero
 }
 
 type PolyTrait struct {
@@ -67,6 +72,16 @@ type Vertex struct {
 	Traits    []TraitRef // (Partner, Trait, TraitID)
 	Traps     SatisfyingTraps
 }
+
+func (v *Vertex) IsContainRule(r RuleCode) bool {
+	for _, tr := range v.Traits {
+		if tr.MyRule == r {
+			return true
+		}
+	}
+	return false
+}
+
 type SatisfyingTraps []TrapCode
 
 func (s *SatisfyingTraps) Add(t TrapCode) bool {

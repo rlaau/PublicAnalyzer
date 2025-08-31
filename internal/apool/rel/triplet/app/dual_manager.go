@@ -105,7 +105,7 @@ func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.Mark
 		if debugEnabled {
 			fmt.Printf("   → Case 1: CEX → Address (txFromCexAddress)\n")
 		}
-		err := dm.handleExceptionalAddress(toAddr, "txFromCexAddress")
+		err := dm.handleTxFromCex(fromAddr, tx.To, tx)
 		return nil, fp.HandleErrOrNilToSkipStep(err)
 	}
 
@@ -123,7 +123,7 @@ func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.Mark
 		if debugEnabled {
 			fmt.Printf("   → Case 3: Detected Deposit → Address (txFromDepositAddress)\n")
 		}
-		err := dm.handleExceptionalAddress(toAddr, "txFromDepositAddress")
+		err := dm.handleTxFromDepositWithNotCex(fromAddr, tx.To, tx)
 		return nil, fp.HandleErrOrNilToSkipStep(err)
 	}
 
@@ -151,10 +151,57 @@ func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.Mark
 	return tx, nil
 }
 
-// handleExceptionalAddress processes exceptional addresses (to be implemented)
-func (dm *DualManager) handleExceptionalAddress(_ domain.Address, _ string) error {
-	//TODO: 추후 구현할 특수 주소 처리 로직
-	return nil
+func (dm *DualManager) handleTxFromCex(cex domain.Address, other domain.Address, tx *domain.MarkedTransaction) error {
+	author := roperepo.AuthorSystem
+	trait := roperepo.TraitCexToOther
+
+	cexAndRule := ropedomain.AddressAndRule{
+		Address: cex,
+		Rule:    roperepo.RuleCex,
+	}
+	otherAndRule := ropedomain.AddressAndRule{
+		Address: other,
+		Rule:    roperepo.RuleRecievingFromCex,
+	}
+	txScala := ropedomain.TxScala{
+		TxId:     tx.TxID,
+		Time:     tx.BlockTime,
+		ScoreInc: 1,
+	}
+	traitEvent := ropedomain.NewTraitEvent(
+		author,
+		trait,
+		cexAndRule,
+		otherAndRule,
+		txScala,
+	)
+	return dm.relPool.RopeDB().PushTraitEvent(traitEvent)
+}
+
+func (dm *DualManager) handleTxFromDepositWithNotCex(deposit domain.Address, other domain.Address, tx *domain.MarkedTransaction) error {
+	author := roperepo.AuthorSystem
+	trait := roperepo.TraitDepositToOther
+	depositAndRule := ropedomain.AddressAndRule{
+		Address: deposit,
+		Rule:    roperepo.RuleDeposit,
+	}
+	otherAndRule := ropedomain.AddressAndRule{
+		Address: other,
+		Rule:    roperepo.RuleRecievingFromDeposit,
+	}
+	txScala := ropedomain.TxScala{
+		TxId:     tx.TxID,
+		Time:     tx.BlockTime,
+		ScoreInc: 1,
+	}
+	te := ropedomain.NewTraitEvent(
+		author,
+		trait,
+		depositAndRule,
+		otherAndRule,
+		txScala,
+	)
+	return dm.relPool.RopeDB().PushTraitEvent(te)
 }
 
 // 새 디포짓 주소 발견한 경우

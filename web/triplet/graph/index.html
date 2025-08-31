@@ -74,6 +74,125 @@
   .notification.hiding {
     animation: slideUp 0.3s ease-out;
   }
+  
+  /* 모달 스타일 */
+  .modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.4);
+    animation: fadeIn 0.3s;
+  }
+  
+  .modal.show {
+    display: block;
+  }
+  
+  .modal-content {
+    background-color: #fefefe;
+    margin: 10% auto;
+    padding: 20px;
+    border: 1px solid #888;
+    border-radius: 8px;
+    width: 600px;
+    max-width: 90%;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    animation: slideIn 0.3s;
+    max-height: 80vh;
+    overflow-y: auto;
+  }
+  
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #e9ecef;
+  }
+  
+  .modal-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #333;
+  }
+  
+  .modal-close {
+    color: #aaa;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    line-height: 20px;
+  }
+  
+  .modal-close:hover,
+  .modal-close:focus {
+    color: #000;
+  }
+  
+  .modal-body {
+    color: #333;
+  }
+  
+  .modal-field {
+    margin-bottom: 12px;
+  }
+  
+  .modal-field-label {
+    font-weight: 600;
+    color: #555;
+    display: inline-block;
+    min-width: 100px;
+  }
+  
+  .modal-field-value {
+    color: #222;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  
+  .modal-field-value.address {
+    font-size: 12px;
+    word-break: break-all;
+  }
+  
+  .modal-body a {
+    color: #2f6fed;
+    text-decoration: underline;
+  }
+  
+  .modal-body a:hover {
+    color: #1a4db8;
+  }
+  
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  
+  @keyframes slideIn {
+    from {
+      transform: translateY(-50px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+  
+  .trait-clickable {
+    cursor: pointer;
+    text-decoration: underline;
+    color: #2f6fed;
+  }
+  
+  .trait-clickable:hover {
+    color: #1a4db8;
+  }
 </style>
 </head>
 <body>
@@ -159,11 +278,25 @@
     </div>
   </section>
 
+  <!-- TraitMark 상세 정보 모달 -->
+  <div id="traitModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">🔍 Trait Details</h3>
+        <span class="modal-close" onclick="closeTraitModal()">&times;</span>
+      </div>
+      <div class="modal-body" id="traitModalBody">
+        <!-- 동적으로 채워질 내용 -->
+      </div>
+    </div>
+  </div>
+
 <script>
 const f = document.getElementById('f');
 const sn=document.getElementById('sn'), se=document.getElementById('se'), st=document.getElementById('st'), ss=document.getElementById('ss');
 const nodeBox=document.getElementById('nodeBox'), edgeBox=document.getElementById('edgeBox');
 let CURRENT = { meta:{}, nodes:[], edges:[], legend:{traits:{}, rules:{}, polyTraits:{}} };
+let authorLegend = {}; // Author 코드를 문자열로 변환하기 위한 매핑
 
 // PolyTrait 관련 상태 및 데이터
 let currentHighlightPolyTrait = null;
@@ -735,6 +868,7 @@ window.addEventListener('message', (ev)=>{
       hideRopeInfo(); // 로프 정보 숨김
       hidePolyRopeResult(); // PolyRope 검색 결과 숨김
       loadPolyTraitLegend(); // PolyTrait 범례 로드
+      loadAuthorLegend(); // Author 범례 로드
       f.contentWindow.postMessage({type:'load-graph', payload: CURRENT}, '*');
     });
   } else if (msg.type==='child-ready'){
@@ -867,7 +1001,7 @@ window.addEventListener('message', (ev)=>{
           : trait.traitName || `Trait ${trait.traitCode}`;
         
         html += (index > 0 ? '<br/>' : '') + 
-                '• <b>' + traitName + '</b> ' +
+                '• <b class="trait-clickable" onclick="showTraitDetails(\'' + (trait.traitId || 0) + '\')">' + traitName + '</b> ' +
                 '<span class="mono">#' + (trait.traitId || 0) + '</span>';
       });
       edgeBox.innerHTML = html;
@@ -879,7 +1013,8 @@ window.addEventListener('message', (ev)=>{
         ? CURRENT.legend.traits[traitKey].name
         : p.traitName || `Trait ${p.traitCode}`;
       
-      edgeBox.innerHTML = 'Trait: <b>'+traitName+'</b> <span class="mono">#'+(p.traitId||0)+'</span>';
+      // 클릭 가능한 트레이트 정보로 변경
+      edgeBox.innerHTML = 'Trait: <b class="trait-clickable" onclick="showTraitDetails(\'' + (p.traitId||0) + '\')">' + traitName + '</b> <span class="mono">#'+(p.traitId||0)+'</span>';
     }
   } else if (msg.type==='node-click'){
     const id = msg.payload && msg.payload.id;
@@ -1187,6 +1322,118 @@ document.getElementById('ropeBtn').onclick = ()=>{
       alert('Rope 검색 중 오류가 발생했습니다: ' + err.message);
     });
 };
+
+// Author Legend 로드
+function loadAuthorLegend() {
+  // Author Legend를 백엔드에서 가져오기
+  fetch('/api/triplet/graph/author-legend')
+    .then(r => r.json())
+    .then(legend => {
+      authorLegend = legend || {};
+      console.log('Author legend loaded:', authorLegend);
+    })
+    .catch(err => {
+      console.error('Failed to load author legend:', err);
+      // 폴백: 기본값 사용
+      authorLegend = {
+        1: 'System',
+        2: 'KMH',
+        3: 'KSW',
+        4: 'JHL'
+      };
+    });
+}
+
+// TraitMark 상세 정보 가져오기
+function fetchTraitDetails(traitId) {
+  return fetch(`/api/triplet/graph/trait-detail/${traitId}`)
+    .then(r => r.json())
+    .catch(err => {
+      console.error('Failed to fetch trait details:', err);
+      return null;
+    });
+}
+
+// Trait 상세 정보 모달 표시
+function showTraitDetails(traitId) {
+  console.log('Showing trait details for:', traitId);
+  
+  // 트레이트 ID로 상세 정보 가져오기
+  fetchTraitDetails(traitId).then(traitDetail => {
+    if (!traitDetail) {
+      alert('트레이트 정보를 가져올 수 없습니다.');
+      return;
+    }
+    
+    const modal = document.getElementById('traitModal');
+    const modalBody = document.getElementById('traitModalBody');
+    
+    // Author 코드를 문자열로 변환
+    const authorNames = (traitDetail.authorCodes || [])
+      .map(code => authorLegend[code] || `Author ${code}`)
+      .join(', ');
+    
+    // 주소는 자르지 않고 전체 표시
+    const formatAddress = (addr) => {
+      if (!addr) return 'N/A';
+      return addr;
+    };
+    
+    // 모달 내용 생성
+    let html = '';
+    html += '<div class="modal-field"><span class="modal-field-label">Trait ID:</span> <span class="modal-field-value">' + (traitDetail.id || traitId) + '</span></div>';
+    html += '<div class="modal-field"><span class="modal-field-label">Trait Code:</span> <span class="modal-field-value">' + (traitDetail.traitCode || 'N/A') + '</span></div>';
+    html += '<div class="modal-field"><span class="modal-field-label">Trait Name:</span> <span class="modal-field-value">' + (traitDetail.traitName || 'Unknown') + '</span></div>';
+    html += '<div class="modal-field"><span class="modal-field-label">Authors:</span> <span class="modal-field-value">' + (authorNames || 'N/A') + '</span></div>';
+    // Last Tx를 클릭 가능한 링크로 만들기
+    if (traitDetail.lastTx && traitDetail.lastTx !== 'N/A') {
+      html += '<div class="modal-field"><span class="modal-field-label">Last Tx:</span> <a href="https://etherscan.io/tx/' + traitDetail.lastTx + '" target="_blank" class="modal-field-value address" style="color: #2f6fed; text-decoration: underline;">' + traitDetail.lastTx + '</a></div>';
+    } else {
+      html += '<div class="modal-field"><span class="modal-field-label">Last Tx:</span> <span class="modal-field-value address">N/A</span></div>';
+    }
+    html += '<div class="modal-field"><span class="modal-field-label">Score:</span> <span class="modal-field-value">' + (traitDetail.score || 0) + '</span></div>';
+    html += '<div class="modal-field"><span class="modal-field-label">Volume:</span> <span class="modal-field-value">' + (traitDetail.volume || 0) + '</span></div>';
+    
+    html += '<hr style="margin: 15px 0; border: none; border-top: 1px solid #e9ecef;">';
+    
+    // Address A와 B도 Etherscan 링크로 만들기
+    if (traitDetail.addressA && traitDetail.addressA !== 'N/A') {
+      html += '<div class="modal-field"><span class="modal-field-label">Address A:</span> <a href="https://etherscan.io/address/' + traitDetail.addressA + '" target="_blank" class="modal-field-value address">' + formatAddress(traitDetail.addressA) + '</a></div>';
+    } else {
+      html += '<div class="modal-field"><span class="modal-field-label">Address A:</span> <span class="modal-field-value address">N/A</span></div>';
+    }
+    html += '<div class="modal-field"><span class="modal-field-label">Rule A:</span> <span class="modal-field-value">' + (traitDetail.ruleAName || `Rule ${traitDetail.ruleA || 'N/A'}`) + '</span></div>';
+    
+    if (traitDetail.addressB && traitDetail.addressB !== 'N/A') {
+      html += '<div class="modal-field"><span class="modal-field-label">Address B:</span> <a href="https://etherscan.io/address/' + traitDetail.addressB + '" target="_blank" class="modal-field-value address">' + formatAddress(traitDetail.addressB) + '</a></div>';
+    } else {
+      html += '<div class="modal-field"><span class="modal-field-label">Address B:</span> <span class="modal-field-value address">N/A</span></div>';
+    }
+    html += '<div class="modal-field"><span class="modal-field-label">Rule B:</span> <span class="modal-field-value">' + (traitDetail.ruleBName || `Rule ${traitDetail.ruleB || 'N/A'}`) + '</span></div>';
+    
+    if (traitDetail.lastSeen) {
+      const date = new Date(traitDetail.lastSeen * 1000);
+      html += '<div class="modal-field"><span class="modal-field-label">Last Seen:</span> <span class="modal-field-value">' + date.toLocaleString() + '</span></div>';
+    }
+    
+    modalBody.innerHTML = html;
+    modal.classList.add('show');
+  });
+}
+
+// 모달 닫기
+function closeTraitModal() {
+  const modal = document.getElementById('traitModal');
+  modal.classList.remove('show');
+}
+
+// 모달 외부 클릭 시 닫기
+window.onclick = function(event) {
+  const modal = document.getElementById('traitModal');
+  if (event.target == modal) {
+    modal.classList.remove('show');
+  }
+}
 
 // PolyRope 검색
 document.getElementById('polyRopeBtn').onclick = ()=>{

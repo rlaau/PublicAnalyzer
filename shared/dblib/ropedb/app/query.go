@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
@@ -90,6 +91,32 @@ func (b *BadgerRopeDB) ViewAllTraitMarkByString(s string) ([]domain.TraitMark, e
 
 func (b *BadgerRopeDB) GetPolyTraitLegend() map[domain.PolyTraitCode]domain.PolyNameAndTraits {
 	return b.polyTraits
+}
+
+// GetRuleLegend returns the rule legend for UI display
+func (b *BadgerRopeDB) GetRuleLegend() map[string]LegendItem {
+	legend := make(map[string]LegendItem)
+	for code, name := range b.ruleLegend {
+		legend[fmt.Sprintf("%d", code)] = LegendItem{
+			Name:  name,
+			Color: b.generateRuleColor(code),
+			Count: 0,
+		}
+	}
+	return legend
+}
+
+// GetTraitLegend returns the trait legend for UI display
+func (b *BadgerRopeDB) GetTraitLegend() map[string]LegendItem {
+	legend := make(map[string]LegendItem)
+	for code, name := range b.traitLegend {
+		legend[fmt.Sprintf("%d", code)] = LegendItem{
+			Name:  name,
+			Color: b.generateTraitColor(code),
+			Count: 0,
+		}
+	}
+	return legend
 }
 func (b *BadgerRopeDB) AreTrapsInMyPolyRope(v *domain.Vertex, polyTrait domain.PolyTraitCode) (bool, []domain.TrapVertex) {
 	var targetPolyRope domain.PolyRopeID
@@ -184,29 +211,6 @@ func (b *BadgerRopeDB) PropagateTrap(v *domain.Vertex, trapCodes []domain.TrapCo
 	return nil
 }
 
-// v가 trap일 경우 true. 아니면 false
-func (b *BadgerRopeDB) needToAddTrap(v *domain.Vertex, trapCode domain.TrapCode) bool {
-	//1. 해당 트랩을 이미 소유하고 있는지 검증
-	if v.Traps.IsContatin(trapCode) {
-		//소유했다면 추가하지 않음
-		return false
-	}
-	//2. 소유하지 않은경우, 만족 여부 검증
-	ownedTraits := make(map[domain.TraitCode]struct{})
-	for _, t := range v.Traits {
-		ownedTraits[t.Trait] = struct{}{}
-	}
-	//트랩 코드가 요구하는 모든 트레이트를 만족해야 트랩이고, 아니면 false
-	for _, trapTraitCode := range b.trapToTraits[trapCode] {
-		if _, exists := ownedTraits[trapTraitCode]; !exists {
-			return false
-		}
-		continue
-	}
-	// 결국 전부 만족하면 트랩을 추가해야 함
-
-	return true
-}
 
 // GetGraphStas returns basic graph statistics:
 // - nodes:  total number of vertices (keys with prefix "v:")

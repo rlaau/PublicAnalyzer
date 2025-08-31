@@ -56,8 +56,9 @@ var (
 )
 var TrapLegend = map[domain.TrapCode]domain.TrapNameAndTraits{
 	TrapFraude: {
-		Name:   "TrapFraud",
-		Traits: []domain.TraitCode{TraitSomeOther, TraitAnother},
+		Name:                "TrapFraud",
+		Traits:              []domain.TraitCode{TraitSomeOther, TraitAnother},
+		RuleExpectingOrZero: []domain.RuleCode{RuleUser, RuleDeposit},
 	},
 }
 

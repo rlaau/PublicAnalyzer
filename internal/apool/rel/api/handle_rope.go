@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/roperepo"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server/utils"
 	ropedbapp "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/app"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
@@ -264,6 +265,63 @@ func (h *RelAPIPoolHandler) handlePolyRopeSearch(w http.ResponseWriter, r *http.
 		utils.WriteJSONResponse(w, response)
 	} else {
 		utils.WriteErrorResponse(w, "PolyRope search not supported by DB implementation", http.StatusServiceUnavailable)
+	}
+}
+
+// handleAuthorLegend Author Legend 조회
+func (h *RelAPIPoolHandler) handleAuthorLegend(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// AuthorLegend를 직접 반환
+	legend := roperepo.AuthorLegend
+	utils.WriteJSONResponse(w, legend)
+}
+
+// handleTraitDetail Trait 상세 정보 조회
+func (h *RelAPIPoolHandler) handleTraitDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Try path parameter first
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		idStr = r.URL.Query().Get("id")
+	}
+
+	if idStr == "" {
+		utils.WriteErrorResponse(w, "missing trait id", http.StatusBadRequest)
+		return
+	}
+
+	u, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		utils.WriteErrorResponse(w, "invalid trait id", http.StatusBadRequest)
+		return
+	}
+
+	// RopeDB 접근 확인
+	if h.relPool == nil || h.relPool.RopeRepo == nil {
+		utils.WriteErrorResponse(w, "Graph DB not accessible", http.StatusServiceUnavailable)
+		return
+	}
+
+	// TraitMark 정보를 가져오는 메소드가 필요
+	if ropeDB, ok := h.relPool.RopeRepo.(interface {
+		GetTraitDetail(id ropedomain.TraitID) (map[string]interface{}, error)
+	}); ok {
+		detail, err := ropeDB.GetTraitDetail(ropedomain.TraitID(u))
+		if err != nil {
+			utils.WriteErrorResponse(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		utils.WriteJSONResponse(w, detail)
+	} else {
+		utils.WriteErrorResponse(w, "Trait detail not supported by DB implementation", http.StatusServiceUnavailable)
 	}
 }
 
