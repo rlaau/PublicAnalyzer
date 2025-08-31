@@ -20,7 +20,10 @@ func NewInfraByConfig(config *TripletConfig) *infra.TripletAndDualManagerInfra {
 	var isolateColusre = computation.ComputeRelClosure(config.IsolatedDBPath)
 	log.Printf("EOA Analyzer의 Infra 세팅 중: %s (Mode: %s)", config.Name, config.Mode)
 
-	batchConsumer := loadKafkaBatchConsumer(config.Mode, config.Name)
+	consumer, err := eventbus.NewWithPath[*shareddomain.MarkedTransaction](isolateColusre("tx_channel.jsonl"), 50000) //loadKafkaBatchConsumer(config.Mode, config.Name)
+	if err != nil {
+		panic("NewInfraByConfig: 콘슈머 생성 중 에러")
+	}
 	// 워커 풀에 쓸 채널 생성
 	txJobBus, err := eventbus.NewWithPath[workerpool.Job](isolateColusre("workerPoolChan.jsonl"), config.BusCapLimit)
 	if err != nil {
@@ -40,7 +43,7 @@ func NewInfraByConfig(config *TripletConfig) *infra.TripletAndDualManagerInfra {
 		panic("타임버킷 메니져 로드 중 에러 발생")
 	}
 	fmt.Printf("Triplet 인프라 전부 로드 완료")
-	return infra.NewTripletInfra(txJobBus, workerPool, batchConsumer, pendingDB, timeBucketManager)
+	return infra.NewTripletInfra(txJobBus, workerPool, consumer, pendingDB, timeBucketManager)
 
 }
 

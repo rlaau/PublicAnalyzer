@@ -164,9 +164,10 @@ func (dm *DualManager) handleTxFromCex(cex domain.Address, other domain.Address,
 		Rule:    roperepo.RuleRecievingFromCex,
 	}
 	txScala := ropedomain.TxScala{
-		TxId:     tx.TxID,
-		Time:     tx.BlockTime,
-		ScoreInc: 1,
+		TxId:        tx.TxID,
+		Time:        tx.BlockTime,
+		ScoreInc:    1,
+		ValueOrNull: tx.ValueOrNull,
 	}
 	traitEvent := ropedomain.NewTraitEvent(
 		author,
@@ -190,9 +191,10 @@ func (dm *DualManager) handleTxFromDepositWithNotCex(deposit domain.Address, oth
 		Rule:    roperepo.RuleRecievingFromDeposit,
 	}
 	txScala := ropedomain.TxScala{
-		TxId:     tx.TxID,
-		Time:     tx.BlockTime,
-		ScoreInc: 1,
+		TxId:        tx.TxID,
+		Time:        tx.BlockTime,
+		ScoreInc:    1,
+		ValueOrNull: tx.ValueOrNull,
 	}
 	te := ropedomain.NewTraitEvent(
 		author,
@@ -229,7 +231,7 @@ func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Addres
 		fmt.Printf("   ✅ DetectNewDepositAddress succeeded\n")
 	}
 	// CEX와 Deposit의 연결을 그래프DB에 추가
-	if err := dm.saveCexAndDepositToGraphDB(cexAddr, depositAddr, tx.TxID, time); err != nil {
+	if err := dm.saveCexAndDepositToGraphDB(cexAddr, depositAddr, tx, time); err != nil {
 		fmt.Printf("Cex, Deposit연결을 그래프DB저장하려던 중 에러남")
 	}
 	// 3. DualManager의 pendingRelationsDB에서 depositAddr을 to로 하는 []fromScala 값들 조회
@@ -260,7 +262,7 @@ func (dm *DualManager) saveDualToGraphDB(fromScala infra.FromScala, toAddr domai
 	return dm.saveDualRelationToGraphDB(fromScala, toAddr)
 }
 
-func (dm *DualManager) saveCexAndDepositToGraphDB(cex, deposit domain.Address, txId domain.TxId, lastTime chaintimer.ChainTime) error {
+func (dm *DualManager) saveCexAndDepositToGraphDB(cex, deposit domain.Address, tx *domain.MarkedTransaction, lastTime chaintimer.ChainTime) error {
 	trait := roperepo.TraitCexAndDeposit
 	addrAndRule1 := ropedomain.AddressAndRule{
 		Address: cex,
@@ -271,9 +273,10 @@ func (dm *DualManager) saveCexAndDepositToGraphDB(cex, deposit domain.Address, t
 		Rule:    roperepo.RuleDeposit,
 	}
 	txScala := ropedomain.TxScala{
-		TxId:     txId,
-		Time:     lastTime,
-		ScoreInc: 1,
+		TxId:        tx.TxID,
+		Time:        lastTime,
+		ScoreInc:    1,
+		ValueOrNull: tx.ValueOrNull,
 	}
 	traitEvent := ropedomain.NewTraitEvent(
 		roperepo.AuthorSystem,
@@ -300,7 +303,8 @@ func (dm *DualManager) saveDualRelationToGraphDB(fromScala infra.FromScala, toAd
 		TxId: fromScala.LastTxId,
 		Time: fromScala.LastTime,
 		//1만큼 증가
-		ScoreInc: fromScala.Volume,
+		ScoreInc:    fromScala.Volume,
+		ValueOrNull: fromScala.ValueOrNull,
 	}
 
 	traitEvent := ropedomain.NewTraitEvent(

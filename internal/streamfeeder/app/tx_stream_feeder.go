@@ -41,9 +41,10 @@ type TxStreamFeederConfig struct {
 	Topic        string
 
 	// Backpressure configuration
-	InitialBatchSize  int
-	InitialInterval   time.Duration
-	MaxBufferSize     int
+	InitialBatchSize int
+	InitialInterval  time.Duration
+	MaxBufferSize    int
+	//kafka 내부 채널의 크기임
 	DirectChannelSize int
 	MaxBatchSize      int
 	MaxInterval       time.Duration
@@ -331,9 +332,6 @@ func (f *TxStreamFeeder) streamDate(date string, positionTicker *time.Ticker) er
 			return nil
 		}
 
-		log.Printf("Got %d transactions for date %s, index %d",
-			len(transactions), date, f.currentPosition.Index)
-
 		// Send transactions to Kafka with retry
 		if err := f.sendTransactionsWithRetry(transactions); err != nil {
 			return fmt.Errorf("failed to send transactions: %w", err)
@@ -342,8 +340,6 @@ func (f *TxStreamFeeder) streamDate(date string, positionTicker *time.Ticker) er
 		// Update position (semi-open interval: next index to fetch)
 		f.currentPosition.Index += int64(len(transactions))
 
-		log.Printf("Successfully sent %d transactions, updated position: %s",
-			len(transactions), f.currentPosition.String())
 	}
 }
 

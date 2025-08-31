@@ -17,6 +17,7 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
 	ropeapp "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/app"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 )
 
@@ -41,6 +42,7 @@ type CommonTriplet interface {
 	//근데 이거 고치려면 또 리팩토링 해야함. 또!!!
 	//그건 나중에 하자고.
 	GetRopeDBStats() map[string]any
+	GetMyTxBus() *eventbus.EventBus[*shareddomain.MarkedTransaction]
 	//TODO 이딴건 당연히 금지임. 추후 로프DB관련 인터페이스 싹 제거하기
 	// 리소스 관리
 	io.Closer
@@ -138,10 +140,10 @@ func (a *SimpleTriplet) Start(ctx context.Context) error {
 	fmt.Printf("bus@pool   = %p\n", a.infra.WorkerPool.JobChan)
 
 	// Consumer 시작 (배치 모드 or 단건 모드)
-	if a.batchMode && a.infra.BatchConsumer != nil {
+	if a.batchMode && a.infra.TxBus != nil {
 		// 배치 모드: 배치 Consumer 시작
 		a.wg.Add(1)
-		go a.batchConsumerWorker(ctx)
+		go a.ComsumeTransaction(ctx)
 		log.Printf("🚀 Batch consumer started")
 	} else {
 		log.Printf("단건 컨슈머는 걍 지웠음.")
@@ -173,41 +175,25 @@ func (a *SimpleTriplet) Stop() error {
 }
 
 // ProcessTransaction 트랜잭션 처리 (non-blocking)
-// // TODO 현재 이 부분에서 스레드 간 성능 저하 발생함. 스레드 1개나 16개나 동일 성능 보임
-// // TODO TxJob의 Do()가 서로 경합 발생. 패닉은 아니지만, 암묵적 성능 저하 발생중
-// // TODO 문제에 대한 진단 및 추후 개선 방안은 /debug의 upgrade_solution.md에 자세히 적어놨음.
-// func (a *SimpleTriplet) ProcessTransaction(tx *shareddomain.MarkedTransaction) error {
-// 	job := NewTransactionJob(tx, a, 0) // workerID는 워커풀에서 자동 관리
-// 	// 퍼블리시하는 쪽(Analyzer) 직전
-// 	fmt.Printf("bus@analyz = %p\n", a.infra.TxJobBus)
-// 	if err := a.infra.TxJobBus.Publish(job); err != nil { // <- 블로킹
-// 		// 종료(stopping/closed) 중엔 에러가 날 수 있으니 드롭 카운트만 올림
-// 		atomic.AddInt64(&a.stats.DroppedTxs, 1)
-// 		return fmt.Errorf("enqueue failed: %v", err)
-// 	}
-// 	return nil
-// }
+// TODO 현재 이 부분에서 스레드 간 성능 저하 발생함. 스레드 1개나 16개나 동일 성능 보임
+// TODO TxJob의 Do()가 서로 경합 발생. 패닉은 아니지만, 암묵적 성능 저하 발생중
+// TODO 문제에 대한 진단 및 추후 개선 방안은 /debug의 upgrade_solution.md에 자세히 적어놨음.
+func (a *SimpleTriplet) ProcessTransaction(tx *shareddomain.MarkedTransaction) error {
+	job := NewTransactionJob(tx, a, 0) // workerID는 워커풀에서 자동 관리
+	// 퍼블리시하는 쪽(Analyzer) 직전
+	if err := a.infra.TxJobBus.Publish(job); err != nil { // <- 블로킹
+		// 종료(stopping/closed) 중엔 에러가 날 수 있으니 드롭 카운트만 올림
+		atomic.AddInt64(&a.stats.DroppedTxs, 1)
 
-// // ProcessTransactions 배치 트랜잭션 처리
-// func (a *SimpleTriplet) ProcessTransactions(txs []*shareddomain.MarkedTransaction) error {
-// 	fmt.Printf("bus@analyz = %p\n", a.infra.TxJobBus)
-// 	for _, tx := range txs {
-// 		if err := a.ProcessTransaction(tx); err != nil {
-// 			atomic.AddInt64(&a.stats.DroppedTxs, 1)
-// 			continue // 개별 실패는 무시하고 계속 처리
-// 		}
-// 	}
-// 	return nil
-// }
+		return fmt.Errorf("ProcessTransaction: enqueue failed: %v", err)
+	}
+	return nil
+}
 
-// transactionWorker는 이제 워커풀에 의해 대체됨 - 하위 호환성을 위해 주석 처리
-// 실제 작업은 TransactionJob.Do()에서 처리됨
-// batchConsumerWorker 배치 Consumer 워커 (고성능 배치 처리)
-func (a *SimpleTriplet) batchConsumerWorker(ctx context.Context) {
+func (a *SimpleTriplet) ComsumeTransaction(ctx context.Context) {
 	defer a.wg.Done()
-
-	log.Printf("🚀 Batch consumer worker started")
-
+	in := a.infra.TxBus.Dequeue()
+	log.Printf("🚀 이벤트버스 시작")
 	for {
 		select {
 		case <-ctx.Done():
@@ -216,29 +202,64 @@ func (a *SimpleTriplet) batchConsumerWorker(ctx context.Context) {
 		case <-a.stopChannel:
 			log.Printf("🛑 Batch consumer worker stopping (signal)")
 			return
-		default:
-			// 배치 메시지 읽기 (블로킹)
-			messages, err := a.infra.BatchConsumer.ReadMessagesBatch(ctx)
-			if err != nil {
-				// Context cancellation은 정상적인 종료
-				if ctx.Err() != nil {
-					return
-				}
-				// 기타 에러는 로깅하고 계속
-				log.Printf("⚠️ Batch read error: %v", err)
-				time.Sleep(100 * time.Millisecond) // 에러 시 짧은 대기
+		case msg, ok := <-in: // ← 채널 수신을 select로
+			if !ok {
+				log.Printf("🛑 TxBus closed; consumer exit")
+				return
+			}
+			if msg == nil {
 				continue
 			}
-
-			// 배치가 비어있으면 스킵
-			if len(messages) == 0 {
-				continue
+			if err := a.ProcessTransaction(msg); err != nil {
+				// 워커풀 포화시 약간의 backoff
+				time.Sleep(10 * time.Millisecond)
 			}
-
-			// 배치 처리 (진정한 배칭!)
-			a.processTransactionParrell(messages)
 		}
 	}
+}
+
+// transactionWorker는 이제 워커풀에 의해 대체됨 - 하위 호환성을 위해 주석 처리
+// 실제 작업은 TransactionJob.Do()에서 처리됨
+// // batchConsumerWorker 배치 Consumer 워커 (고성능 배치 처리)
+// func (a *SimpleTriplet) batchConsumerWorker(ctx context.Context) {
+// 	defer a.wg.Done()
+
+// 	log.Printf("🚀 Batch consumer worker started")
+
+// 	for {
+// 		select {
+// 		case <-ctx.Done():
+// 			log.Printf("🛑 Batch consumer worker stopping (context)")
+// 			return
+// 		case <-a.stopChannel:
+// 			log.Printf("🛑 Batch consumer worker stopping (signal)")
+// 			return
+// 		default:
+// 			// 배치 메시지 읽기 (블로킹)
+// 			messages, err := a.infra.TxBus.ReadMessagesBatch(ctx)
+// 			if err != nil {
+// 				// Context cancellation은 정상적인 종료
+// 				if ctx.Err() != nil {
+// 					return
+// 				}
+// 				// 기타 에러는 로깅하고 계속
+// 				log.Printf("⚠️ Batch read error: %v", err)
+// 				time.Sleep(100 * time.Millisecond) // 에러 시 짧은 대기
+// 				continue
+// 			}
+
+// 			// 배치가 비어있으면 스킵
+// 			if len(messages) == 0 {
+// 				continue
+// 			}
+
+//				// 배치 처리 (진정한 배칭!)
+//				a.processTransactionParrell(messages)
+//			}
+//		}
+//	}
+func (a *SimpleTriplet) GetMyTxBus() *eventbus.EventBus[*shareddomain.MarkedTransaction] {
+	return a.infra.TxBus
 }
 
 // processTransactionParrell 배치 메시지 처리 (고효율)
@@ -427,6 +448,12 @@ func (a *SimpleTriplet) GetChannelStatus() (int, int) {
 // shutdown 우아한 종료
 func (a *SimpleTriplet) shutdown() error {
 	log.Printf("🔄 Shutting down: %s", a.config.Name)
+	// 1) 내부 stop 신호
+	_ = a.Stop()
+	// 2) 입력 채널 닫아 소비 고루틴 확실히 깨우기
+	if a.infra.TxBus != nil {
+		a.infra.TxBus.Close() // idempotent 가정
+	}
 
 	// 워커풀 종료
 	if a.infra.WorkerPool != nil {
@@ -545,10 +572,8 @@ func (a *SimpleTriplet) GetDualManager() *DualManager {
 func (a *SimpleTriplet) Close() error {
 
 	// Batch Consumer 정리
-	if a.infra.BatchConsumer != nil {
-		if err := a.infra.BatchConsumer.Close(); err != nil {
-			log.Printf("⚠️ Error closing batch consumer: %v", err)
-		}
+	if a.infra.TxBus != nil {
+		a.infra.TxBus.Close()
 	}
 
 	return a.Stop()

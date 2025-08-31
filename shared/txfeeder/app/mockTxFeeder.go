@@ -698,7 +698,7 @@ func (g *TxFeeder) createMarkedTransaction(from, to sharedDomain.Address) shared
 		BlockTime: chainTime,
 		TxID:      txID,
 		TxSyntax:  [2]sharedDomain.ContractBoolMark{sharedDomain.EOAMark, sharedDomain.EOAMark}, // Assume EOA-to-EOA for simplicity
-		Nonce:     uint64(g.state.GeneratedCount),
+		Nonce:     sharedDomain.NewNonce(uint64(g.state.GeneratedCount)),
 		From:      from,
 		To:        to,
 	}

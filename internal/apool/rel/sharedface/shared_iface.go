@@ -3,6 +3,9 @@ package sharedface
 import (
 	"context"
 	"io"
+
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
 )
 
 type TripletEventMsg any
@@ -14,7 +17,7 @@ type TripletPort interface {
 	// 트랜잭션 처리
 	//ProcessTransaction(tx *domain.MarkedTransaction) error
 	//ProcessTransactions(txs []*domain.MarkedTransaction) error
-
+	GetMyTxBus() *eventbus.EventBus[*domain.MarkedTransaction]
 	// 상태 조회
 	GetStatistics() map[string]any
 	IsHealthy() bool

@@ -5,6 +5,7 @@ import (
 
 	chaintimer "github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/shopspring/decimal"
 )
 
 // 이벤트를 승인한 측
@@ -143,6 +144,7 @@ type TraitRef struct {
 type RopeMark struct {
 	ID           RopeID
 	TrapVertexes []TrapVertex
+	ValueOrNull  decimal.Decimal
 	Trait        TraitCode
 	Size         uint32 // Members 길이(정합성 위해 함께 유지)
 	Members      []shareddomain.Address
@@ -156,9 +158,9 @@ type TraitMark struct {
 	//*추가됨. 권한 코드
 	AuthorCodes []AuthorCode
 	LastTx      shareddomain.TxId
-
-	ID    TraitID
-	Trait TraitCode
+	ValueOrNull decimal.Decimal
+	ID          TraitID
+	Trait       TraitCode
 
 	AddressA shareddomain.Address
 	RuleA    RuleCode
@@ -184,42 +186,44 @@ type Rope struct {
 
 // 한 Tx/이벤트로 들어오는 도메인 입력(버텍스 간 Trait 관계 이벤트)
 type TraitEvent struct {
-	Author AuthorCode
-	TxID   shareddomain.TxId
-
-	Trait    TraitCode
-	AddressA shareddomain.Address
-	RuleA    RuleCode
-	AddressB shareddomain.Address
-	RuleB    RuleCode
-	Time     chaintimer.ChainTime
-	Score    int32 // 이번 이벤트가 의미하는 점수 증분
+	Author      AuthorCode
+	TxID        shareddomain.TxId
+	ValueOrNull decimal.Decimal
+	Trait       TraitCode
+	AddressA    shareddomain.Address
+	RuleA       RuleCode
+	AddressB    shareddomain.Address
+	RuleB       RuleCode
+	Time        chaintimer.ChainTime
+	Score       int32 // 이번 이벤트가 의미하는 점수 증분
 }
 
 func NewTraitEvent(author AuthorCode, trait TraitCode, ar1, ar2 AddressAndRule, txScala TxScala) TraitEvent {
 	if ar2.Address.LessThan(ar1.Address) {
 		return TraitEvent{
-			Author:   author,
-			Trait:    trait,
-			AddressA: ar2.Address,
-			RuleA:    ar2.Rule,
-			AddressB: ar1.Address,
-			RuleB:    ar1.Rule,
-			TxID:     txScala.TxId,
-			Time:     txScala.Time,
-			Score:    txScala.ScoreInc,
+			Author:      author,
+			Trait:       trait,
+			AddressA:    ar2.Address,
+			RuleA:       ar2.Rule,
+			AddressB:    ar1.Address,
+			RuleB:       ar1.Rule,
+			TxID:        txScala.TxId,
+			Time:        txScala.Time,
+			Score:       txScala.ScoreInc,
+			ValueOrNull: txScala.ValueOrNull,
 		}
 	}
 	return TraitEvent{
-		Author:   author,
-		Trait:    trait,
-		AddressA: ar1.Address,
-		RuleA:    ar1.Rule,
-		AddressB: ar2.Address,
-		RuleB:    ar2.Rule,
-		TxID:     txScala.TxId,
-		Time:     txScala.Time,
-		Score:    txScala.ScoreInc,
+		Author:      author,
+		Trait:       trait,
+		AddressA:    ar1.Address,
+		RuleA:       ar1.Rule,
+		AddressB:    ar2.Address,
+		RuleB:       ar2.Rule,
+		TxID:        txScala.TxId,
+		Time:        txScala.Time,
+		Score:       txScala.ScoreInc,
+		ValueOrNull: txScala.ValueOrNull,
 	}
 
 }
@@ -230,9 +234,10 @@ type AddressAndRule struct {
 }
 
 type TxScala struct {
-	TxId     shareddomain.TxId
-	Time     chaintimer.ChainTime
-	ScoreInc int32
+	TxId        shareddomain.TxId
+	Time        chaintimer.ChainTime
+	ValueOrNull decimal.Decimal
+	ScoreInc    int32
 }
 
 // 내부 비동기 큐용: TraitMark Upsert
@@ -247,6 +252,7 @@ type TraitMarkUpsert struct {
 	RuleB       RuleCode
 	ScoreDelta  int32
 	VolumeDelta uint32
+	ValueOrNull decimal.Decimal
 	LastSeen    chaintimer.ChainTime
 }
 
@@ -259,7 +265,7 @@ type RopeMarkUpsert struct {
 	SizeDelta    int32                  // 보통 len(AddMembers)와 동일하게 씀
 	VolumeDelta  uint32                 // 트랜잭션 볼륨 증분
 	LastSeen     chaintimer.ChainTime
-
+	ValueOrNull  decimal.Decimal
 	// (옵션) 병합: 나열된 Source Rope들을 대상 RopeID로 흡수
 	MergeFrom []RopeID
 }

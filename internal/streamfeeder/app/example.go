@@ -18,7 +18,7 @@ func ExampleUsage() {
 
 		// Kafka configuration
 		KafkaBrokers: []string{"localhost:9092"},
-		Topic:        "production-tx", // Uses kafka.ProductionTxTopic
+		Topic:        "prod-tx", // Uses kafka.ProductionTxTopic
 
 		// Backpressure configuration
 		InitialBatchSize:  100,

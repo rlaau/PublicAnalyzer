@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -15,6 +16,8 @@ import (
 	relapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
 	relapi "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/api"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/sharedface"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	kafka "github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 
 	nodapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod"
 	coapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/app"
@@ -36,6 +39,32 @@ type IsolatedPathConfig struct {
 	PendingDBPath   string
 }
 
+func loadKafkaBatchConsumer(mode mode.ProcessingMode, name string) *kafka.KafkaBatchConsumer[*domain.MarkedTransaction] {
+	// Transaction Consumer 초기화 - 모드에 따라 다른 토픽 사용
+	kafkaBrokers := []string{kafka.DefaultKafkaPort}
+	isTestMode := mode.IsTest()
+	groupID := fmt.Sprintf("triplet-analyzer-%s", strings.ReplaceAll(name, " ", "-"))
+	// 배치 모드 Consumer 초기화 (고성능)
+	batchSize := 100                      // 100개씩 배치 처리
+	batchTimeout := 20 * time.Millisecond // 20ms 타임아웃
+	var topic string
+	if isTestMode {
+		topic = kafka.TestFedTxTopic // 테스트용 토픽
+	} else {
+		topic = kafka.ProductionTxTopic // 프로덕션용 토픽
+	}
+
+	consumerConfig := kafka.KafkaBatchConfig{
+		Brokers:      kafkaBrokers,
+		Topic:        topic,
+		GroupID:      groupID,
+		BatchSize:    batchSize,
+		BatchTimeout: batchTimeout,
+	}
+	batchConsumer := kafka.NewKafkaBatchConsumer[*domain.MarkedTransaction](consumerConfig)
+	log.Printf("📡 Batch consumer initialized (test mode: %v, batch size: %d)", isTestMode, batchSize)
+	return batchConsumer
+}
 func main() {
 	//고립 환경을 위한 경로 생성
 	//모든 테스팅 상태는 루트/testing_storage/feed_ingest_ee_test디렉터리 내에서 생성됨
@@ -99,6 +128,7 @@ func main() {
 	apool.RegisterPorts(nodPool, nil)
 	//* 여기서 일단은 relPool이 apool로 nodPool접근
 	relPool := relapp.ComposeRelPool(mode.TestingModeProcess, "feed_ingest_ee_test", apool)
+	
 	//* apool에 다시 강제로 등록
 	apool.RegisterPorts(nodPool, relPool)
 	monitoringServer := server.NewServer(":8080")
@@ -109,6 +139,43 @@ func main() {
 	} else {
 		fmt.Printf("   ✅ Relation Pool API registered successfully\n")
 	}
+	txBridge := loadKafkaBatchConsumer(mode.TestingModeProcess, "ingest-and-triplet-test")
+	tripletBus := relPool.GetTripletPort().GetMyTxBus()
+	go func(ctx context.Context) {
+		log.Printf("🚀 Batch consumer worker started")
+		for {
+			select {
+			case <-ctx.Done():
+				log.Printf("🛑 Batch consumer worker stopping (context)")
+				return
+			default:
+				messages, err := txBridge.ReadMessagesBatch(ctx)
+				if err != nil {
+					if ctx.Err() != nil {
+						return
+					}
+					log.Printf("⚠️ Batch read error: %v", err)
+					time.Sleep(100 * time.Millisecond) // 에러 시 짧은 대기
+					continue
+				}
+				if len(messages) == 0 {
+					continue
+				}
+				batchSize := len(messages)
+				transactions := make([]*domain.MarkedTransaction, 0, batchSize)
+
+				for _, msg := range messages {
+					if msg.Value != nil {
+						transactions = append(transactions, msg.Value)
+					} else {
+						fmt.Printf("processTransactionParrell 에러:메시지를 받지 않음")
+					}
+				}
+				tripletBus.PublishBatch(transactions)
+			}
+		}
+
+	}(ctx)
 
 	fmt.Println("\n4️⃣ Running simplified pipeline test with API server...")
 	//*세팅 끝.본격적으로 시작하는 파트
@@ -156,6 +223,21 @@ func main() {
 		fmt.Printf("   🛑 Shutdown signal received...\n")
 	}
 
+	cancel() // 1) 전체 파이프라인 중지 신호
+	// 6. 정리 (삭제는 하지 않음)
+	transactionFeeder.Stop()
+	// 3) Kafka 배치 컨슈머 명시 종료(반드시!)
+	if txBridge != nil {
+		txBridge.Close()
+	}
+
+	// Triplet 종료 대기(이미 위 select에서 받아오지 못했을 수도 있으니 짧게 추가 대기)
+	select {
+	case <-tripletDone:
+	case <-time.After(5 * time.Second):
+		log.Printf("⏱️ Triplet stop timeout; continue shutdown")
+	}
+
 	//5. 서버 정리
 	shutdownCtx, shutdownServerCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	fmt.Printf("   🛑 Shutting down API server...\n")
@@ -164,8 +246,6 @@ func main() {
 	} else {
 		fmt.Printf("   ✅ API server shutdown completed\n")
 	}
-	// 6. 정리 (삭제는 하지 않음)
-	transactionFeeder.Stop()
 
 	//*종료 후 결과 보고 - TxDefineLoader용
 	printDeterministicResults(transactionFeeder, relPool.GetTripletPort())
@@ -184,7 +264,9 @@ func main() {
 		if monitoringServer != nil {
 			shutdownServerCancel()
 		}
+
 	}()
+	fmt.Printf("여기도 도달")
 }
 
 func printServerInfo() {

@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
+	"strings"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/shopspring/decimal"
@@ -22,11 +23,11 @@ func (n Nonce) Uint64() (uint64, bool) { return n.Value, n.Valid }
 type RawTransaction struct {
 	TxId        string          // 0x + 64 hex
 	Nonce       Nonce           // optional, for CREATE 추적
+	BlockTime   string          // RFC3339 string
 	From        string          // 0x + 40 hex
 	To          string          // 0x + 40 hex or ""
 	RCAddr      string          // 0x + 40 hex or "" (receipt_contract_address)
 	ValueOrNull decimal.Decimal // wei 값 (integer)
-	BlockTime   string          // RFC3339 string
 }
 
 func (r RawTransaction) String() string {
@@ -43,12 +44,13 @@ func (r RawTransaction) String() string {
 
 // 트랜잭션 구조체
 type MarkedTransaction struct {
-	BlockTime chaintimer.ChainTime
-	TxID      TxId
-	TxSyntax  [2]ContractBoolMark //해당 tx가 C2C, C2C, C2D, D2C, D2D 중 어떤 형태인지 표기
-	Nonce     uint64
-	From      Address
-	To        Address
+	TxID        TxId
+	Nonce       Nonce
+	BlockTime   chaintimer.ChainTime
+	From        Address
+	To          Address
+	TxSyntax    [2]ContractBoolMark //해당 tx가 C2C, C2C, C2D, D2C, D2D 중 어떤 형태인지 표기
+	ValueOrNull decimal.Decimal
 }
 
 type TxId [32]byte
@@ -63,6 +65,25 @@ const (
 // ✅ 문자열 변환 (0x + hex encoding)
 func (t TxId) String() string {
 	return "0x" + hex.EncodeToString(t[:])
+}
+
+// ParseTxId: "0x..." 형태의 문자열을 TxId로 변환
+func ParseTxId(s string) (TxId, error) {
+	var id TxId
+	// "0x" 접두사 제거
+	if strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X") {
+		s = s[2:]
+	}
+	// hex 디코딩
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		return id, fmt.Errorf("invalid txid hex string: %w", err)
+	}
+	if len(b) != len(id) {
+		return id, fmt.Errorf("invalid txid length: got %d, want %d", len(b), len(id))
+	}
+	copy(id[:], b)
+	return id, nil
 }
 
 // ✅ BigInt 변환 (MongoDB & BigQuery 호환)

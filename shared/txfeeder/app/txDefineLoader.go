@@ -550,7 +550,7 @@ func (loader *TxDefineLoader) createMarkedTransaction(from, to sharedDomain.Addr
 		BlockTime: chainTime,
 		TxID:      txID,
 		TxSyntax:  [2]sharedDomain.ContractBoolMark{sharedDomain.EOAMark, sharedDomain.EOAMark},
-		Nonce:     uint64(seed),
+		Nonce:     sharedDomain.NewNonce(uint64(seed)),
 		From:      from,
 		To:        to,
 	}

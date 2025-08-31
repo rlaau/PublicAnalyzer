@@ -14,6 +14,7 @@ import (
 	"github.com/dgraph-io/badger/v4"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/shopspring/decimal"
 )
 
 type PendingRelationRepo interface {
@@ -32,6 +33,7 @@ type FromScala struct {
 	LastTxId    domain.TxId          `json:"last_tx_id"`
 	LastTime    chaintimer.ChainTime `json:"last_time"`
 	Volume      int32                `json:"volum"`
+	ValueOrNull decimal.Decimal      `json:"value,omitempty"` // ← 0이면 "0"로 저장됨
 }
 
 type BadgerPendingRelationRepo struct {
@@ -327,10 +329,14 @@ func (r *BadgerPendingRelationRepo) AddToPendingRelations(toAddr domain.Address,
 			found := false
 			for i := range list {
 				if list[i].FromAddress == from.FromAddress {
+
 					list[i].LastTxId = from.LastTxId
 					list[i].LastTime = from.LastTime
 					if list[i].Volume < math.MaxInt32 {
 						list[i].Volume++
+					}
+					if !from.ValueOrNull.IsZero() {
+						list[i].ValueOrNull = list[i].ValueOrNull.Add(from.ValueOrNull)
 					}
 					found = true
 					break
@@ -362,6 +368,7 @@ func (r *BadgerPendingRelationRepo) AddToPendingRelations(toAddr domain.Address,
 			if from.Volume <= 0 {
 				from.Volume = 1
 			}
+
 			list = []FromScala{from}
 			b, e := json.Marshal(list)
 			if e != nil {

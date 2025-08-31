@@ -18,6 +18,7 @@ import (
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
+	"github.com/shopspring/decimal"
 )
 
 // ------------------------------------------------------------
@@ -358,6 +359,7 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 		RuleB:       ev.RuleB,
 		ScoreDelta:  ev.Score,
 		VolumeDelta: 1,
+		ValueOrNull: ev.ValueOrNull, // ✅ 새로 추가 (없으면 decimal.Zero 사용)
 		LastSeen:    ev.Time,
 	})
 
@@ -376,6 +378,7 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 			AddMembers:  []shareddomain.Address{a1, a2},
 			SizeDelta:   2,
 			VolumeDelta: 1,
+			ValueOrNull: ev.ValueOrNull,
 			LastSeen:    ev.Time,
 		})
 	case isExsit1 && !isExsit2:
@@ -386,6 +389,8 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 			RopeID:      id,
 			Trait:       ev.Trait,
 			AddMembers:  []shareddomain.Address{a2},
+			ValueOrNull: ev.ValueOrNull,
+
 			SizeDelta:   1,
 			VolumeDelta: 1,
 			LastSeen:    ev.Time,
@@ -400,7 +405,9 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 			AddMembers:  []shareddomain.Address{a1},
 			SizeDelta:   1,
 			VolumeDelta: 1,
-			LastSeen:    ev.Time,
+			ValueOrNull: ev.ValueOrNull,
+
+			LastSeen: ev.Time,
 		})
 	default:
 		// 둘 다 있음 → 같은 로프면 볼륨만, 다르면 병합 지시
@@ -412,6 +419,7 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 				Trait:       ev.Trait,
 				VolumeDelta: 1,
 				LastSeen:    ev.Time,
+				ValueOrNull: ev.ValueOrNull,
 			})
 		} else {
 			// 크기 비교 위해 로프마크 읽기(없으면 편의상 id1을 기준)
@@ -436,6 +444,8 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 				Trait:       ev.Trait,
 				AddMembers:  src.Members,
 				SizeDelta:   int32(len(src.Members)),
+				ValueOrNull: ev.ValueOrNull.Add(src.ValueOrNull),
+
 				VolumeDelta: uint32(src.Volume) + 1, //거래 볼륨이므로. 상대+자신+이번 거래
 				LastSeen:    ev.Time,
 				MergeFrom:   []domain.RopeID{source},
@@ -651,8 +661,13 @@ func (b *BadgerRopeDB) applyTraitUpsert(op domain.TraitMarkUpsert) {
 				RuleB:       op.RuleB,
 				Score:       0,
 				Volume:      0,
+				ValueOrNull: decimal.Zero, // ✅ 새로 추가: 기본 0으로
 				LastSeen:    op.LastSeen,
 			}
+		}
+		// 값 누적 (null이면 Zero가 와서 변화 없음)
+		if !op.ValueOrNull.IsZero() {
+			tm.ValueOrNull = tm.ValueOrNull.Add(op.ValueOrNull) // ✅ 누적
 		}
 		tm.Score += op.ScoreDelta
 		tm.Volume += op.VolumeDelta
@@ -682,17 +697,22 @@ func (b *BadgerRopeDB) applyRopeUpsert(op domain.RopeMarkUpsert) {
 		}
 		if rm.ID == 0 {
 			rm = domain.RopeMark{
-				ID:       op.RopeID,
-				Trait:    op.Trait,
-				Size:     0,
-				Members:  nil,
-				Volume:   0,
-				LastSeen: op.LastSeen,
+				ID:          op.RopeID,
+				Trait:       op.Trait,
+				Size:        0,
+				Members:     nil,
+				Volume:      0,
+				LastSeen:    op.LastSeen,
+				ValueOrNull: decimal.Zero,
 			}
 		}
 		if len(rm.Members) >= maxRopeSize {
 			fmt.Printf("도메인 특수 감지: %d번 로프의 멤버가 %d개를 초과하려 함.\nDB로 1000개 이상의 증폭은 막음", rm.ID, maxRopeSize)
 			return nil
+		}
+		// 값 누적 (null이면 Zero가 와서 변화 없음)
+		if !op.ValueOrNull.IsZero() {
+			rm.ValueOrNull = rm.ValueOrNull.Add(op.ValueOrNull) // ✅ 누적
 		}
 		if len(op.AddMembers) > 0 {
 			rm.Members = dedupAppend(rm.Members, op.AddMembers)
