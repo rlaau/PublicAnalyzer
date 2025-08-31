@@ -6,30 +6,47 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/sharedface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
 	relapi "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/api"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/streamfeeder/bus"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring/tools"
 )
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	startTime, _ := time.Parse("2006-01-01", "2023-09-01")
-	endTime, _ := time.Parse("2006-01-01", "2023-12-31")
-	streamFeeder, bp, err := GetStreamFeeder()
+	// 1) 올바른 레이아웃 사용 + 에러 체크
+	startTime, err := time.Parse("2006-01-02", "2023-09-01")
 	if err != nil {
-		panic("스트림 피더 생성 중 에러")
+		log.Fatalf("startTime parse: %v", err)
 	}
+	endTime, err := time.Parse("2006-01-02", "2023-12-31")
+	if err != nil {
+		log.Fatalf("endTime parse: %v", err)
+	}
+	sb, err := bus.NewStreamBus(bus.StreamBusConfig{
+		RootPathFunc:      func() string { return computation.FindProjectRootPath() },
+		BusRelPath:        "streambus/rawtx.jsonl", // 원하면 경로 변경
+		BufferSize:        10_000,                  // 버퍼(큐) 크기
+		PositionDataDir:   computation.FindProductionStorageRootPath() + "/streambus_pos",
+		SaveInterval:      time.Second,
+		SortedStoragePath: computation.FindProjectRootPath() + "/stream_storage/sorted",
+	})
+
+	if err != nil {
+		log.Fatalf("StreamBus create error: %v", err)
+	}
+
 	relPool, err := GetRelPool()
 	if err != nil {
 		panic("relpool생성 중 에러")
@@ -37,12 +54,20 @@ func main() {
 
 	monitoringServer := server.NewServer(":8080")
 	RegisterModule(monitoringServer, relPool)
-	rawTxBridge := GetRawTxConsumer()
+
 	tripletBus := relPool.GetTripletPort().GetMyTxBus()
-	fmt.Printf("4️⃣ Running 카프카 & 이벤트버스...\n")
-	go LoadAndFilterAndMarkAndIngestTransaction(rawTxBridge,
-		tripletBus,
-		relPool.GetApooPort().GetNodPort().GetCoPort(), bp, ctx)
+
+	// WaitGroup for tracking goroutines
+	var wg sync.WaitGroup
+	
+	fmt.Printf("4️⃣ Running & 이벤트버스...\n")
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		LoadAndFilterAndMarkAndIngestTransaction(sb.Bus(),
+			tripletBus,
+			relPool.GetApooPort().GetNodPort().GetCoPort(), ctx)
+	}()
 	fmt.Printf("4️⃣ Running 서버...\n")
 	go func() {
 		fmt.Printf("   🌐 Starting API server on :8080\n")
@@ -50,14 +75,18 @@ func main() {
 			fmt.Printf("   ⚠️ API server stopped: %v\n", err)
 		}
 	}()
-	if err := streamFeeder.Start(); err != nil {
-		log.Fatalf("Failed to start TxStreamFeeder: %v\n", err)
-	}
 	printServerInfo()
-	fmt.Printf("stream feeder 스타트: %s에서 %s까지 카프카 스트리밍 with 백프레셔\n.", startTime.String(), endTime.String())
+	if err := sb.Start(); err != nil {
+		log.Fatalf("Failed to start StreamBus: %v\n", err)
+	}
+	fmt.Printf("stream bus 스타트: %s에서 %s까지 이벤트버스 스트리밍\n.", startTime, endTime)
+	wg.Add(1)
 	go func() {
-		// Example 1: Stream between specific dates
-		if err := streamFeeder.StreamBetween(startTime.String(), endTime.String()); err != nil {
+		defer wg.Done()
+		if err := sb.StreamBetween(
+			startTime.Format("2006-01-02"),
+			endTime.Format("2006-01-02"),
+		); err != nil {
 			log.Printf("Stream error: %v", err)
 		}
 	}()
@@ -83,82 +112,141 @@ func main() {
 	case <-sigChan:
 		fmt.Printf("   🛑 Shutdown signal received...\n")
 	}
-
-	cancel() // 1) 전체 파이프라인 중지 신호
-	// 6. 정리 (삭제는 하지 않음)
-	streamFeeder.Stop()
-	// 3) Kafka 배치 컨슈머 명시 종료(반드시!)
-	if rawTxBridge != nil {
-		rawTxBridge.Close()
+	
+	// Shutdown sequence
+	log.Printf("   🛑 Starting shutdown sequence...")
+	
+	// 1) Cancel context to signal all goroutines immediately
+	cancel()
+	
+	// 2) Stop StreamBus first to prevent new data
+	log.Printf("   🛑 Stopping StreamBus...")
+	if err := sb.Stop(); err != nil {
+		log.Printf("   ⚠️ StreamBus stop error: %v", err)
 	}
-
-	// Triplet 종료 대기(이미 위 select에서 받아오지 못했을 수도 있으니 짧게 추가 대기)
+	
+	// 3) Force stop Triplet with timeout
+	log.Printf("   🛑 Stopping Triplet...")
+	if err := relPool.GetTripletPort().Stop(); err != nil {
+		log.Printf("   ⚠️ Triplet stop error: %v", err)
+	}
+	
+	// 4) Wait for Triplet completion with shorter timeout
 	select {
-	case <-tripletDone:
-	case <-time.After(5 * time.Second):
-		log.Printf("⏱️ Triplet stop timeout; continue shutdown")
-	}
-
-	//5. 서버 정리
-	shutdownCtx, _ := context.WithTimeout(context.Background(), 5*time.Second)
-	fmt.Printf("   🛑 Shutting down API server...\n")
-	if err := monitoringServer.Shutdown(shutdownCtx); err != nil {
-		fmt.Printf("   ⚠️ Server shutdown error: %v\n", err)
-	} else {
-		fmt.Printf("   ✅ API server shutdown completed\n")
-	}
-	defer func() {
-
-		if relPool.GetTripletPort() != nil {
-			relPool.GetTripletPort().Close()
+	case err := <-tripletDone:
+		if err != nil {
+			log.Printf("   ⚠️ Triplet completed with error: %v", err)
+		} else {
+			log.Printf("   ✅ Triplet completed successfully")
 		}
-
+	case <-time.After(3 * time.Second):
+		log.Printf("   ⏱️ Triplet stop timeout - forcing shutdown")
+	}
+	
+	// 5) Wait for all goroutines with shorter timeout
+	log.Printf("   ⏳ Waiting for all goroutines to complete...")
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	
+	select {
+	case <-done:
+		log.Printf("   ✅ All goroutines stopped")
+	case <-time.After(5 * time.Second):
+		log.Printf("   ⚠️ Goroutine shutdown timeout - forcing exit")
+	}
+	
+	// 6) Shutdown API server
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer shutdownCancel()
+	
+	log.Printf("   🛑 Shutting down API server...")
+	if err := monitoringServer.Shutdown(shutdownCtx); err != nil {
+		log.Printf("   ⚠️ Server shutdown error: %v", err)
+	} else {
+		log.Printf("   ✅ API server shutdown completed")
+	}
+	
+	// 7) Final cleanup - force close all resources
+	log.Printf("   🛑 Final resource cleanup...")
+	if relPool.GetTripletPort() != nil {
+		relPool.GetTripletPort().Close()
+		log.Printf("   ✅ Triplet port closed")
+	}
+	
+	log.Printf("   ✅ Shutdown sequence completed")
+	
+	// Final safety: force exit after total timeout
+	go func() {
+		time.Sleep(15 * time.Second)
+		log.Printf("   ⚠️ EMERGENCY: Force exit after 15s timeout")
+		os.Exit(1)
 	}()
 }
 
-func LoadAndFilterAndMarkAndIngestTransaction(txBridge *kafka.KafkaBatchConsumer[*domain.RawTransaction],
+func LoadAndFilterAndMarkAndIngestTransaction(
+	txBridge *eventbus.EventBus[domain.RawTransaction],
 	tripletBus *eventbus.EventBus[*domain.MarkedTransaction],
-	coPort sharedface.CoPort, bp tools.CountingBackpressure,
-	ctx context.Context) {
+	coPort sharedface.CoPort,
+	ctx context.Context,
+) {
+	count := 0
+	lastPrinted := 0
 
 	log.Printf("🚀 Batch consumer worker started")
+	in := txBridge.Dequeue()
+
+	// Context timeout for graceful shutdown
+	shutdownTimer := time.NewTimer(5 * time.Second)
+	defer shutdownTimer.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("🛑 Batch consumer worker stopping (context)")
-			return
-		default:
-			messages, err := txBridge.ReadMessagesBatch(ctx)
-			if err != nil {
-				if ctx.Err() != nil {
+			log.Printf("🛑 Batch consumer worker stopping (context cancelled)")
+			// Start shutdown timer
+			shutdownTimer.Reset(2 * time.Second)
+			for {
+				select {
+				case msg, ok := <-in:
+					if !ok {
+						log.Printf("🛑 RawTx bus closed during shutdown")
+						return
+					}
+					// Process remaining messages quickly during shutdown
+					if marked := transformAndFilterRawTxs(coPort, &msg); marked != nil {
+						tripletBus.Publish(marked) // Ignore errors during shutdown
+					}
+				case <-shutdownTimer.C:
+					log.Printf("🛑 Consumer shutdown timeout - forcing exit")
 					return
 				}
-				log.Printf("⚠️ Batch read error: %v", err)
-				time.Sleep(100 * time.Millisecond) // 에러 시 짧은 대기
-				continue
 			}
-			if len(messages) == 0 {
-				// 빈 배치가 자주 온다면 과도한 루프를 피하려 소폭 sleep
-				time.Sleep(5 * time.Millisecond)
-				continue
+
+		case msg, ok := <-in:
+			if !ok {
+				// EventBus가 Close되어 채널 닫힘 → 정상 종료
+				log.Printf("🛑 RawTx bus closed; consumer exit")
+				return
 			}
-			batchSize := len(messages)
 
-			// EOA to EOA만 받음
-			transactions := make([]*domain.RawTransaction, 0, batchSize)
-
-			for _, msg := range messages {
-				if msg.Value != nil {
-					transactions = append(transactions, msg.Value)
-				} else {
-					fmt.Printf("processTransactionParrell 에러:메시지를 받지 않음")
+			// 변환/필터링
+			if marked := transformAndFilterRawTxs(coPort, &msg); marked != nil {
+				// Triplet 버스가 꽉 차면 잠깐 대기하거나 드롭 (정책 선택)
+				// 가장 단순: 블록 송신
+				if err := tripletBus.Publish(marked); err != nil {
+					// 보통 Publish는 에러 없게 설계되지만, 만약 에러 타입이 있다면 로깅
+					log.Printf("triplet publish err: %v", err)
 				}
 			}
-			//* 변환과 필터링 거쳐서 eoa-eoa만을 퍼블리시
-			markedTransactions := transformAndFilterRawTxs(coPort, transactions)
-			tripletBus.PublishBatch(markedTransactions)
-			//*소비 자체는 모든 메시지 소비로 처리
-			bp.CountConsumings(len(messages))
+
+			count++
+			if count/1_000_000 > lastPrinted/1_000_000 {
+				log.Printf("📈 processed %d messages", count)
+				lastPrinted = count
+			}
 		}
 	}
 }
@@ -166,31 +254,27 @@ func LoadAndFilterAndMarkAndIngestTransaction(txBridge *kafka.KafkaBatchConsumer
 // * 두 기능을 함
 // * 1) 필터: 오직 eoa to eoa만 받음
 // * 2) 변환. 트랜잭션을 marking함
-func transformAndFilterRawTxs(co sharedface.CoPort, rawTxs []*domain.RawTransaction) []*domain.MarkedTransaction {
-	transactions := make([]*domain.MarkedTransaction, 0, len(rawTxs))
-	for _, tx := range rawTxs {
-		from, _ := domain.ParseAddressFromString(tx.From)
-		to, _ := domain.ParseAddressFromString(tx.To)
-		//eoa-eoa의 거래일 경우
-		//*필터링
-		if !co.CheckIsContract(from) && !co.CheckIsContract(to) {
-			tid, _ := domain.ParseTxId(tx.TxId)
-			//*변환
-			markedTx := &domain.MarkedTransaction{
-				TxID:      tid,
-				Nonce:     tx.Nonce,
-				BlockTime: chaintimer.ParseEthTime(tx.BlockTime),
+func transformAndFilterRawTxs(co sharedface.CoPort, tx *domain.RawTransaction) *domain.MarkedTransaction {
+	from, _ := domain.ParseAddressFromString(tx.From)
+	to, _ := domain.ParseAddressFromString(tx.To)
+	//eoa-eoa의 거래일 경우
+	//*필터링
+	if !co.CheckIsContract(from) && !co.CheckIsContract(to) {
+		tid, _ := domain.ParseTxId(tx.TxId)
+		//*변환
+		markedTx := &domain.MarkedTransaction{
+			TxID:      tid,
+			Nonce:     tx.Nonce,
+			BlockTime: chaintimer.ParseEthTime(tx.BlockTime),
 
-				From:        from,
-				To:          to,
-				TxSyntax:    [2]domain.ContractBoolMark{domain.EOAMark, domain.EOAMark},
-				ValueOrNull: tx.ValueOrNull,
-			}
-			transactions = append(transactions, markedTx)
+			From:        from,
+			To:          to,
+			TxSyntax:    [2]domain.ContractBoolMark{domain.EOAMark, domain.EOAMark},
+			ValueOrNull: tx.ValueOrNull,
 		}
-		continue
+		return markedTx
 	}
-	return transactions
+	return nil
 }
 
 func RegisterModule(monitoringServer *server.Server, relPool *rel.RelationPool) {

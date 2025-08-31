@@ -14,10 +14,10 @@ import (
 )
 
 type SpeedSignal struct {
-	ProducingIntervalSecond int
-	ProducingPerInterval    int
-	Timestamp               time.Time // 신호 생성 시간
-	CurrentSaturation       float64   // 현재 포화도
+	ProducingIntervalMiliSecond int
+	ProducingPerInterval        int
+	Timestamp                   time.Time // 신호 생성 시간
+	CurrentSaturation           float64   // 현재 포화도
 }
 
 // CountingBackpressure 백프레셔 인터페이스
@@ -171,7 +171,7 @@ func LoadKafkaCountingBackpressure(requestedQueueSpec RequestedQueueSpec, seedPr
 		weakIncreaseRate:   1.2,
 		weakDecreaseRate:   0.8,
 		strongDecreaseRate: 0.5,
-		maxBatchRatio:      0.30,
+		maxBatchRatio:      0.50,
 		adjustmentHistory:  make([]float64, 0, 10),
 		running:            false,
 	}
@@ -217,7 +217,7 @@ func (k *KafkaCountingBackpressure) GetNextSignal() SpeedSignal {
 
 	// 상태 업데이트
 	k.signalMu.Lock()
-	k.currentInterval = signal.ProducingIntervalSecond
+	k.currentInterval = signal.ProducingIntervalMiliSecond
 	k.currentBatchSize = signal.ProducingPerInterval
 	k.lastSignalTime = signal.Timestamp
 	//영속할 큐 값 지속적으로 저장
@@ -237,10 +237,10 @@ func (k *KafkaCountingBackpressure) calculateSignal() SpeedSignal {
 
 	if k.queueCapacity == 0 {
 		return SpeedSignal{
-			ProducingIntervalSecond: 1,
-			ProducingPerInterval:    1,
-			Timestamp:               time.Now(),
-			CurrentSaturation:       0,
+			ProducingIntervalMiliSecond: 1,
+			ProducingPerInterval:        1,
+			Timestamp:                   time.Now(),
+			CurrentSaturation:           0,
 		}
 	}
 
@@ -310,8 +310,8 @@ func (k *KafkaCountingBackpressure) calculateSignal() SpeedSignal {
 	}
 
 	// 인터벌 제한
-	if newInterval < 1 {
-		newInterval = 1
+	if newInterval < 1000 {
+		newInterval = 1000
 	} else if newInterval > 60 {
 		newInterval = 60
 	}
@@ -320,10 +320,10 @@ func (k *KafkaCountingBackpressure) calculateSignal() SpeedSignal {
 	k.recordAdjustment(float64(newBatchSize) / float64(k.currentBatchSize))
 
 	return SpeedSignal{
-		ProducingIntervalSecond: newInterval,
-		ProducingPerInterval:    newBatchSize,
-		Timestamp:               time.Now(),
-		CurrentSaturation:       saturation,
+		ProducingIntervalMiliSecond: newInterval,
+		ProducingPerInterval:        newBatchSize,
+		Timestamp:                   time.Now(),
+		CurrentSaturation:           saturation,
 	}
 }
 

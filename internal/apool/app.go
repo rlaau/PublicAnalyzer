@@ -126,13 +126,23 @@ func (a *AnalyzerPool) DeququeNod() <-chan sharedface.NodMsg {
 }
 
 func (a *AnalyzerPool) ConsumeRelTxByFanout() <-chan domain.MarkedTransaction {
+	if a.fanoutManager == nil || a.fanoutManager.busRel == nil {
+		// 빈(닫힌) 채널을 돌려줘서 호출 측이 안전하게 select 탈출 가능
+		ch := make(chan domain.MarkedTransaction)
+		close(ch)
+		return ch
+	}
 	return a.fanoutManager.busRel.Dequeue()
 }
 
 func (a *AnalyzerPool) ConsumeNodTxByFanout() <-chan domain.MarkedTransaction {
+	if a.fanoutManager == nil || a.fanoutManager.busNod == nil {
+		ch := make(chan domain.MarkedTransaction)
+		close(ch)
+		return ch
+	}
 	return a.fanoutManager.busNod.Dequeue()
 }
-
 func (a *AnalyzerPool) Start(parent context.Context) error {
 	if !a.isTest.IsTest() && a.fanoutManager == nil {
 		return fmt.Errorf("fanout manager not initialized (Register not called or failed)")
@@ -190,7 +200,13 @@ func (a *AnalyzerPool) Close() error {
 
 // TODO 추후 지울것.
 // TODO 포트 등록은 정식 생성자 통해서 할것!!!
-func (a *AnalyzerPool) RegisterPorts(n sharedface.NodPort, r sharedface.RelPort) {
-	a.ports.nod = n
-	a.ports.rel = r
+func (a *AnalyzerPool) RegisterPorts(nod sharedface.NodPort, rel sharedface.RelPort) {
+	if a.busNod != nil {
+		a.busNod.Close()
+	}
+	if a.busRel != nil {
+		a.busRel.Close()
+	}
+	a.ports.rel = rel
+	a.ports.nod = nod
 }

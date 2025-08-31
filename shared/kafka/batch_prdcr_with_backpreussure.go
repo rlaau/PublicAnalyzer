@@ -180,7 +180,8 @@ func (p *KafkaBatchProducerWithBackpressure[T]) bufferedProducerLoop() {
 			// 신호 제한 적용
 			batchSize := signal.ProducingPerInterval
 
-			interval := time.Duration(signal.ProducingIntervalSecond) * time.Second
+			// direct / buffered 공통
+			interval := time.Duration(signal.ProducingIntervalMiliSecond) * time.Millisecond
 
 			// 디버깅 로그
 			log.Printf("[Buffered] Backpressure signal - Batch: %d, Interval: %v, Saturation: %.2f%%",
@@ -225,47 +226,57 @@ func (p *KafkaBatchProducerWithBackpressure[T]) directProducerLoop() {
 	var pendingMessages []Message[T]
 
 	for {
-		// 백프레셔로부터 다음 신호 받기
-		signal := p.backpressure.GetNextSignal()
+		// 1) 먼저 cancel 확인
+		select {
+		case <-p.ctx.Done():
+			if len(pendingMessages) > 0 {
+				_ = p.publishBatch(pendingMessages)
+				p.backpressure.CountProducings(len(pendingMessages))
+			}
+			p.flushDirectChannel()
+			return
+		default:
+		}
 
-		// 신호 제한 적용
+		// 2) 신호 받기 (가능하면 ctx-aware 하게 만들 것)
+		signal := p.backpressure.GetNextSignal() // ← 가능하면 ctx 넘기도록 개선
 		batchSize := signal.ProducingPerInterval
-
-		interval := time.Duration(signal.ProducingIntervalSecond) * time.Second
+		interval := time.Duration(signal.ProducingIntervalMiliSecond) * time.Millisecond
 
 		log.Printf("[Direct] Backpressure signal - Batch: %d, Interval: %v, Saturation: %.2f%%",
 			batchSize, interval, signal.CurrentSaturation*100)
 
-		// 타임아웃 설정
 		timer := time.NewTimer(interval)
 
-		// 메시지 수집
 	collectLoop:
 		for len(pendingMessages) < batchSize {
 			select {
 			case <-p.ctx.Done():
 				timer.Stop()
-				// 종료 시 남은 메시지 전송
 				if len(pendingMessages) > 0 {
-					p.publishBatch(pendingMessages)
+					_ = p.publishBatch(pendingMessages)
 					p.backpressure.CountProducings(len(pendingMessages))
 				}
 				p.flushDirectChannel()
 				return
 
-			case messages := <-p.directChannel:
-				// 새 메시지 수신
-				pendingMessages = append(pendingMessages, messages...)
+			case msgs, ok := <-p.directChannel:
+				if !ok { // 채널 닫힘 → 남은 것 전송하고 종료
+					timer.Stop()
+					if len(pendingMessages) > 0 {
+						_ = p.publishBatch(pendingMessages)
+						p.backpressure.CountProducings(len(pendingMessages))
+					}
+					return
+				}
+				pendingMessages = append(pendingMessages, msgs...)
 
 			case <-timer.C:
-				// 타임아웃 - 현재까지 수집된 메시지로 전송
 				break collectLoop
 			}
 		}
-
 		timer.Stop()
 
-		// 배치 크기만큼 전송
 		if len(pendingMessages) > 0 {
 			sendBatch := pendingMessages
 			if len(sendBatch) > batchSize {
@@ -275,16 +286,12 @@ func (p *KafkaBatchProducerWithBackpressure[T]) directProducerLoop() {
 				pendingMessages = nil
 			}
 
-			// Kafka로 전송
 			if err := p.publishBatch(sendBatch); err != nil {
 				log.Printf("Failed to publish batch: %v", err)
 				p.incrementErrors()
-				// Direct 모드에서는 재시도하지 않음 (데이터 손실 가능)
 			} else {
-				// 성공적으로 전송됨 - 백프레셔에 알림
 				p.backpressure.CountProducings(len(sendBatch))
 				p.incrementProduced(uint64(len(sendBatch)))
-
 				log.Printf("[Direct] Successfully published %d messages", len(sendBatch))
 			}
 		}

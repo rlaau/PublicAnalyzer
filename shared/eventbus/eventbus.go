@@ -10,12 +10,19 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+)
+
+// EventBusMode EventBus 동작 모드
+type EventBusMode int
+
+const (
+	PersistentMode EventBusMode = iota // JSONL 저장/로드 지원
+	MemoryOnlyMode                     // 메모리 전용, 채널 직접 사용
 )
 
 // EventBus[T] : 단일 소비자용 이벤트 버스
@@ -26,7 +33,8 @@ type EventBus[T any] struct {
 	pending  []T
 	capLimit int
 
-	filePath string // JSONL 저장 경로
+	filePath string       // JSONL 저장 경로
+	mode     EventBusMode // 동작 모드
 
 	stopping bool
 	closed   atomic.Bool
@@ -39,8 +47,9 @@ type EventBus[T any] struct {
 func NewWithPath[T any](filePath string, capLimit int) (*EventBus[T], error) {
 	filePath = ensureJSONLExt(filePath) // ← 여기서 단 한 줄로 강제
 
+	buf := max(capLimit/10, 4096)
 	b := &EventBus[T]{
-		out:      make(chan T, 10),
+		out:      make(chan T, buf), // 10 -> capLimit(or 1024)
 		filePath: filePath,
 		capLimit: capLimit,
 	}
@@ -70,36 +79,60 @@ func NewWithRoot[T any](rootResolver func() string, rel string, capLimit int) (*
 	return NewWithPath[T](fp, capLimit)
 }
 
+// NewInMemory: 단순한 메모리 전용 EventBus (채널 기반)
+// JSONL, condition variable, waitgroup 없는 간단한 구조
+// 워커풀이나 인터페이스 타입용으로 적합
+func NewInMemory[T any](bufferSize int) *EventBus[T] {
+	if bufferSize <= 0 {
+		bufferSize = 1000 // 기본 버퍼 크기
+	}
+
+	return &EventBus[T]{
+		out:      make(chan T, bufferSize),
+		filePath: "",             // 빈 경로로 JSONL 비활성화 표시
+		capLimit: 0,              // 무제한
+		mode:     MemoryOnlyMode, // 메모리 전용 모드
+	}
+}
+
 func (b *EventBus[T]) run(backlog []T) {
 	defer b.wg.Done()
+	local := make([]T, 0, 4096)
+
 	b.mu.Lock()
 	b.pending = append(b.pending, backlog...)
 	for {
-		// 대기: pending 없고, stop 아니면 cond wait
 		for !b.stopping && len(b.pending) == 0 {
 			b.cv.Wait()
 		}
 		if b.stopping {
-			// 남은 것 저장
 			rest := append([]T(nil), b.pending...)
 			b.mu.Unlock()
-			if err := saveBacklogJSONL(b.filePath, rest); err != nil {
-				fmt.Printf("[eventbus] saveBacklog error: %v\n", err)
-			}
+			_ = saveBacklogJSONL(b.filePath, rest)
 			close(b.out)
 			return
 		}
-		// 하나 pop & 생산자 역압 해제
-		v := b.pending[0]
-		b.pending = b.pending[1:]
-		b.cv.Signal() // capLimit로 블록 중인 생산자 깨우기
+
+		// swap pending -> local
+		local = local[:0]
+		local = append(local, b.pending...)
+		b.pending = b.pending[:0]
+		b.cv.Signal() // 생산자 하나 깨워줌 (여유 생김)
 		b.mu.Unlock()
 
-		// out 으로 블로킹 전송
-		//log.Printf("[bus %p] send one (out=%p)", b, b.out)
-		b.out <- v
-
-		// 다음 루프 준비
+		// 잠금 해제 상태에서 out으로 가능한 한 많이 보냄
+		for i := 0; i < len(local); i++ {
+			select {
+			case b.out <- local[i]:
+				// ok
+			default:
+				// out이 꽉 찼다 → 남은 걸 다시 pending 앞쪽에 되밀고 다음 턴
+				b.mu.Lock()
+				b.pending = append(local[i:], b.pending...) // 순서 유지
+				b.mu.Unlock()
+				break
+			}
+		}
 		b.mu.Lock()
 	}
 }
@@ -109,6 +142,18 @@ func (b *EventBus[T]) Publish(v T) error {
 	if b.closed.Load() {
 		return errors.New("eventbus: closed")
 	}
+
+	// 메모리 전용 모드: out 채널에 직접 전송
+	if b.mode == MemoryOnlyMode {
+		select {
+		case b.out <- v:
+			return nil
+		default:
+			return errors.New("eventbus: channel full")
+		}
+	}
+
+	// 영구 저장 모드: pending → out 방식
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for !b.stopping && b.capLimit > 0 && len(b.pending) >= b.capLimit {
@@ -125,18 +170,31 @@ func (b *EventBus[T]) PublishBatch(vs []T) error {
 	if b.closed.Load() {
 		return errors.New("eventbus: closed")
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	start := 0
+	for start < len(vs) {
+		b.mu.Lock()
+		for !b.stopping && b.capLimit > 0 && len(b.pending) >= b.capLimit {
+			b.cv.Wait()
+		}
+		if b.stopping {
+			b.mu.Unlock()
+			return errors.New("eventbus: stopping")
+		}
 
-	for !b.stopping && b.capLimit > 0 && len(b.pending)+len(vs) > b.capLimit {
-		b.cv.Wait()
+		room := len(vs) - start
+		if b.capLimit > 0 {
+			capRoom := b.capLimit - len(b.pending)
+			if room > capRoom {
+				room = capRoom
+			}
+		}
+		if room > 0 {
+			b.pending = append(b.pending, vs[start:start+room]...)
+			start += room
+			b.cv.Signal() // run() 계속 돌도록 깨움
+		}
+		b.mu.Unlock()
 	}
-	if b.stopping {
-		return errors.New("eventbus: stopping")
-	}
-	b.pending = append(b.pending, vs...)
-	// 한 번만 깨워도 드레인 루프가 계속 처리함
-	b.cv.Signal()
 	return nil
 }
 
@@ -148,6 +206,14 @@ func (b *EventBus[T]) Close() {
 	if b.closed.Swap(true) {
 		return
 	}
+
+	// 메모리 전용 모드: 단순히 채널만 닫기
+	if b.mode == MemoryOnlyMode {
+		close(b.out)
+		return
+	}
+
+	// 영구 저장 모드: 기존 방식
 	b.mu.Lock()
 	b.stopping = true
 	b.cv.Broadcast() // 대기 중 전부 깨워서 종료 경로 진입

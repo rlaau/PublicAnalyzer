@@ -16,7 +16,7 @@ func DefaultTestingTripletConfig(processName string) *triplet.TripletConfig {
 	return &triplet.TripletConfig{
 		Name:           "Simple-Triplet",
 		Mode:           mode.TestingModeProcess,
-		BusCapLimit:    100_000,
+		BusCapLimit:    200_000,
 		WorkerCount:    2,
 		IsolatedDBPath: filepath.Join(computation.FindTestingStorageRootPath(), processName),
 
@@ -41,7 +41,18 @@ func ComposeRelPool(mode mode.ProcessingMode, processName string, apool iface.Ap
 		tripletCfg = DefaultTestingTripletConfig(processName)
 	} else {
 		//TODO 추후 프로덕션 설정 구현할 것
-		panic("현재 프로덕션 설정은 구현되지 않음")
+		tripletCfg = &triplet.TripletConfig{
+			Name:           "Production-Triplet",
+			Mode:           mode,
+			BusCapLimit:    100_000,
+			WorkerCount:    2,
+			IsolatedDBPath: filepath.Join(computation.FindProductionStorageRootPath(), processName),
+
+			AutoCleanup:         false, // ←★ 결과 보존 위해 비활성화
+			ResultReporting:     true,
+			StatsInterval:       2_000_000_000, // 2초
+			HealthCheckInterval: 3_000_000_000, // 3초
+		}
 	}
 	preTriplet, err := app.CreateTriplet(tripletCfg, preRelPool)
 	if err != nil {

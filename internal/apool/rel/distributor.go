@@ -84,7 +84,7 @@ func (f *TxDistributor) fanoutTransaction(tx domain.MarkedTransaction) {
 
 	// !!!!!!현재는 모든 트랜잭션을 Triplet 모듈에만 전달
 	if err := f.busCreation.Publish(tx); err != nil {
-		fmt.Printf("[TxFanoutManager] failed to publish to EE: %v\n", err)
+		fmt.Printf("[TxDistributor]] failed to publish to EE: %v\n", err)
 	}
 
 	// !!향후 구현될 분배 로직:

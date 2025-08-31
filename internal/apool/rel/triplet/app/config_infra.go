@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -20,15 +21,17 @@ func NewInfraByConfig(config *TripletConfig) *infra.TripletAndDualManagerInfra {
 	var isolateColusre = computation.ComputeRelClosure(config.IsolatedDBPath)
 	log.Printf("EOA Analyzer의 Infra 세팅 중: %s (Mode: %s)", config.Name, config.Mode)
 
+	// Ensure the isolated DB path exists
+	if err := os.MkdirAll(config.IsolatedDBPath, 0755); err != nil {
+		panic(fmt.Sprintf("Failed to create isolated DB directory: %v", err))
+	}
+
 	consumer, err := eventbus.NewWithPath[*shareddomain.MarkedTransaction](isolateColusre("tx_channel.jsonl"), 50000) //loadKafkaBatchConsumer(config.Mode, config.Name)
 	if err != nil {
-		panic("NewInfraByConfig: 콘슈머 생성 중 에러")
+		panic(fmt.Sprintf("NewInfraByConfig: 콘슈머 생성 중 에러: %v", err))
 	}
-	// 워커 풀에 쓸 채널 생성
-	txJobBus, err := eventbus.NewWithPath[workerpool.Job](isolateColusre("workerPoolChan.jsonl"), config.BusCapLimit)
-	if err != nil {
-		panic("txJob EventBus생성 중 패닉 발생")
-	}
+	// 워커 풀에 쓸 채널 생성 (메모리 전용 - 인터페이스 타입이므로 JSONL 불가)
+	txJobBus := eventbus.NewInMemory[workerpool.Job](config.BusCapLimit)
 	//* 워커풀 생성 및 채널 등록
 	//*여기선 ctx를 그냥 백그라운드로 등록. 부모 컨텍스트는 Start시 기존 것 shuDown후 등록
 	ctx := context.Background()

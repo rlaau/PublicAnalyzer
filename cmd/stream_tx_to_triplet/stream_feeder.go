@@ -18,8 +18,8 @@ func GetStreamFeeder() (*txSteamerApp.TxStreamFeeder, *tools.KafkaCountingBackpr
 		//백프레셔 설정
 		InitialBatchSize:  1000,
 		InitialInterval:   1 * time.Second,
-		DirectChannelSize: 100_000,
-		MaxBatchSize:      10_000,
+		DirectChannelSize: 150_000,
+		MaxBatchSize:      50_000,
 		MaxInterval:       30 * time.Second,
 		//스트리머를 위한 포지션
 		PositionDataDir: computation.ComputeThisProductionStorage("stream_feeder", "position"),
@@ -31,7 +31,7 @@ func GetStreamFeeder() (*txSteamerApp.TxStreamFeeder, *tools.KafkaCountingBackpr
 	}
 	backPressure := tools.LoadKafkaCountingBackpressure(
 		tools.RequestedQueueSpec{
-			QueueCapacity:    100_000,
+			QueueCapacity:    150_000,
 			TargetSaturation: 0.5,
 		},
 		tools.SeedProducingConfig{SeedInterval: 1, SeedBatchSize: 1000},

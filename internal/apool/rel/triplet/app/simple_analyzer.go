@@ -194,11 +194,35 @@ func (a *SimpleTriplet) ComsumeTransaction(ctx context.Context) {
 	defer a.wg.Done()
 	in := a.infra.TxBus.Dequeue()
 	log.Printf("🚀 이벤트버스 시작")
+	
+	// Shutdown timeout for graceful exit
+	shutdownTimer := time.NewTimer(time.Hour) // Initial large value, will be reset on shutdown
+	defer shutdownTimer.Stop()
+	
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("🛑 Batch consumer worker stopping (context)")
-			return
+			log.Printf("🛑 Batch consumer worker stopping (context) - starting graceful shutdown")
+			// Start shutdown timer
+			shutdownTimer.Reset(2 * time.Second)
+			// Process remaining messages quickly during shutdown
+			for {
+				select {
+				case msg, ok := <-in:
+					if !ok {
+						log.Printf("🛑 TxBus closed during shutdown")
+						return
+					}
+					if msg != nil {
+						a.ProcessTransaction(msg) // Ignore errors during shutdown
+					}
+				case <-shutdownTimer.C:
+					log.Printf("🛑 Consumer shutdown timeout - forcing exit")
+					return
+				default:
+					return // No more messages, exit immediately
+				}
+			}
 		case <-a.stopChannel:
 			log.Printf("🛑 Batch consumer worker stopping (signal)")
 			return
@@ -471,8 +495,9 @@ func (a *SimpleTriplet) shutdown() error {
 	select {
 	case <-done:
 		log.Printf("✅ All workers stopped gracefully")
-	case <-time.After(10 * time.Second):
-		log.Printf("⚠️ Shutdown timeout")
+	case <-time.After(3 * time.Second):
+		log.Printf("⚠️ Shutdown timeout - forcing worker termination")
+		// Force shutdown by not waiting for remaining workers
 	}
 	// 활동이 종료된 채널을 닫기
 	a.shutdownOnce.Do(func() {

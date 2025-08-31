@@ -78,9 +78,9 @@ func TestPullBasedRealTimeResponse(t *testing.T) {
 		t.Errorf("Should decrease batch size immediately with high load (80%%), got %d",
 			signal.ProducingPerInterval)
 	}
-	if signal.ProducingIntervalSecond <= 1 {
+	if signal.ProducingIntervalMiliSecond <= 1 {
 		t.Errorf("Should increase interval with high load, got %d",
-			signal.ProducingIntervalSecond)
+			signal.ProducingIntervalMiliSecond)
 	}
 	if signal.CurrentSaturation < 0.79 || signal.CurrentSaturation > 0.81 {
 		t.Errorf("Expected saturation around 0.8, got %f", signal.CurrentSaturation)
@@ -199,9 +199,9 @@ func TestIntervalLimits(t *testing.T) {
 	defer bp1.ResetMeters()
 	bp1.CountProducings(100) // 매우 낮은 부하
 	signal1 := bp1.GetNextSignal()
-	if signal1.ProducingIntervalSecond < 1 {
+	if signal1.ProducingIntervalMiliSecond < 1 {
 		t.Errorf("Interval should not go below 1 second, got %d",
-			signal1.ProducingIntervalSecond)
+			signal1.ProducingIntervalMiliSecond)
 	}
 
 	// 최대 인터벌 테스트
@@ -209,9 +209,9 @@ func TestIntervalLimits(t *testing.T) {
 	defer bp2.ResetMeters()
 	bp2.CountProducings(9900) // 매우 높은 부하
 	signal2 := bp2.GetNextSignal()
-	if signal2.ProducingIntervalSecond > 60 {
+	if signal2.ProducingIntervalMiliSecond > 60 {
 		t.Errorf("Interval should not exceed 60 seconds, got %d",
-			signal2.ProducingIntervalSecond)
+			signal2.ProducingIntervalMiliSecond)
 	}
 }
 
@@ -248,7 +248,7 @@ func TestConcurrentPullRequests(t *testing.T) {
 		if signal.ProducingPerInterval < 1 {
 			t.Error("Invalid batch size in concurrent scenario")
 		}
-		if signal.ProducingIntervalSecond < 1 {
+		if signal.ProducingIntervalMiliSecond < 1 {
 			t.Error("Invalid interval in concurrent scenario")
 		}
 	}
@@ -306,9 +306,9 @@ func TestEmergencyResponse(t *testing.T) {
 		t.Errorf("Emergency measures should drastically reduce batch size, got %d",
 			signal.ProducingPerInterval)
 	}
-	if signal.ProducingIntervalSecond < 2 {
+	if signal.ProducingIntervalMiliSecond < 2 {
 		t.Errorf("Emergency measures should increase interval significantly, got %d",
-			signal.ProducingIntervalSecond)
+			signal.ProducingIntervalMiliSecond)
 	}
 }
 
@@ -362,7 +362,7 @@ func TestSequentialPullScenario(t *testing.T) {
 
 		// 로그
 		t.Logf("Iteration %d: Batch=%d, Interval=%d, Saturation=%.2f",
-			i, signal.ProducingPerInterval, signal.ProducingIntervalSecond,
+			i, signal.ProducingPerInterval, signal.ProducingIntervalMiliSecond,
 			signal.CurrentSaturation)
 
 		// 포화도가 목표치(50%) 근처로 수렴해야 함

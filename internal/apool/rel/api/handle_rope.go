@@ -332,21 +332,27 @@ func (h *RelAPIPoolHandler) handleGraphStats(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// BadgerDB에 직접 접근하여 통계 조회
-	db := h.relPool.RopeRepo
-	if db == nil {
+	// RopeDB에서 실제 그래프 통계 조회
+	ropeDB := h.relPool.RopeDB()
+	if ropeDB == nil {
 		http.Error(w, "Graph DB not accessible", http.StatusServiceUnavailable)
 		return
 	}
 
-	// 간단한 DB 통계 생성 (실제 구현은 infra 레이어에서 처리)
+	// 실제 그래프 통계 가져오기
+	stats := ropeDB.GetGraphStats()
+	
+	// 추가 메타데이터
 	response := map[string]interface{}{
 		"database_available": true,
-		"message":            "Graph database is accessible",
+		"message":            "Graph statistics retrieved successfully",
+		"stats":              stats,
+		// 호환성을 위해 stats의 내용을 최상위 레벨에도 복사
+		"nodes":     stats["nodes"],
+		"ropes":     stats["ropes"], 
+		"traits":    stats["traits"],
+		"polyRopes": stats["polyRopes"],
 	}
-
-	// 추가적인 통계가 필요한 경우 infra 레이어의 GraphRepo를 통해 조회
-	// 현재는 기본적인 접근 가능성만 확인
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)

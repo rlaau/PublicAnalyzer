@@ -271,7 +271,7 @@ func main() {
 
 func printServerInfo() {
 
-	fmt.Println("   📍 Available endpoints (Chi Router):")
+	fmt.Println("   📍 AvailaBle endpoints (Chi Router):")
 	fmt.Println("   💡 API Endpoints (JSON responses):")
 	fmt.Println("   - GET http://localhost:8080/api/health             - Server health")
 	fmt.Println("   - GET http://localhost:8080/api/triplet/statistics      - Triplet  statistics")

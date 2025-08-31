@@ -10,7 +10,7 @@ import (
 )
 
 func GetRelPool() (*relapp.RelationPool, error) {
-	apool, err := aapp.CreateAnalzerPoolFrame(mode.ProductionModeProcess, nil)
+	apool := &aapp.AnalyzerPool{}
 	//* nodPool을 강제로 생성
 	nodPool := &nodapp.NodPool{}
 	//* CO생성 및 nodPool에 강제 등록
@@ -21,6 +21,7 @@ func GetRelPool() (*relapp.RelationPool, error) {
 	apool.RegisterPorts(nodPool, nil)
 	relPool := relapp.ComposeRelPool(mode.ProductionModeProcess, "stream_tx_to_triplet", apool)
 	apool.RegisterPorts(nodPool, relPool)
-	return relPool, err
+	return relPool, nil
 
 }
+

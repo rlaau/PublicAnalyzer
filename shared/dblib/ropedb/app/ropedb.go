@@ -311,8 +311,8 @@ func (b *BadgerRopeDB) Close() error {
 // * PushTraitEvent가 빠르게 작동하면 됨
 // *근데, Vertex 읽기 쓰기 외엔 전부 비동기로 동작 중임
 func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
-	debugEnabled := false
-	if b.publishCounter%1000 == 0 && debugEnabled {
+	debugEnabled := true
+	if b.publishCounter%10000 == 0 && debugEnabled {
 		fmt.Printf(`
 		========ev정보=========
 		Trait: %v,
@@ -348,7 +348,7 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 	tid, created := b.ensureLink(v1, v2, ev.Trait, ev.RuleA, ev.RuleB)
 
 	// --- 3) TraitMark Upsert 큐잉(단일 커맨드)
-	_ = b.busTrait.Publish(domain.TraitMarkUpsert{
+	traitErr := b.busTrait.Publish(domain.TraitMarkUpsert{
 		AuthorCode:  ev.Author,
 		LastTx:      ev.TxID,
 		TraitID:     tid,
@@ -362,6 +362,9 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 		ValueOrNull: ev.ValueOrNull, // ✅ 새로 추가 (없으면 decimal.Zero 사용)
 		LastSeen:    ev.Time,
 	})
+	if traitErr != nil {
+		fmt.Printf("트레이트 마크 삽입 중 에러 발생: %s\n", traitErr.Error())
+	}
 
 	// --- 4) Rope 결정/병합
 	r1, isExsit1 := b.ropeIDByTrait(v1, ev.Trait)
@@ -372,7 +375,7 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 		newID := b.nextRopeID()
 		setRopeForTrait(v1, newID, ev.Trait)
 		setRopeForTrait(v2, newID, ev.Trait)
-		_ = b.busRope.Publish(domain.RopeMarkUpsert{
+		ropeErr := b.busRope.Publish(domain.RopeMarkUpsert{
 			RopeID:      newID,
 			Trait:       ev.Trait,
 			AddMembers:  []shareddomain.Address{a1, a2},
@@ -381,11 +384,14 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 			ValueOrNull: ev.ValueOrNull,
 			LastSeen:    ev.Time,
 		})
+		if ropeErr != nil {
+			fmt.Printf("로프 마크 삽입 중 에러 발생: %s\n", ropeErr.Error())
+		}
 	case isExsit1 && !isExsit2:
 		// v1 로프에 v2 편입
 		id := r1
 		setRopeForTrait(v2, id, ev.Trait)
-		_ = b.busRope.Publish(domain.RopeMarkUpsert{
+		ropeErr := b.busRope.Publish(domain.RopeMarkUpsert{
 			RopeID:      id,
 			Trait:       ev.Trait,
 			AddMembers:  []shareddomain.Address{a2},
@@ -395,11 +401,15 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 			VolumeDelta: 1,
 			LastSeen:    ev.Time,
 		})
+
+		if ropeErr != nil {
+			fmt.Printf("로프 마크 삽입 중 에러 발생: %s\n", ropeErr.Error())
+		}
 	case !isExsit1 && isExsit2:
 		// v2 로프에 v1 편입
 		id := r2
 		setRopeForTrait(v1, id, ev.Trait)
-		_ = b.busRope.Publish(domain.RopeMarkUpsert{
+		ropeErr := b.busRope.Publish(domain.RopeMarkUpsert{
 			RopeID:      id,
 			Trait:       ev.Trait,
 			AddMembers:  []shareddomain.Address{a1},
@@ -409,18 +419,25 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 
 			LastSeen: ev.Time,
 		})
+
+		if ropeErr != nil {
+			fmt.Printf("로프 마크 삽입 중 에러 발생: %s\n", ropeErr.Error())
+		}
 	default:
 		// 둘 다 있음 → 같은 로프면 볼륨만, 다르면 병합 지시
 		id1, id2 := r1, r2
 		// 근데 사실 도메인 로직상 이 둘이 절대 같은 로프 ID가 될수 없음
 		if id1 == id2 {
-			_ = b.busRope.Publish(domain.RopeMarkUpsert{
+			ropeErr := b.busRope.Publish(domain.RopeMarkUpsert{
 				RopeID:      id1,
 				Trait:       ev.Trait,
 				VolumeDelta: 1,
 				LastSeen:    ev.Time,
 				ValueOrNull: ev.ValueOrNull,
 			})
+			if ropeErr != nil {
+				fmt.Printf("로프 마크 삽입 중 에러 발생: %s\n", ropeErr.Error())
+			}
 		} else {
 			// 크기 비교 위해 로프마크 읽기(없으면 편의상 id1을 기준)
 			rm1 := b.getRopeMark(id1)
@@ -439,7 +456,7 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 
 			}
 			// target 로프마크에 흡수 Upsert, source는 이후 제거/무시
-			_ = b.busRope.Publish(domain.RopeMarkUpsert{
+			ropeErr := b.busRope.Publish(domain.RopeMarkUpsert{
 				RopeID:      target,
 				Trait:       ev.Trait,
 				AddMembers:  src.Members,
@@ -450,6 +467,9 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 				LastSeen:    ev.Time,
 				MergeFrom:   []domain.RopeID{source},
 			})
+			if ropeErr != nil {
+				fmt.Printf("로프 마크 삽입 중 에러 발생: %s\n", ropeErr.Error())
+			}
 		}
 	}
 	//트레이트 등록 & 로프까지 다 등록 이후=> 트랩 여부 체크
@@ -498,20 +518,23 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 		b.setPolyRopeInVertex(v2, newPolyID, polyTraitCode)
 
 		// PolyRopeMark 생성 (현재 Trait로 생성된 Rope만 포함)
-		_ = b.busPolyRope.Publish(PolyRopeMarkUpsert{
+		pErr := b.busPolyRope.Publish(PolyRopeMarkUpsert{
 			PolyRopeID:  newPolyID,
 			PolyTrait:   polyTraitCode,
 			AddRopes:    []domain.RopeID{currentRopeID},
 			VolumeDelta: 1,
 			LastSeen:    ev.Time,
 		})
+		if pErr != nil {
+			fmt.Printf("폴리 마크 사입중 에러 발생%s\n", pErr.Error())
+		}
 
 	case prExist1 && !prExist2:
 		// v1만 PolyRope 있음 - v2를 v1의 PolyRope에 편입
 		b.setPolyRopeInVertex(v2, pr1, polyTraitCode)
 
 		// 현재 Rope를 PolyRope에 추가 (중복 제거는 dedupRopes에서 처리)
-		_ = b.busPolyRope.Publish(PolyRopeMarkUpsert{
+		pErr := b.busPolyRope.Publish(PolyRopeMarkUpsert{
 			PolyRopeID:  pr1,
 			PolyTrait:   polyTraitCode,
 			AddRopes:    []domain.RopeID{currentRopeID},
@@ -519,12 +542,15 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 			LastSeen:    ev.Time,
 		})
 
+		if pErr != nil {
+			fmt.Printf("폴리 마크 사입중 에러 발생%s\n", pErr.Error())
+		}
 	case !prExist1 && prExist2:
 		// v2만 PolyRope 있음 - v1을 v2의 PolyRope에 편입
 		b.setPolyRopeInVertex(v1, pr2, polyTraitCode)
 
 		// 현재 Rope를 PolyRope에 추가 (중복 제거는 dedupRopes에서 처리)
-		_ = b.busPolyRope.Publish(PolyRopeMarkUpsert{
+		pErr := b.busPolyRope.Publish(PolyRopeMarkUpsert{
 			PolyRopeID:  pr2,
 			PolyTrait:   polyTraitCode,
 			AddRopes:    []domain.RopeID{currentRopeID},
@@ -532,17 +558,25 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 			LastSeen:    ev.Time,
 		})
 
+		if pErr != nil {
+			fmt.Printf("폴리 마크 사입중 에러 발생%s\n", pErr.Error())
+		}
+
 	default:
 		// 둘 다 PolyRope 있음
 		if pr1 == pr2 {
 			// 같은 PolyRope면 현재 Rope만 추가 (중복 제거는 dedupRopes에서 처리)
-			_ = b.busPolyRope.Publish(PolyRopeMarkUpsert{
+			pErr := b.busPolyRope.Publish(PolyRopeMarkUpsert{
 				PolyRopeID:  pr1,
 				PolyTrait:   polyTraitCode,
 				AddRopes:    []domain.RopeID{currentRopeID},
 				VolumeDelta: 1,
 				LastSeen:    ev.Time,
 			})
+
+			if pErr != nil {
+				fmt.Printf("폴리 마크 사입중 에러 발생%s\n", pErr.Error())
+			}
 		} else {
 			// 다른 PolyRope면 병합 - PolyRopeMark의 실제 멤버 수로 크기 비교
 			prm1 := b.getPolyRopeMark(pr1)
@@ -567,7 +601,7 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 			srcMark := b.getPolyRopeMark(source)
 			addingRopes := append(srcMark.Ropes, currentRopeID)
 
-			_ = b.busPolyRope.Publish(PolyRopeMarkUpsert{
+			pErr := b.busPolyRope.Publish(PolyRopeMarkUpsert{
 				PolyRopeID:  target,
 				PolyTrait:   polyTraitCode,
 				AddRopes:    addingRopes, // 중복 제거는 dedupRopes에서 처리
@@ -575,6 +609,10 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 				LastSeen:    ev.Time,
 				MergeFrom:   []domain.PolyRopeID{source},
 			})
+
+			if pErr != nil {
+				fmt.Printf("폴리 마크 사입중 에러 발생%s\n", pErr.Error())
+			}
 		}
 	}
 
@@ -644,7 +682,7 @@ func (b *BadgerRopeDB) polyRopeWorker() {
 
 func (b *BadgerRopeDB) applyTraitUpsert(op domain.TraitMarkUpsert) {
 	key := []byte(fmt.Sprintf("%s%d", kT, uint64(op.TraitID)))
-	_ = b.dbM.Update(func(txn *badger.Txn) error {
+	err := b.dbM.Update(func(txn *badger.Txn) error {
 		var tm domain.TraitMark
 		if itm, err := txn.Get(key); err == nil {
 			_ = itm.Value(func(val []byte) error { return json.Unmarshal(val, &tm) })
@@ -679,6 +717,13 @@ func (b *BadgerRopeDB) applyTraitUpsert(op domain.TraitMarkUpsert) {
 		data, _ := json.Marshal(tm)
 		return txn.Set(key, data)
 	})
+	if err != nil {
+		fmt.Printf("트레이트 업서트 apply 중 에러 발생 %s", err.Error())
+		return
+	}
+	if b.publishCounter%100 == 0 {
+		fmt.Printf("100번 주기의 트레이트 업서팅 성공")
+	}
 }
 
 func mergeAuthor(authors []domain.AuthorCode, target domain.AuthorCode) []domain.AuthorCode {
@@ -690,7 +735,7 @@ func mergeAuthor(authors []domain.AuthorCode, target domain.AuthorCode) []domain
 
 func (b *BadgerRopeDB) applyRopeUpsert(op domain.RopeMarkUpsert) {
 	key := []byte(fmt.Sprintf("%s%d", kR, uint64(op.RopeID)))
-	_ = b.dbM.Update(func(txn *badger.Txn) error {
+	err := b.dbM.Update(func(txn *badger.Txn) error {
 		var rm domain.RopeMark
 		if itm, err := txn.Get(key); err == nil {
 			_ = itm.Value(func(val []byte) error { return json.Unmarshal(val, &rm) })
@@ -743,6 +788,13 @@ func (b *BadgerRopeDB) applyRopeUpsert(op domain.RopeMarkUpsert) {
 		data, _ := json.Marshal(rm)
 		return txn.Set(key, data)
 	})
+	if err != nil {
+		fmt.Printf("로프 업서트 중 에러발생 %s\n", err.Error())
+		return
+	}
+	if b.publishCounter%100 == 0 {
+		fmt.Printf("100번 주기의 로프 업서팅 성공")
+	}
 }
 
 // 주소·트랩 "쌍" 기준으로 유니크하게 합치기 (첫 등장 순서 유지)
@@ -776,7 +828,7 @@ func MergeTrapVerticesUniquePairs(slices ...[]domain.TrapVertex) []domain.TrapVe
 
 func (b *BadgerRopeDB) applyPolyRopeUpsert(op PolyRopeMarkUpsert) {
 	key := []byte(fmt.Sprintf("%s%d", kPR, uint64(op.PolyRopeID)))
-	_ = b.dbM.Update(func(txn *badger.Txn) error {
+	err := b.dbM.Update(func(txn *badger.Txn) error {
 		var prm domain.PolyRopeMark
 		if itm, err := txn.Get(key); err == nil {
 			_ = itm.Value(func(val []byte) error { return json.Unmarshal(val, &prm) })
@@ -801,6 +853,13 @@ func (b *BadgerRopeDB) applyPolyRopeUpsert(op PolyRopeMarkUpsert) {
 		data, _ := json.Marshal(prm)
 		return txn.Set(key, data)
 	})
+	if err != nil {
+		fmt.Printf("폴리마크 업서트 중 에러 발생 %s", err.Error())
+		return
+	}
+	if b.publishCounter%100 == 0 {
+		fmt.Printf("100번 주기의 폴리마크 업서팅 성공")
+	}
 }
 
 // ------------------------------------------------------------
@@ -923,16 +982,31 @@ func (b *BadgerRopeDB) getPolyRopeMark(id domain.PolyRopeID) domain.PolyRopeMark
 }
 
 func (b *BadgerRopeDB) nextTraitID() domain.TraitID {
-	n, _ := b.seqTrait.Next()
-	return domain.TraitID(n)
+	for {
+		n, _ := b.seqTrait.Next()
+		if n != 0 {
+			return domain.TraitID(n)
+		}
+		// 0이면 한 번 더 뽑는다
+	}
 }
+
 func (b *BadgerRopeDB) nextRopeID() domain.RopeID {
-	n, _ := b.seqRope.Next()
-	return domain.RopeID(n)
+	for {
+		n, _ := b.seqRope.Next()
+		if n != 0 {
+			return domain.RopeID(n)
+		}
+	}
 }
+
 func (b *BadgerRopeDB) nextPolyRopeID() domain.PolyRopeID {
-	n, _ := b.seqPolyRope.Next()
-	return domain.PolyRopeID(n)
+	for {
+		n, _ := b.seqPolyRope.Next()
+		if n != 0 {
+			return domain.PolyRopeID(n)
+		}
+	}
 }
 
 // v1<->v2, Trait 기준으로 링크 업서트하여 공통 TraitID 보장

@@ -91,7 +91,10 @@ func (r *RelationPool) Register(triplet sharedface.TripletPort, creation sharedf
 		capLimit = 8192
 	}
 	var err error
-	r.txDistributor, err = NewTxDistributor(r.isTest, capLimit, r.Apool.ConsumeRelTxByFanout())
+	if r.Apool.ConsumeRelTxByFanout() != nil {
+		//TODO 추후엔 그냥 패닉 내삼!
+		r.txDistributor, err = NewTxDistributor(r.isTest, capLimit, r.Apool.ConsumeRelTxByFanout())
+	}
 	if err != nil {
 		r.busCreation.Close()
 		r.busTriplet.Close()
