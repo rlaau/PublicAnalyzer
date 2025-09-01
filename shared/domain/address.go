@@ -18,6 +18,10 @@ func IsNullAddress(a Address) bool {
 	return bytes.Equal(a[:], zeroAddress[:])
 }
 
+func (a Address) IsZero() bool {
+	return IsNullAddress(a)
+}
+
 // OrderAddresses는 두 Address를 사전순으로 비교해 앞에 오는 것과 뒤에 오는 것을 리턴합니다.
 func OrderAddresses(a1, a2 Address) (Address, Address) {
 	if bytes.Compare(a1[:], a2[:]) <= 0 {

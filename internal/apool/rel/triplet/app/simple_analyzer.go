@@ -408,7 +408,7 @@ func (a *SimpleTriplet) printStatistics() {
 	log.Printf("   Deposits: %d | Graph: %d | Window: %d | Dropped: %d",
 		deposits, graphUpdates, windowUpdates, dropped)
 	log.Printf("   Triplet-TxJobChannel: %d/%d (%.1f%%)", channelUsage, channelCapacity, usagePercent)
-	log.Panicf("   Triplet-MyTxBus: %d/%d", a.GetMyTxBus().Len(), a.GetMyTxBus().Len())
+	log.Printf("   Triplet-MyTxBus: %d/%d", a.GetMyTxBus().Len(), a.GetMyTxBus().Len())
 	if total > 0 {
 		tps := float64(total) / uptime.Seconds()
 		successRate := float64(success) / float64(total) * 100

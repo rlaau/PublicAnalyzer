@@ -360,6 +360,136 @@ func (cdb *ContractDB) GetAll() ([]domain.Contract, error) {
 	return contracts, err
 }
 
+// IterateContractsBatched: contract:* 키 공간을 배치 크기만큼 모아서 핸들러에 전달.
+// handler가 false를 반환하면 중단합니다.
+// IterateContractsBatchedNonBlocking:
+// - 배치를 모으는 동안만 View 트랜잭션을 열고
+// - 트랜잭션을 닫은 뒤에 handler를 호출합니다.
+// - handler가 블로킹/IO를 해도 DB 트랜잭션은 이미 종료된 상태.
+func (cdb *ContractDB) IterateContractsBatchedNonBlocking(batchSize int, handler func(batch []domain.Contract) bool) error {
+	if batchSize <= 0 {
+		batchSize = 100_000
+	}
+
+	var cursor []byte // startAfter 커서
+	prefix := []byte("contract:")
+
+	for {
+		batch := make([]domain.Contract, 0, batchSize)
+		var nextStartKey []byte
+
+		// === 배치 수집 구간(짧은 View 트랜잭션) ===
+		err := cdb.db.View(func(txn *badger.Txn) error {
+			opts := badger.DefaultIteratorOptions
+			opts.PrefetchValues = true
+			opts.PrefetchSize = 1024
+
+			it := txn.NewIterator(opts)
+			defer it.Close()
+
+			if len(cursor) > 0 {
+				it.Seek(cursor)
+				if it.Valid() {
+					it.Next() // cursor 자신은 건너뜀
+				}
+			} else {
+				it.Seek(prefix)
+			}
+
+			for ; it.ValidForPrefix(prefix) && len(batch) < batchSize; it.Next() {
+				item := it.Item()
+
+				// 다음 커서용 키 복사(이터레이터 수명과 분리)
+				k := make([]byte, len(item.Key()))
+				copy(k, item.Key())
+
+				if err := item.Value(func(v []byte) error {
+					ct, e := cdb.deserializeContract(v)
+					if e != nil {
+						return e
+					}
+					batch = append(batch, ct)
+					nextStartKey = k
+					return nil
+				}); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+
+		// 끝났으면 종료
+		if len(batch) == 0 {
+			return nil
+		}
+
+		// === 트랜잭션 밖에서 핸들러 실행(블로킹 OK) ===
+		if isOk := handler(batch); !isOk {
+			return nil
+		} else {
+
+			cursor = nextStartKey
+			continue
+		}
+
+	}
+}
+
+// ScanContractsPage: startAfter(직후)부터 최대 limit개 읽어서 반환.
+// nextStartKey를 반환하니, 그걸 다음 호출의 startAfter로 넘기면 이어서 읽기 가능.
+func (cdb *ContractDB) ScanContractsPage(startAfter []byte, limit int) (batch []domain.Contract, nextStartKey []byte, err error) {
+	if limit <= 0 {
+		limit = 100_000
+	}
+
+	err = cdb.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = true
+		opts.PrefetchSize = 1024
+
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		prefix := []byte("contract:")
+
+		// 시작 위치 결정
+		if len(startAfter) > 0 {
+			it.Seek(startAfter)
+			// startAfter 자신을 건너뛰기 위해 한 칸 전진(동일키 방지)
+			if it.Valid() {
+				it.Next()
+			}
+		} else {
+			it.Seek(prefix)
+		}
+
+		for ; it.ValidForPrefix(prefix) && len(batch) < limit; it.Next() {
+			item := it.Item()
+
+			// 다음 페이지 토큰용으로 키 복사
+			lastKey := make([]byte, len(item.Key()))
+			copy(lastKey, item.Key())
+
+			if err := item.Value(func(v []byte) error {
+				ct, e := cdb.deserializeContract(v)
+				if e != nil {
+					return e
+				}
+				batch = append(batch, ct)
+				nextStartKey = lastKey
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return
+}
+
 // Count: 전체 개수
 func (cdb *ContractDB) Count() (int, error) {
 	count := 0

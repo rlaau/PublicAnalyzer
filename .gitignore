@@ -11,5 +11,6 @@ testdata/
 *.vlog
 *.sst
 *.jsonl
+*.bin
 chainanalyzer
 /debug_test_data

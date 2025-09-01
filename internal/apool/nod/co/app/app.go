@@ -106,3 +106,8 @@ func (co *Co) ChangeDBPath(target string, path string) {
 		panic("DB코드 아님")
 	}
 }
+
+// *테스팅, cmd용 메서드
+func (co *Co) GetContDB() *infra.ContractDB {
+	return co.contDB
+}
