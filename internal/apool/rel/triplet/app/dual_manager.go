@@ -1,8 +1,10 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/roperepo"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/iface"
@@ -11,6 +13,7 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring/meter/rsv"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/fp"
 )
 
@@ -22,42 +25,38 @@ type DualManager struct {
 
 	// Synchronization (최적화된 뮤텍스)
 	mutex sync.RWMutex // 전체 구조체 보호용 (구조 변경 등)
+
+	// Performance monitoring
+	perfMeter *rsv.FunctionReservoirMeter
+	ctx       context.Context
+	cancel    context.CancelFunc
 }
 
 // NewDualManager creates a new dual manager instance
 func NewDualManager(managerInfra *infra.DualManagerInfra, pool iface.RelPort) (*DualManager, error) {
+	ctx, cancel := context.WithCancel(context.Background())
 	dm := &DualManager{
-		infra:   managerInfra,
-		relPool: pool,
+		infra:     managerInfra,
+		relPool:   pool,
+		perfMeter: rsv.NewFunctionReservoirMeter(10_000),
+		ctx:       ctx,
+		cancel:    cancel,
 	}
-	//* 타임 버킷이 버려질 땐 펜딩 릴레이션도 버려지게 설정
-	// 타임버킷 로테이트 시, 해당 버킷의 to-user 펜딩 릴레이션 정리
-	managerInfra.TimeBucketManager.OnRotate = func(oldBucket *infra.TimeBucket) {
-		// 1) 키 스냅샷을 먼저 뜬다 (동시 수정/삭제로부터 보호)
-		keys := make([]domain.Address, 0, len(oldBucket.ToUsers))
-		for to := range oldBucket.ToUsers {
-			keys = append(keys, to)
-		}
 
-		deleted, err := dm.infra.PendingRelationRepo.DeletePendingRelationsBatch(keys)
-		if err != nil {
-			fmt.Printf("   ⚠️ Failed to delete pending relations for %s: %v\n",
-				keys[0].String()[:10]+"...", err)
-		}
-
-		// 3) 출력은 스냅샷 길이 기준 (맵이 비워졌더라도 정확한 개수 출력)
-		fmt.Printf("%d개의 펜딩 to user를 두 저장소에서 제거함\n", deleted)
-	}
+	// 성능 모니터링 고루틴 시작 (20초마다 통계 출력)
+	go dm.startPerformanceMonitoring()
 
 	return dm, nil
 }
 
 // Close closes the dual manager and its resources
 func (dm *DualManager) Close() error {
-	if err := dm.infra.PendingRelationRepo.Close(); err != nil {
-		return err
+	dm.cancel() // 성능 모니터링 고루틴 종료
+
+	if dm.infra.HeavyTimeBucketManager != nil {
+		return dm.infra.HeavyTimeBucketManager.Close()
 	}
-	return dm.infra.TimeBucketManager.Close()
+	return nil
 }
 
 // CheckTransaction is the main entry point for transaction analysis
@@ -152,62 +151,63 @@ func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.Mark
 }
 
 func (dm *DualManager) handleTxFromCex(cex domain.Address, other domain.Address, tx *domain.MarkedTransaction) error {
-	author := roperepo.AuthorSystem
-	trait := roperepo.TraitCexToOther
+	// author := roperepo.AuthorSystem
+	// trait := roperepo.TraitCexToOther
 
-	cexAndRule := ropedomain.AddressAndRule{
-		Address: cex,
-		Rule:    roperepo.RuleCex,
-	}
-	otherAndRule := ropedomain.AddressAndRule{
-		Address: other,
-		Rule:    roperepo.RuleRecievingFromCex,
-	}
-	txScala := ropedomain.TxScala{
-		TxId:        tx.TxID,
-		Time:        tx.BlockTime,
-		ScoreInc:    1,
-		ValueOrNull: tx.ValueOrNull,
-	}
-	traitEvent := ropedomain.NewTraitEvent(
-		author,
-		trait,
-		cexAndRule,
-		otherAndRule,
-		txScala,
-	)
-	return dm.relPool.RopeDB().PushTraitEvent(traitEvent)
+	// cexAndRule := ropedomain.AddressAndRule{
+	// 	Address: cex,
+	// 	Rule:    roperepo.RuleCex,
+	// }
+	// otherAndRule := ropedomain.AddressAndRule{
+	// 	Address: other,
+	// 	Rule:    roperepo.RuleRecievingFromCex,
+	// }
+	// txScala := ropedomain.TxScala{
+	// 	TxId:        tx.TxID,
+	// 	Time:        tx.BlockTime,
+	// 	ScoreInc:    1,
+	// 	ValueOrNull: tx.ValueOrNull,
+	// }
+	// traitEvent := ropedomain.NewTraitEvent(
+	// 	author,
+	// 	trait,
+	// 	cexAndRule,
+	// 	otherAndRule,
+	// 	txScala,
+	// )
+	return nil
 }
 
 func (dm *DualManager) handleTxFromDepositWithNotCex(deposit domain.Address, other domain.Address, tx *domain.MarkedTransaction) error {
-	author := roperepo.AuthorSystem
-	trait := roperepo.TraitDepositToOther
-	depositAndRule := ropedomain.AddressAndRule{
-		Address: deposit,
-		Rule:    roperepo.RuleDeposit,
-	}
-	otherAndRule := ropedomain.AddressAndRule{
-		Address: other,
-		Rule:    roperepo.RuleRecievingFromDeposit,
-	}
-	txScala := ropedomain.TxScala{
-		TxId:        tx.TxID,
-		Time:        tx.BlockTime,
-		ScoreInc:    1,
-		ValueOrNull: tx.ValueOrNull,
-	}
-	te := ropedomain.NewTraitEvent(
-		author,
-		trait,
-		depositAndRule,
-		otherAndRule,
-		txScala,
-	)
-	return dm.relPool.RopeDB().PushTraitEvent(te)
+	// author := roperepo.AuthorSystem
+	// trait := roperepo.TraitDepositToOther
+	// depositAndRule := ropedomain.AddressAndRule{
+	// 	Address: deposit,
+	// 	Rule:    roperepo.RuleDeposit,
+	// }
+	// otherAndRule := ropedomain.AddressAndRule{
+	// 	Address: other,
+	// 	Rule:    roperepo.RuleRecievingFromDeposit,
+	// }
+	// txScala := ropedomain.TxScala{
+	// 	TxId:        tx.TxID,
+	// 	Time:        tx.BlockTime,
+	// 	ScoreInc:    1,
+	// 	ValueOrNull: tx.ValueOrNull,
+	// }
+	// te := ropedomain.NewTraitEvent(
+	// 	author,
+	// 	trait,
+	// 	depositAndRule,
+	// 	otherAndRule,
+	// 	txScala,
+	// )
+	return nil
 }
 
 // 새 디포짓 주소 발견한 경우
 func (dm *DualManager) DetectNewDepositAddress(dd *domain.DetectedDeposit) error {
+	defer rsv.MeasureFunction(dm.perfMeter, "DetectNewDepositAddress")()
 	return dm.relPool.GetApooPort().GetNodPort().GetEoPort().SaveDetectedDeposit(dd)
 }
 
@@ -235,7 +235,7 @@ func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Addres
 		fmt.Printf("Cex, Deposit연결을 그래프DB저장하려던 중 에러남")
 	}
 	// 3. DualManager의 pendingRelationsDB에서 depositAddr을 to로 하는 []fromScala 값들 조회
-	fromScalas, err := dm.infra.PendingRelationRepo.GetPendingRelations(depositAddr)
+	fromScalas, err := dm.getPendingRelations(depositAddr)
 	if err == nil && len(fromScalas) > 0 {
 		// 3. [](to,from) 쌍들을 그래프DB에 저장
 		for _, fromScala := range fromScalas {
@@ -244,17 +244,13 @@ func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Addres
 			}
 		}
 
-		// 처리된 관계 제거
-		if err := dm.infra.PendingRelationRepo.DeletePendingRelations(depositAddr); err != nil {
-			return err
-		}
-		if isRemoved := dm.DeleteUserFromTimeBucket(depositAddr); !isRemoved {
-			fmt.Printf("dm.handleDepositDetection: 팬딩 릴레이션에선 depositAddr제거했는데, 타임버킷에선 depositAddr을 찾지 못해서 제거하지 못함")
-			return nil
-		}
 	}
 
 	return nil
+}
+func (dm *DualManager) getPendingRelations(deposit domain.Address) ([]infra.FromScala, error) {
+	defer rsv.MeasureFunction(dm.perfMeter, "getPendingRelations")()
+	return dm.infra.HeavyTimeBucketManager.GetFromScalas(deposit), nil
 }
 
 // saveDualToGraphDB saves from-to dual relationship to graph database
@@ -263,6 +259,8 @@ func (dm *DualManager) saveDualToGraphDB(fromScala infra.FromScala, toAddr domai
 }
 
 func (dm *DualManager) saveCexAndDepositToGraphDB(cex, deposit domain.Address, tx *domain.MarkedTransaction, lastTime chaintimer.ChainTime) error {
+	defer rsv.MeasureFunction(dm.perfMeter, "saveCexAndDepositToGraphDB")()
+
 	trait := roperepo.TraitCexAndDeposit
 	addrAndRule1 := ropedomain.AddressAndRule{
 		Address: cex,
@@ -290,6 +288,8 @@ func (dm *DualManager) saveCexAndDepositToGraphDB(cex, deposit domain.Address, t
 
 // saveDualRelationToGraphDB saves a connection between two EOAs to the graph database
 func (dm *DualManager) saveDualRelationToGraphDB(fromScala infra.FromScala, toAddr domain.Address) error {
+	defer rsv.MeasureFunction(dm.perfMeter, "saveDualRelationToGraphDB")()
+
 	trait := roperepo.TraitDepositAndUser
 	addressAndRule1 := ropedomain.AddressAndRule{
 		Address: fromScala.FromAddress,
@@ -320,45 +320,103 @@ func (dm *DualManager) saveDualRelationToGraphDB(fromScala infra.FromScala, toAd
 
 // 일반 트랜잭션 → 윈도 버퍼/팬딩 적재
 func (dm *DualManager) AddToWindowBuffer(tx *domain.MarkedTransaction) (*domain.MarkedTransaction, error) {
-	txTime := tx.BlockTime
+	defer rsv.MeasureFunction(dm.perfMeter, "AddToWindowBuffer")()
+
 	toAddr := tx.To
 	fromAddr := tx.From
 
 	static_counter++
 
 	// 윈도 내 미존재시에만 현재 주 버킷에 추가
-	_, _ = dm.infra.TimeBucketManager.AddIfAbsent(toAddr, txTime)
 	fromScala := infra.FromScala{
 		FromAddress: fromAddr,
 		LastTxId:    tx.TxID,
 		LastTime:    tx.BlockTime,
 	}
-	if err := dm.infra.PendingRelationRepo.AddToPendingRelations(toAddr, fromScala); err != nil {
-		return nil, fmt.Errorf("AddToWindowBuffer: failed to AddToPendingRelations: %w", err)
-	}
+	func() {
+		defer rsv.MeasureFunction(dm.perfMeter, "AddToWindowBuffer.AddIfAbsent")()
+		_, _ = dm.infra.HeavyTimeBucketManager.AddIfAbsent(toAddr, fromScala)
+	}()
+
 	return nil, fp.ErrorSkipStep
 }
 
 // 디버깅용 전역 카운터
 var static_counter int64
 
-// DeleteUserFromTimeBucket removes the given to user from the sliding window buckets.
-// It scans from the latest bucket (rearIndex) backward and deletes on first match.
-// Returns true if the user was found and removed; otherwise returns false.
-func (dm *DualManager) DeleteUserFromTimeBucket(toAddr domain.Address) bool {
-	return dm.infra.TimeBucketManager.DeleteToUser(toAddr)
-}
-
 func (dm *DualManager) GetWindowStats() map[string]any {
 	dm.mutex.RLock()
 	defer dm.mutex.RUnlock()
 
 	return map[string]any{
-		"active_buckets":       dm.infra.TimeBucketManager.ActiveCount(),
-		"total_to_users":       dm.infra.TimeBucketManager.TotalToUsers(),
-		"pending_relations":    dm.infra.PendingRelationRepo.CountPendingRelations(),
+		"active_buckets":       dm.infra.HeavyTimeBucketManager.ActiveCount(),
+		"total_to_users":       dm.infra.HeavyTimeBucketManager.TotalToUsers(),
+		"pending_relations":    dm.infra.HeavyTimeBucketManager.CountPendingRelations(),
 		"window_size_hours":    infra.WindowSize.Hours(),
 		"slide_interval_hours": infra.SlideInterval.Hours(),
 		"max_buckets":          infra.MaxTimeBuckets,
+	}
+}
+
+// startPerformanceMonitoring은 20초마다 성능 통계를 출력하는 고루틴을 시작합니다.
+func (dm *DualManager) startPerformanceMonitoring() {
+	ticker := time.NewTicker(20 * time.Second)
+	defer ticker.Stop()
+
+	fmt.Printf("[DualManager Performance Monitor] Started - will report every 20 seconds\n")
+
+	for {
+		select {
+		case <-dm.ctx.Done():
+			fmt.Printf("[DualManager Performance Monitor] Shutting down\n")
+			return
+		case <-ticker.C:
+			dm.printPerformanceStats()
+		}
+	}
+}
+
+// printPerformanceStats는 현재 성능 통계를 출력합니다.
+func (dm *DualManager) printPerformanceStats() {
+	stats := dm.perfMeter.GetSortedStats()
+
+	if len(stats) == 0 {
+		fmt.Printf("=== [DualManager Performance] No function calls recorded ===\n")
+		return
+	}
+
+	fmt.Printf("\n=== [DualManager Performance Statistics] ===\n")
+	fmt.Printf("%-35s %8s %12s %12s %12s %12s\n",
+		"Function", "Count", "Mean", "P50", "P95", "P99")
+	fmt.Println("---------------------------------------------------------------------------------")
+
+	for _, stat := range stats {
+		funcName := stat.FunctionName
+		if len(funcName) > 35 {
+			funcName = funcName[:32] + "..."
+		}
+
+		fmt.Printf("%-35s %8d %12s %12s %12s %12s\n",
+			funcName,
+			stat.Count,
+			formatDuration(stat.Mean),
+			formatDuration(stat.P50),
+			formatDuration(stat.P95),
+			formatDuration(stat.P99),
+		)
+	}
+	fmt.Printf("=== [DualManager Performance End] ===\n\n")
+}
+
+// formatDuration은 듀레이션을 읽기 쉬운 형태로 포맷합니다.
+func formatDuration(d time.Duration) string {
+	if d < time.Microsecond {
+		return fmt.Sprintf("%.0fns", float64(d))
+	} else if d < time.Millisecond {
+		return fmt.Sprintf("%.1fμs", float64(d)/float64(time.Microsecond))
+	} else if d < time.Second {
+		return fmt.Sprintf("%.2fms", float64(d)/float64(time.Millisecond))
+	} else {
+		return fmt.Sprintf("%.3fs", float64(d)/float64(time.Second))
 	}
 }

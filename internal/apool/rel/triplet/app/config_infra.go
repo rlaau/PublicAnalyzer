@@ -26,10 +26,8 @@ func NewInfraByConfig(config *TripletConfig) *infra.TripletAndDualManagerInfra {
 		panic(fmt.Sprintf("Failed to create isolated DB directory: %v", err))
 	}
 
-	consumer, err := eventbus.NewWithPath[*shareddomain.MarkedTransaction](isolateColusre("tx_channel.jsonl"), 50000) //loadKafkaBatchConsumer(config.Mode, config.Name)
-	if err != nil {
-		panic(fmt.Sprintf("NewInfraByConfig: 콘슈머 생성 중 에러: %v", err))
-	}
+	consumer := eventbus.NewInMemory[*shareddomain.MarkedTransaction](config.BusCapLimit) //loadKafkaBatchConsumer(config.Mode, config.Name)
+
 	// 워커 풀에 쓸 채널 생성 (메모리 전용 - 인터페이스 타입이므로 JSONL 불가)
 	txJobBus := eventbus.NewInMemory[workerpool.Job](config.BusCapLimit)
 	//* 워커풀 생성 및 채널 등록
@@ -37,16 +35,16 @@ func NewInfraByConfig(config *TripletConfig) *infra.TripletAndDualManagerInfra {
 	ctx := context.Background()
 	workerPool := workerpool.New(ctx, config.WorkerCount, txJobBus)
 	log.Printf("🔧 WorkerPool initialized with %d workers", config.WorkerCount)
-	pendingDB, err := infra.NewBadgerPendingRelationRepo(isolateColusre("pending"))
-	if err != nil {
-		panic("펜딜 레포지토리를 열지 못함.")
-	}
-	timeBucketManager, err := infra.NewTimeBucketManager(isolateColusre("timebucket"))
+	// pendingDB, err := infra.NewBadgerPendingRelationRepo(isolateColusre("pending"))
+	// if err != nil {
+	// 	panic("펜딜 레포지토리를 열지 못함.")
+	// }
+	timeBucketManager, err := infra.NewHeavyTimeBucketManager(isolateColusre("timebucket"))
 	if err != nil {
 		panic("타임버킷 메니져 로드 중 에러 발생")
 	}
 	fmt.Printf("Triplet 인프라 전부 로드 완료")
-	return infra.NewTripletInfra(txJobBus, workerPool, consumer, pendingDB, timeBucketManager)
+	return infra.NewTripletInfra(txJobBus, workerPool, consumer, timeBucketManager)
 
 }
 

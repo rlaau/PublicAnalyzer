@@ -26,18 +26,18 @@ func main() {
 	defer cancel()
 
 	// 1) 올바른 레이아웃 사용 + 에러 체크
-	startTime, err := time.Parse("2006-01-02", "2023-09-01")
+	startTime, err := time.Parse("2006-01-02", "2024-01-01")
 	if err != nil {
 		log.Fatalf("startTime parse: %v", err)
 	}
-	endTime, err := time.Parse("2006-01-02", "2023-12-31")
+	endTime, err := time.Parse("2006-01-02", "2024-04-30")
 	if err != nil {
 		log.Fatalf("endTime parse: %v", err)
 	}
 	sb, err := bus.NewStreamBus(bus.StreamBusConfig{
 		RootPathFunc:      func() string { return computation.FindProjectRootPath() },
 		BusRelPath:        "streambus/rawtx.jsonl", // 원하면 경로 변경
-		BufferSize:        10_000,                  // 버퍼(큐) 크기
+		BufferSize:        100_000,                 // 버퍼(큐) 크기
 		PositionDataDir:   computation.FindProductionStorageRootPath() + "/streambus_pos",
 		SaveInterval:      time.Second,
 		SortedStoragePath: computation.FindProjectRootPath() + "/stream_storage/sorted",
@@ -59,7 +59,7 @@ func main() {
 
 	// WaitGroup for tracking goroutines
 	var wg sync.WaitGroup
-	
+
 	fmt.Printf("4️⃣ Running & 이벤트버스...\n")
 	wg.Add(1)
 	go func() {
@@ -80,6 +80,10 @@ func main() {
 		log.Fatalf("Failed to start StreamBus: %v\n", err)
 	}
 	fmt.Printf("stream bus 스타트: %s에서 %s까지 이벤트버스 스트리밍\n.", startTime, endTime)
+
+	// Channel to signal when StreamBetween completes
+	streamDone := make(chan struct{})
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -88,7 +92,10 @@ func main() {
 			endTime.Format("2006-01-02"),
 		); err != nil {
 			log.Printf("Stream error: %v", err)
+		} else {
+			log.Printf("   ✅ StreamBus completed streaming all tx Between data")
 		}
+		close(streamDone)
 	}()
 
 	tripletDone := make(chan error, 1)
@@ -100,7 +107,31 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	fmt.Printf("   🎯 Server and Triplet running! Press Ctrl+C to stop...\n")
+
+	// Main event loop
 	select {
+	case <-streamDone:
+		// StreamBus finished - wait 30 seconds before shutdown
+		fmt.Printf("   ✅ StreamBus completed all data streaming\n")
+		fmt.Printf("   ⏱️ Waiting 30 seconds before graceful shutdown...\n")
+
+		// Create a timer for 30 seconds
+		shutdownTimer := time.NewTimer(30 * time.Second)
+		defer shutdownTimer.Stop()
+
+		// Wait for either the timer or manual interrupt
+		select {
+		case <-shutdownTimer.C:
+			fmt.Printf("   ⏰ 30 seconds elapsed - initiating graceful shutdown\n")
+		case <-sigChan:
+			fmt.Printf("   🛑 Manual shutdown signal received before timer\n")
+		case err := <-tripletDone:
+			if err != nil {
+				fmt.Printf("   ⚠️ Triplet stopped with error: %v\n", err)
+			} else {
+				fmt.Printf("   ✅ Triplet completed successfully\n")
+			}
+		}
 	case <-ctx.Done():
 		fmt.Printf("   ⏰ Test completed by timeout\n")
 	case err := <-tripletDone:
@@ -112,25 +143,25 @@ func main() {
 	case <-sigChan:
 		fmt.Printf("   🛑 Shutdown signal received...\n")
 	}
-	
+
 	// Shutdown sequence
 	log.Printf("   🛑 Starting shutdown sequence...")
-	
+
 	// 1) Cancel context to signal all goroutines immediately
 	cancel()
-	
+
 	// 2) Stop StreamBus first to prevent new data
 	log.Printf("   🛑 Stopping StreamBus...")
 	if err := sb.Stop(); err != nil {
 		log.Printf("   ⚠️ StreamBus stop error: %v", err)
 	}
-	
+
 	// 3) Force stop Triplet with timeout
 	log.Printf("   🛑 Stopping Triplet...")
 	if err := relPool.GetTripletPort().Stop(); err != nil {
 		log.Printf("   ⚠️ Triplet stop error: %v", err)
 	}
-	
+
 	// 4) Wait for Triplet completion with shorter timeout
 	select {
 	case err := <-tripletDone:
@@ -139,10 +170,10 @@ func main() {
 		} else {
 			log.Printf("   ✅ Triplet completed successfully")
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(30 * time.Second):
 		log.Printf("   ⏱️ Triplet stop timeout - forcing shutdown")
 	}
-	
+
 	// 5) Wait for all goroutines with shorter timeout
 	log.Printf("   ⏳ Waiting for all goroutines to complete...")
 	done := make(chan struct{})
@@ -150,34 +181,34 @@ func main() {
 		wg.Wait()
 		close(done)
 	}()
-	
+
 	select {
 	case <-done:
 		log.Printf("   ✅ All goroutines stopped")
 	case <-time.After(5 * time.Second):
 		log.Printf("   ⚠️ Goroutine shutdown timeout - forcing exit")
 	}
-	
+
 	// 6) Shutdown API server
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer shutdownCancel()
-	
+
 	log.Printf("   🛑 Shutting down API server...")
 	if err := monitoringServer.Shutdown(shutdownCtx); err != nil {
 		log.Printf("   ⚠️ Server shutdown error: %v", err)
 	} else {
 		log.Printf("   ✅ API server shutdown completed")
 	}
-	
+
 	// 7) Final cleanup - force close all resources
 	log.Printf("   🛑 Final resource cleanup...")
 	if relPool.GetTripletPort() != nil {
 		relPool.GetTripletPort().Close()
 		log.Printf("   ✅ Triplet port closed")
 	}
-	
+
 	log.Printf("   ✅ Shutdown sequence completed")
-	
+
 	// Final safety: force exit after total timeout
 	go func() {
 		time.Sleep(15 * time.Second)
@@ -202,6 +233,10 @@ func LoadAndFilterAndMarkAndIngestTransaction(
 	shutdownTimer := time.NewTimer(5 * time.Second)
 	defer shutdownTimer.Stop()
 
+	// 10초 간격으로 버스 상태를 출력하는 타이머
+	statusTicker := time.NewTicker(10 * time.Second)
+	defer statusTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -224,6 +259,12 @@ func LoadAndFilterAndMarkAndIngestTransaction(
 					return
 				}
 			}
+
+		case <-statusTicker.C:
+			// 10초마다 txBridge와 tripletBus 상태 출력
+			log.Printf("📊 [Bus Status] txBridge - len: %d, cap: %d | tripletBus - len: %d, cap: %d",
+				txBridge.Len(), txBridge.Cap(),
+				tripletBus.Len(), tripletBus.Cap())
 
 		case msg, ok := <-in:
 			if !ok {

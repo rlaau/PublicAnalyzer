@@ -66,6 +66,10 @@ const (
 func (t TxId) String() string {
 	return "0x" + hex.EncodeToString(t[:])
 }
+func MustParseTxId(s string) TxId {
+	tid, _ := ParseTxId(s)
+	return tid
+}
 
 // ParseTxId: "0x..." 형태의 문자열을 TxId로 변환
 func ParseTxId(s string) (TxId, error) {

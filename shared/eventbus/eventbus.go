@@ -52,6 +52,7 @@ func NewWithPath[T any](filePath string, capLimit int) (*EventBus[T], error) {
 		out:      make(chan T, buf), // 10 -> capLimit(or 1024)
 		filePath: filePath,
 		capLimit: capLimit,
+		mode:     PersistentMode,
 	}
 	b.cv = sync.NewCond(&b.mu)
 
@@ -95,65 +96,19 @@ func NewInMemory[T any](bufferSize int) *EventBus[T] {
 	}
 }
 
-func (b *EventBus[T]) run(backlog []T) {
-	defer b.wg.Done()
-	local := make([]T, 0, 4096)
-
-	b.mu.Lock()
-	b.pending = append(b.pending, backlog...)
-	for {
-		for !b.stopping && len(b.pending) == 0 {
-			b.cv.Wait()
-		}
-		if b.stopping {
-			rest := append([]T(nil), b.pending...)
-			b.mu.Unlock()
-			_ = saveBacklogJSONL(b.filePath, rest)
-			close(b.out)
-			return
-		}
-
-		// swap pending -> local
-		local = local[:0]
-		local = append(local, b.pending...)
-		b.pending = b.pending[:0]
-		b.cv.Signal() // 생산자 하나 깨워줌 (여유 생김)
-		b.mu.Unlock()
-
-		// 잠금 해제 상태에서 out으로 가능한 한 많이 보냄
-		for i := 0; i < len(local); i++ {
-			select {
-			case b.out <- local[i]:
-				// ok
-			default:
-				// out이 꽉 찼다 → 남은 걸 다시 pending 앞쪽에 되밀고 다음 턴
-				b.mu.Lock()
-				b.pending = append(local[i:], b.pending...) // 순서 유지
-				b.mu.Unlock()
-				break
-			}
-		}
-		b.mu.Lock()
-	}
-}
-
 // Publish: 생산자 → pending. capLimit 초과 시 cond wait로 역압.
 func (b *EventBus[T]) Publish(v T) error {
 	if b.closed.Load() {
 		return errors.New("eventbus: closed")
 	}
 
-	// 메모리 전용 모드: out 채널에 직접 전송
+	// ✅ 메모리 전용 모드: 블로킹 send (대기하면서 흘러가게)
 	if b.mode == MemoryOnlyMode {
-		select {
-		case b.out <- v:
-			return nil
-		default:
-			return errors.New("eventbus: channel full")
-		}
+		b.out <- v // 블로킹
+		return nil
 	}
 
-	// 영구 저장 모드: pending → out 방식
+	// 퍼시스턴트 모드
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for !b.stopping && b.capLimit > 0 && len(b.pending) >= b.capLimit {
@@ -166,10 +121,21 @@ func (b *EventBus[T]) Publish(v T) error {
 	b.cv.Signal()
 	return nil
 }
+
 func (b *EventBus[T]) PublishBatch(vs []T) error {
 	if b.closed.Load() {
 		return errors.New("eventbus: closed")
 	}
+
+	// ✅ 메모리 전용 모드: 채널로 순차 송신 (블로킹)
+	if b.mode == MemoryOnlyMode {
+		for i := range vs {
+			b.out <- vs[i] // 공간 생길 때까지 대기
+		}
+		return nil
+	}
+
+	// 퍼시스턴트 모드: 남은 공간만큼 쪼개서 넣기
 	start := 0
 	for start < len(vs) {
 		b.mu.Lock()
@@ -191,11 +157,54 @@ func (b *EventBus[T]) PublishBatch(vs []T) error {
 		if room > 0 {
 			b.pending = append(b.pending, vs[start:start+room]...)
 			start += room
-			b.cv.Signal() // run() 계속 돌도록 깨움
+			b.cv.Signal()
 		}
 		b.mu.Unlock()
 	}
 	return nil
+}
+
+func (b *EventBus[T]) run(backlog []T) {
+	defer b.wg.Done()
+	local := make([]T, 0, 4096)
+
+	b.mu.Lock()
+	b.pending = append(b.pending, backlog...)
+	for {
+		for !b.stopping && len(b.pending) == 0 {
+			b.cv.Wait()
+		}
+		if b.stopping {
+			rest := append([]T(nil), b.pending...)
+			b.mu.Unlock()
+
+			// ✅ 퍼시스턴트 모드에서만 JSONL 저장
+			if b.mode == PersistentMode && len(rest) > 0 && b.filePath != "" {
+				_ = saveBacklogJSONL(b.filePath, rest)
+			}
+			close(b.out)
+			return
+		}
+
+		// swap pending -> local (드레인-버스트)
+		local = local[:0]
+		local = append(local, b.pending...)
+		b.pending = b.pending[:0]
+		b.cv.Signal()
+		b.mu.Unlock()
+
+		for i := 0; i < len(local); i++ {
+			select {
+			case b.out <- local[i]:
+			default:
+				b.mu.Lock()
+				b.pending = append(local[i:], b.pending...)
+				b.mu.Unlock()
+				break
+			}
+		}
+		b.mu.Lock()
+	}
 }
 
 // Dequeue: 단일 소비자 채널
@@ -225,11 +234,17 @@ func (b *EventBus[T]) Close() {
 func (b *EventBus[T]) Len() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.mode == MemoryOnlyMode {
+		return len(b.out)
+	}
 	return len(b.pending)
 }
 
 // Cap: 설정된 capLimit을 반환. 0 또는 음수면 '무제한' 의미.
 func (b *EventBus[T]) Cap() int {
+	if b.mode == MemoryOnlyMode {
+		return cap(b.out)
+	}
 	return b.capLimit
 }
 

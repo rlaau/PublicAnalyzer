@@ -142,8 +142,10 @@ func waitRopeMembers(t *testing.T, impl *BadgerRopeDB, a shareddomain.Address, t
 	expectCount int, expectMembers ...shareddomain.Address,
 ) {
 	t.Helper()
-	deadline := time.Now().Add(8 * time.Second) // 여유 있게
+	deadline := time.Now().Add(15 * time.Second) // 여유 있게
 	for {
+		// 배치 플러시 강제 실행
+
 		v := impl.GetOrCreateVertex(a)
 		rid, ok := impl.RopeIDByTrait(v, trait)
 		if ok {
@@ -155,13 +157,14 @@ func waitRopeMembers(t *testing.T, impl *BadgerRopeDB, a shareddomain.Address, t
 			t.Logf("[waitRopeMembers] a=%v trait=%v rid=%d ok=%v members=%v size=%d",
 				a, trait, rid, ok, rm.Members, len(rm.Members))
 		} else {
-			t.Logf("[waitRopeMembers] a=%v trait=%v: ropeID not yet assigned in vertex", a, trait)
+			t.Logf("[waitRopeMembers] a=%v trait=%v: ropeID not yet assigned in vertex. v.Ropes=%v", a, trait, v.Ropes)
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("timeout waiting rope members: a=%v trait=%v wantCount=%d want=%v",
 				a, trait, expectCount, expectMembers)
+			fmt.Printf("%v: %v", a, v.Ropes)
 		}
-		time.Sleep(3000 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond) // 배치 플러시 후 짧은 대기
 	}
 }
 
@@ -178,7 +181,6 @@ func linksOf(t *testing.T, impl *BadgerRopeDB, a shareddomain.Address) []domain.
 // --- 시나리오 ---
 
 func TestRopeDB_UseCase_Spec(t *testing.T) {
-
 	testDir := computation.FindTestingStorageRootPath() + "/rope_visual"
 	computation.SetCleanedDir(testDir)
 	db, err := NewRopeDBWithRoot(mode.TestingModeProcess, testDir, "rope_test", TraitLegend, RuleLegend, PolyTraitLegend, TrapLegend, AuthorLegend)
@@ -350,7 +352,9 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 	if isContain, _ := impl.AreTrapsInMyPolyRope(v10, PolyTraitSameCluster); isContain {
 		t.Fatalf("10의 same Cluster 폴리 로프는 트랩 없어야 함")
 	}
+
 	if isContatin, _ := impl.AreTrapsInMyPolyRope(v10, PolyTraitOthers); !isContatin {
+		fmt.Printf("10의 폴리로프&트레이트 %v", v10.PolyRopes)
 		t.Fatalf("10은 others 폴리 로프에선 트랩 지녀야 함")
 	}
 

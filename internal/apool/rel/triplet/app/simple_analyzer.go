@@ -101,7 +101,7 @@ func NewTestingEOAAnalyzer(config *TripletConfig, relPool iface.RelPort) (Common
 // newSimpleAnalyzer 공통 분석기 생성 로직
 func newSimpleAnalyzer(config *TripletConfig, infraStructure *infra.TripletAndDualManagerInfra, relPool iface.RelPort) (*SimpleTriplet, error) {
 	//전체 EOA인프라에서 꺼내 쓰는 형식
-	dualManagerInfra := infra.NewDualManagerInfra(infraStructure.PendingRelationRepo, infraStructure.TimeBucketManager)
+	dualManagerInfra := infra.NewDualManagerInfra(infraStructure.HeavyTimeBucketManager)
 	dualManager, _ := NewDualManager(dualManagerInfra, relPool)
 	log.Printf("듀얼 매니져 초기화. 현재 cex주소 개수: %d", len(dualManager.relPool.GetApooPort().GetNodPort().GetEoPort().CEXAddresses()))
 	analyzer := &SimpleTriplet{
@@ -194,11 +194,11 @@ func (a *SimpleTriplet) ComsumeTransaction(ctx context.Context) {
 	defer a.wg.Done()
 	in := a.infra.TxBus.Dequeue()
 	log.Printf("🚀 이벤트버스 시작")
-	
+
 	// Shutdown timeout for graceful exit
 	shutdownTimer := time.NewTimer(time.Hour) // Initial large value, will be reset on shutdown
 	defer shutdownTimer.Stop()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -407,8 +407,8 @@ func (a *SimpleTriplet) printStatistics() {
 		uptime.Round(time.Second), total, success, errors)
 	log.Printf("   Deposits: %d | Graph: %d | Window: %d | Dropped: %d",
 		deposits, graphUpdates, windowUpdates, dropped)
-	log.Printf("   Channel: %d/%d (%.1f%%)", channelUsage, channelCapacity, usagePercent)
-
+	log.Printf("   Triplet-TxJobChannel: %d/%d (%.1f%%)", channelUsage, channelCapacity, usagePercent)
+	log.Panicf("   Triplet-MyTxBus: %d/%d", a.GetMyTxBus().Len(), a.GetMyTxBus().Len())
 	if total > 0 {
 		tps := float64(total) / uptime.Seconds()
 		successRate := float64(success) / float64(total) * 100
@@ -524,7 +524,7 @@ func (a *SimpleTriplet) shutdown() error {
 		a.cleanup()
 	}
 
-	log.Printf("✅ Shutdown completed: %s", a.config.Name)
+	log.Printf("✅ Triplet Shutdown completed: %s", a.config.Name)
 	return nil
 }
 

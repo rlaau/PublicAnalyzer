@@ -2,14 +2,26 @@ package infra
 
 type DualManagerInfra struct {
 	//GroundKnowledge *DomainKnowledge
-	// Persistent KV storage for to->[]from mappings (대규모 데이터 처리용)
-	PendingRelationRepo PendingRelationRepo
-	TimeBucketManager   *TimeBucketManager
+	// 통합된 메모리 기반 매니저 (TimeBucketManager + PendingRelationRepo 기능 통합)
+	HeavyTimeBucketManager *HeavyTimeBucketManager
+	//TODO 궁극적으론 DB기반이 나을 수 있지만.... 너무 너무 너무 너무 느렸음.
+	// // 레거시 호환성을 위해 유지 (새로운 구현에서는 사용되지 않음)
+	// // 향후 제거 예정
+	// PendingRelationRepo PendingRelationRepo
+	// TimeBucketManager   *TimeBucketManager
 }
 
-func NewDualManagerInfra(pendingRelationRepo PendingRelationRepo, timeBuckMgr *TimeBucketManager) *DualManagerInfra {
+// NewDualManagerInfra 새로운 HeavyTimeBucketManager 기반 생성자
+func NewDualManagerInfra(heavyTimeBucketMgr *HeavyTimeBucketManager) *DualManagerInfra {
 	return &DualManagerInfra{
-		PendingRelationRepo: pendingRelationRepo,
-		TimeBucketManager:   timeBuckMgr,
+		HeavyTimeBucketManager: heavyTimeBucketMgr,
 	}
 }
+
+// // NewDualManagerInfraLegacy 레거시 방식의 생성자 (기존 호환성 유지)
+// func NewDualManagerInfraLegacy(pendingRelationRepo PendingRelationRepo, timeBuckMgr *TimeBucketManager) *DualManagerInfra {
+// 	return &DualManagerInfra{
+// 		PendingRelationRepo: pendingRelationRepo,
+// 		TimeBucketManager:   timeBuckMgr,
+// 	}
+// }

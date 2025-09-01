@@ -143,13 +143,13 @@ type TraitRef struct {
 // RopeMark: Rope에 대한 저장 문서(조회 시 조립의 근간)
 type RopeMark struct {
 	ID           RopeID
-	TrapVertexes []TrapVertex
-	ValueOrNull  decimal.Decimal
 	Trait        TraitCode
 	Size         uint32 // Members 길이(정합성 위해 함께 유지)
 	Members      []shareddomain.Address
 	Volume       uint32
+	ValueOrNull  decimal.Decimal
 	LastSeen     chaintimer.ChainTime
+	TrapVertexes []TrapVertex
 }
 
 // TraitMark: Trait(엣지)에 대한 저장 문서
@@ -158,17 +158,17 @@ type TraitMark struct {
 	//*추가됨. 권한 코드
 	AuthorCodes []AuthorCode
 	LastTx      shareddomain.TxId
-	ValueOrNull decimal.Decimal
 	ID          TraitID
 	Trait       TraitCode
 
-	AddressA shareddomain.Address
-	RuleA    RuleCode
-	AddressB shareddomain.Address
-	RuleB    RuleCode
-	Score    int32
-	Volume   uint32
-	LastSeen chaintimer.ChainTime
+	AddressA    shareddomain.Address
+	RuleA       RuleCode
+	AddressB    shareddomain.Address
+	RuleB       RuleCode
+	Score       int32
+	Volume      uint32
+	ValueOrNull decimal.Decimal
+	LastSeen    chaintimer.ChainTime
 }
 
 // Rope: 조회 전용 뷰(저장 X)

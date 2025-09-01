@@ -80,14 +80,7 @@ func NewStreamBus(cfg StreamBusConfig) (*StreamBus, error) {
 	txStreamer := txstreamer.NewTxStreamer(storageRoot)
 
 	// EventBus (RawTransaction)
-	bus, err := eventbus.NewWithRoot[shareddomain.RawTransaction](
-		cfg.RootPathFunc,
-		cfg.BusRelPath,
-		cfg.BufferSize,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create event bus: %w", err)
-	}
+	bus := eventbus.NewInMemory[shareddomain.RawTransaction](cfg.BufferSize)
 
 	// Position repo
 	positionRepo := streamfeeder.NewFileStreamPositionRepository(cfg.PositionDataDir)
@@ -219,9 +212,18 @@ func (s *StreamBus) streamWithinTarget(target domain.StreamTarget) error {
 		if err := s.streamDate(date, positionTicker); err != nil {
 			return fmt.Errorf("failed to stream date %s: %w", date, err)
 		}
+
 		s.currentPosition.Index = 0
 	}
-	log.Printf("Completed streaming target range into EventBus")
+	next, err := s.getNextDate(target.EndDate)
+	if err == nil {
+		s.currentPosition.Date = next
+		s.currentPosition.Index = 0
+		if err := s.saveCurrentPosition(); err != nil {
+			log.Printf("Error saving final completed position: %v", err)
+		}
+	}
+	log.Printf("Steam Bus: Completed streaming target range into EventBus")
 	return nil
 }
 
@@ -257,9 +259,20 @@ func (s *StreamBus) streamFromCurrentPosition() error {
 }
 
 func (s *StreamBus) streamDate(date string, positionTicker *time.Ticker) error {
+	// 날짜 단위 타이밍/카운터
+	dayStart := time.Now()
+	var publishedThisDate uint64
 	for {
 		select {
 		case <-s.stopChan:
+			// 중단 시점에서도 지금까지 수집한 수치 출력 (부분 완료)
+			elapsed := time.Since(dayStart)
+			rate := 0.0
+			if sec := elapsed.Seconds(); sec > 0 {
+				rate = float64(publishedThisDate) / sec
+			}
+			log.Printf("Stream bus: Streaming stopped by user (date=%s) — published %d tx in %s (%.2f tx/s)",
+				date, publishedThisDate, elapsed, rate)
 			return nil
 		case <-positionTicker.C:
 			if err := s.saveCurrentPosition(); err != nil {
@@ -274,14 +287,20 @@ func (s *StreamBus) streamDate(date string, positionTicker *time.Ticker) error {
 			return fmt.Errorf("failed to get transactions: %w", err)
 		}
 		if len(transactions) == 0 {
-			log.Printf("Completed streaming date: %s", date)
+			elapsed := time.Since(dayStart)
+			rate := 0.0
+			if sec := elapsed.Seconds(); sec > 0 {
+				rate = float64(publishedThisDate) / sec
+			}
+			log.Printf("Stream bus - Completed streaming date: %s — published %d tx in %s (%.2f tx/s)",
+				date, publishedThisDate, elapsed, rate)
 			return nil
 		}
 
 		// 이벤트버스로 밀어넣기: 버퍼가 찰 때까지 최대한 채움
 		if err := s.publishToBus(transactions); err != nil {
 			atomic.AddUint64(&s.totalErrors, 1)
-			return fmt.Errorf("failed to publish to bus: %w", err)
+			return fmt.Errorf("failed to publish to stream bus: %w", err)
 		}
 
 		// 포지션 갱신(다음 읽을 인덱스)

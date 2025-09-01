@@ -21,7 +21,7 @@ const (
 	WindowSize      = 4 * 30 * 24 * chaintimer.Hour // 4개월
 	SlideInterval   = 7 * 24 * chaintimer.Hour      // 1주
 	TriggerInterval = 7 * 24 * chaintimer.Hour
-	MaxTimeBuckets  = 21
+	MaxTimeBuckets  = 5 //21 일단 5개만 들고 있기.
 )
 
 // ---- TimeBucket ----

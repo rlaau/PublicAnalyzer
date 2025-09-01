@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 // ------------------------------------------------------------
 
 const (
-	gcInterval       = 5 * time.Minute
+	gcInterval       = 3 * time.Minute
 	gcThreshold      = 0.4
 	gcPublishTrigger = 100_000 // 10만 건마다 트리거
 )
@@ -25,6 +26,11 @@ func (b *BadgerRopeDB) startGC() {
 // gcWorker: 주기적으로 GC 조건 체크 후 실행
 func (b *BadgerRopeDB) gcWorker() {
 	defer b.wg.Done()
+
+	// 20초마다 상태 출력용 타이머
+	statusTicker := time.NewTicker(20 * time.Second)
+	defer statusTicker.Stop()
+
 	for {
 		select {
 		case <-b.ctx.Done():
@@ -33,6 +39,12 @@ func (b *BadgerRopeDB) gcWorker() {
 			if b.shouldRunGC() {
 				b.runBadgerGC()
 			}
+		case <-statusTicker.C:
+			// 20초마다 현재 퍼블리시 카운터 및 DB 통계 출력
+			publishCount := atomic.LoadInt64(&b.publishCounter)
+			stats := b.GetGraphStats()
+			fmt.Printf("[RopeDB Status] 퍼블리시: %d | 버텍스: %v | 로프: %v | 트레이트: %v | 폴리로프: %v\n",
+				publishCount, stats["nodes"], stats["ropes"], stats["traits"], stats["polyRopes"])
 		}
 	}
 }

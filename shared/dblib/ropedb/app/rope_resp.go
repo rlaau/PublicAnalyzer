@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"google.golang.org/protobuf/proto"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
+	ropeproto "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/proto"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
 
@@ -566,7 +568,16 @@ func (b *BadgerRopeDB) topRopeByVolume() (ropedomain.RopeID, ropedomain.RopeMark
 		for it.Seek(pfx); it.ValidForPrefix(pfx); it.Next() {
 			item := it.Item()
 			var rm ropedomain.RopeMark
-			_ = item.Value(func(val []byte) error { return json.Unmarshal(val, &rm) })
+			_ = item.Value(func(val []byte) error {
+				// Proto 형식 먼저 시도
+				protoRM := &ropeproto.RopeMarkProto{}
+				if proto.Unmarshal(val, protoRM) == nil {
+					rm = ProtoToRopeMark(protoRM)
+					return nil
+				}
+				// JSON 폴백 (하위 호환성)
+				return json.Unmarshal(val, &rm)
+			})
 			if rm.ID == 0 {
 				continue
 			}
@@ -592,19 +603,7 @@ func betterRope(a, b ropedomain.RopeMark) bool {
 	return a.LastSeen.After(b.LastSeen)
 }
 
-// (사소 유틸)
-func (b *BadgerRopeDB) getTraitMark(id ropedomain.TraitID) ropedomain.TraitMark {
-	key := []byte(fmt.Sprintf("%s%d", kT, uint64(id)))
-	var tm ropedomain.TraitMark
-	_ = b.dbM.View(func(txn *badger.Txn) error {
-		itm, err := txn.Get(key)
-		if err != nil {
-			return nil
-		}
-		return itm.Value(func(val []byte) error { return json.Unmarshal(val, &tm) })
-	})
-	return tm
-}
+
 
 // GetTraitDetail TraitMark 상세 정보 조회
 func (b *BadgerRopeDB) GetTraitDetail(id ropedomain.TraitID) (map[string]interface{}, error) {

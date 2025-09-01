@@ -34,7 +34,7 @@ func DefaultTestingTripletConfig(processName string) *triplet.TripletConfig {
 func ComposeRelPool(mode mode.ProcessingMode, processName string, apool iface.ApoolPort) *RelationPool {
 	preRelPool, err := CreateRelationPoolFrame(mode, apool)
 	if err != nil {
-		panic("relPool Frame생성 중 에러")
+		panic(fmt.Sprintf("relPool Frame생성 중 에러: %v", err))
 	}
 	var tripletCfg *triplet.TripletConfig
 	if mode.IsTest() {
@@ -45,7 +45,7 @@ func ComposeRelPool(mode mode.ProcessingMode, processName string, apool iface.Ap
 			Name:           "Production-Triplet",
 			Mode:           mode,
 			BusCapLimit:    100_000,
-			WorkerCount:    2,
+			WorkerCount:    1,
 			IsolatedDBPath: filepath.Join(computation.FindProductionStorageRootPath(), processName),
 
 			AutoCleanup:         false, // ←★ 결과 보존 위해 비활성화

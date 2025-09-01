@@ -29,6 +29,11 @@ func OrderAddresses(a1, a2 Address) (Address, Address) {
 func (a Address) LessThan(a2 Address) bool {
 	return (bytes.Compare(a[:], a2[:]) <= 0)
 }
+func MustParseAddressFromString(hexStr string) Address {
+	addr, _ := ParseAddressFromString(hexStr)
+	return addr
+
+}
 
 // ParseAddressFromString converts hex string to Address
 func ParseAddressFromString(hexStr string) (Address, error) {
@@ -59,6 +64,22 @@ func (a Address) String() string {
 }
 func SerializeAddress(a Address) string {
 	return "0x" + hex.EncodeToString(a[:])
+}
+
+// LowerString: 항상 0x + 40자리 소문자 hex 문자열 반환
+func (a Address) LowerString() string {
+	b := make([]byte, 2+40)
+	b[0], b[1] = '0', 'x'
+	hex.Encode(b[2:], a[:]) // hex.Encode는 이미 소문자로만 인코딩
+	return string(b)
+}
+
+// LowerBytes: []byte로 바로 뽑기 (복사 없애려면 주의!)
+func (a Address) LowerBytes() []byte {
+	b := make([]byte, 2+40)
+	b[0], b[1] = '0', 'x'
+	hex.Encode(b[2:], a[:])
+	return b
 }
 
 type PredefinedAddress interface {
