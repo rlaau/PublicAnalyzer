@@ -1,6 +1,7 @@
 package sharedface
 
 import (
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/infra"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
@@ -11,6 +12,7 @@ type CoPort interface {
 	CheckIsContract(address domain.Address) bool
 	//TODO 추후 지울 것!
 	ChangeDBPath(target string, path string)
+	GetContDB() *infra.ContractDB
 }
 
 type CoMsg any

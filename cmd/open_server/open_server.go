@@ -27,7 +27,9 @@ func main() {
 	if err != nil {
 		panic("relpool생성 중 에러")
 	}
-	monitoringServer := server.NewServer(":8080")
+	// main.go
+	monitoringServer := server.NewServer("127.0.0.1:8080")
+
 	RegisterModule(monitoringServer, relPool)
 	go func() {
 		fmt.Printf("   🌐 Starting API server on :8080\n")

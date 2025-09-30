@@ -26,7 +26,7 @@ func main() {
 	defer cancel()
 
 	// 1) 올바른 레이아웃 사용 + 에러 체크
-	startTime, err := time.Parse("2006-01-02", "2024-05-01")
+	startTime, err := time.Parse("2006-01-02", "2023-09-01")
 	if err != nil {
 		log.Fatalf("startTime parse: %v", err)
 	}

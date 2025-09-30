@@ -36,7 +36,6 @@ const (
 	kCTrait    = "ctr:trait"
 	kCPolyRope = "ctr:polyrope" // BigEndian uint64 - PolyRope counter
 
-	maxRopeSize = 1000 // 도메인 상한
 )
 
 func NewRopeDB(isTest mode.ProcessingMode, dbName string, traitLegend map[domain.TraitCode]string,
@@ -89,6 +88,9 @@ type BadgerRopeDB struct {
 	// 인메모리 로프 사이즈 캐시 (로프 ID -> 사이즈 매핑)
 	ropeSizeCache *RopeSizeCache
 
+	//배칭용 로프 어그리게이터 케시
+	ropeAggCache *RopeAggCache
+
 	isTest bool
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -122,9 +124,48 @@ type BadgerRopeDB struct {
 	gcTicker       *time.Ticker
 	gcRunning      sync.Mutex
 	publishCounter int64 // 발행 이벤트 카운터
+
+	// 로프 병합 계측
+	ropeMergeMetrics *RopeMergeMetrics
 }
 
 // ==== PATCH END ====
+
+// RopeMergeMetrics는 로프 병합 작업의 계측 정보를 저장합니다
+type RopeMergeMetrics struct {
+	callCount      atomic.Int64 // 병합 블록 호출 횟수
+	totalTime      atomic.Int64 // 총 소요 시간 (나노초)
+	totalMergeSize atomic.Int64 // 병합된 총 로프 크기
+	mergeCount     atomic.Int64 // 병합 횟수 (평균 계산용)
+}
+
+// NewRopeMergeMetrics는 새로운 계측 구조체를 생성합니다
+func NewRopeMergeMetrics() *RopeMergeMetrics {
+	metrics := &RopeMergeMetrics{}
+	// 10초마다 통계 출력
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			calls := metrics.callCount.Load()
+			totalTimeNs := metrics.totalTime.Load()
+			totalSize := metrics.totalMergeSize.Load()
+			merges := metrics.mergeCount.Load()
+
+			if calls > 0 {
+				avgTimeMs := float64(totalTimeNs) / float64(calls) / 1e6
+				avgSize := float64(totalSize) / float64(merges)
+				if merges == 0 {
+					avgSize = 0
+				}
+
+				fmt.Printf("[RopeMerge Metrics] 호출횟수: %d | 총시간: %.2fms | 평균시간: %.2fms | 총병합크기: %d | 평균병합크기: %.2f\n",
+					calls, float64(totalTimeNs)/1e6, avgTimeMs, totalSize, avgSize)
+			}
+		}
+	}()
+	return metrics
+}
 
 // PolyRopeMark Upsert 커맨드
 type PolyRopeMarkUpsert struct {
@@ -276,6 +317,8 @@ func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, t
 
 	// 인메모리 버텍스 캐시 초기화 (5만개 캐시)
 	b.vertexCache = NewVertexCache(b, 500000)
+	//로프 어그리게이터 케시 초기화
+	b.ropeAggCache = NewRopeAggCache(b.getRopeMark)
 
 	// 인메모리 로프 사이즈 캐시 초기화 (최대 1천만개)
 	b.ropeSizeCache = NewRopeSizeCache(10_000_000, b)
@@ -291,6 +334,10 @@ func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, t
 	go b.gcWorker()
 	go b.statsLoggerWorker()
 	go b.vertexCacheFlushWorker()
+
+	// 로프 병합 계측 초기화
+	b.ropeMergeMetrics = NewRopeMergeMetrics()
+
 	return b, nil
 }
 
@@ -375,10 +422,6 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 	v1 := b.getOrCreateVertex(a1)
 	v2 := b.getOrCreateVertex(a2)
 
-	//로프 개수가 최대치보다 클 경우 연결 가드
-	if b.NeedToGuardTrait(v1, v2, ev.Trait) {
-		return nil
-	}
 	// --- 2) 링크 업서트 → TraitID 확보(둘 다 동일 ID 사용)
 	tid, created := b.ensureLink(v1, v2, ev.Trait, ev.RuleA, ev.RuleB)
 
@@ -475,6 +518,11 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 			}
 		} else {
 			// 크기 비교 위해 캐시에서 사이즈 읽기(없으면 편의상 id1을 기준)
+			//* 로프 병합
+			// 계측 시작
+			mergeStart := time.Now()
+			b.ropeMergeMetrics.callCount.Add(1)
+
 			size1 := b.GetRopeSize(id1)
 			size2 := b.GetRopeSize(id2)
 			target := id1
@@ -482,9 +530,15 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 			if size2 > size1 {
 				target, source = id2, id1
 			}
-			// source 멤버 전부 target으로 매핑
-			src := b.getRopeMark(source)
-			for _, addr := range src.Members {
+
+			// 타겟과 소스를 병합시키는 "업서트 명령어"를 계산해냄.
+			ropeMergingUpsert := b.ropeAggCache.GetMergingRopeUpsert(target, source, ev.Trait)
+			// 계측: 병합된 로프 크기 기록
+			b.ropeMergeMetrics.totalMergeSize.Add(int64(ropeMergingUpsert.SizeDelta))
+			b.ropeMergeMetrics.mergeCount.Add(1)
+
+			// "변경되는" 모든 멤버 대상으로 수정
+			for _, addr := range ropeMergingUpsert.AddMembers {
 				v := b.getOrCreateVertex(addr)
 				setRopeForTrait(v, target, ev.Trait)
 				b.putVertex(v)
@@ -494,17 +548,21 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 			ropeErr := b.busRope.Publish(domain.RopeMarkUpsert{
 				RopeID:      target,
 				Trait:       ev.Trait,
-				AddMembers:  src.Members,
-				SizeDelta:   int32(len(src.Members)),
-				ValueOrNull: ev.ValueOrNull.Add(src.ValueOrNull),
+				AddMembers:  ropeMergingUpsert.AddMembers,
+				SizeDelta:   ropeMergingUpsert.SizeDelta,
+				ValueOrNull: ropeMergingUpsert.ValueOrNull,
 
-				VolumeDelta: uint32(src.Volume) + 1, //거래 볼륨이므로. 상대+자신+이번 거래
+				VolumeDelta: ropeMergingUpsert.VolumeDelta + 1, //거래 볼륨이므로. 상대+자신+이번 거래
 				LastSeen:    ev.Time,
 				MergeFrom:   []domain.RopeID{source},
 			})
 			if ropeErr != nil {
 				fmt.Printf("로프 마크 삽입 중 에러 발생: %s\n", ropeErr.Error())
 			}
+
+			// 계측: 소요 시간 기록
+			elapsed := time.Since(mergeStart)
+			b.ropeMergeMetrics.totalTime.Add(elapsed.Nanoseconds())
 		}
 	}
 	//트레이트 등록 & 로프까지 다 등록 이후=> 트랩 여부 체크
@@ -526,24 +584,6 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 
 	_ = created // created 여부는 외부로 굳이 노출하지 않음
 	return nil
-}
-
-func (b *BadgerRopeDB) NeedToGuardTrait(v1, v2 *domain.Vertex, trait domain.TraitCode) bool {
-	//트레이트를 기반으로 하는 로프가 1000보다 클 경우 가드를 함
-	r1, isExsit1 := b.ropeIDByTrait(v1, trait)
-	r2, isExsit2 := b.ropeIDByTrait(v2, trait)
-	cond1 := false
-	if isExsit1 {
-		cond1 = b.GetRopeSize(r1) > maxRopeSize
-	}
-	cond2 := false
-	if isExsit2 {
-		cond2 = b.GetRopeSize(r2) > maxRopeSize
-	}
-	if cond1 || cond2 {
-		return true
-	}
-	return false
 }
 
 // processPolyTrait: PolyTrait 레벨에서 PolyRope 처리
@@ -843,22 +883,22 @@ type ropeAgg struct {
 
 const (
 	batchMaxItems = 2048
-	batchMaxWait  = 10 * time.Millisecond
+	batchMaxWait  = 50 * time.Millisecond
 )
 
 func (b *BadgerRopeDB) ropeWorker() {
 	defer b.wg.Done()
 
-	agg := make(map[domain.RopeID]*ropeAgg)
+	// 캐시 준비: DB 로더 주입
+
 	totalItems := 0
 	ropeCh := b.busRope.Dequeue()
-	// 타이머를 '비활성' 상태로 시작
+
 	timer := time.NewTimer(time.Hour)
 	if !timer.Stop() {
 		<-timer.C
 	}
 
-	// 20초마다 상태 로깅용 타이머
 	statusTicker := time.NewTicker(20 * time.Second)
 	defer statusTicker.Stop()
 
@@ -884,52 +924,42 @@ func (b *BadgerRopeDB) ropeWorker() {
 		if totalItems == 0 {
 			return
 		}
-		err := b.dbM.Update(func(txn *badger.Txn) error {
-			// Set
-			for id, a := range agg {
-				// 키 만들기 (flush 시점에만 생성)
-				key := []byte(fmt.Sprintf("%s%d", kR, uint64(id)))
 
-				// Proto Marshal
-				protoRM := RopeMarkToProto(a.rm)
-				data, err := proto.Marshal(protoRM)
-				if err != nil {
-					return err
-				}
-				if err := txn.Set(key, data); err != nil {
+		// 1) 배치 생성 (마샬러는 Proto)
+		puts, dels, snaps := b.ropeAggCache.BuildFlushBatch(func(rm domain.RopeMark) ([]byte, error) {
+			return proto.Marshal(RopeMarkToProto(rm))
+		})
+
+		// 2) DB 반영
+		err := b.dbM.Update(func(txn *badger.Txn) error {
+			for _, kv := range puts {
+				if err := txn.Set(kv.key, kv.val); err != nil {
 					return err
 				}
 			}
-			// Delete (mergeFrom)
-			for _, a := range agg {
-				for _, sid := range a.toDelete {
-					if sid == a.rm.ID {
-						continue
-					}
-					sKey := []byte(fmt.Sprintf("%s%d", kR, uint64(sid)))
-					_ = txn.Delete(sKey)
+			for _, kd := range dels {
+				if err := txn.Delete(kd.key); err != nil {
+					return err
 				}
 			}
 			return nil
 		})
 		if err != nil {
 			fmt.Printf("rope flush err: %v\n", err)
+			// 실패 시 캐시 델타 유지 (롤백)
 		} else {
-			// DB 쓰기 성공 시 캐시 업데이트
-			for id, a := range agg {
+			// 3) 캐시 커밋 및 사이즈 캐시 갱신
+			ids := make([]domain.RopeID, 0, len(snaps))
+			for id, snap := range snaps {
+				ids = append(ids, id)
 				if b.ropeSizeCache != nil {
-					b.ropeSizeCache.Put(id, a.rm.Size)
+					b.ropeSizeCache.Put(id, snap.Size)
 				}
 			}
+			b.ropeAggCache.CommitFlush(ids)
 		}
 
-		// reset
-		for k := range agg {
-			delete(agg, k)
-		}
 		totalItems = 0
-
-		// 배치가 비었으니 타이머 정지
 		stopTimer()
 	}
 
@@ -940,66 +970,28 @@ func (b *BadgerRopeDB) ropeWorker() {
 			return
 
 		case <-statusTicker.C:
-			// 20초마다 버스 상태 출력
 			fmt.Printf("[RopeWorker Status] busRope 큐 - len: %d, cap: %d\n",
 				b.busRope.Len(), b.busRope.Cap())
-
 		case op, ok := <-ropeCh:
+
 			if !ok {
 				flush()
 				return
 			}
-
-			// 🔸 첫 아이템이면 타이머 시작
 			if totalItems == 0 {
 				startTimer()
 			}
+			// 일반 upsert: 캐시에 누적
+			b.ropeAggCache.Upsert(op)
 
-			a := agg[op.RopeID]
-			if a == nil {
-				a = &ropeAgg{}
-				// 존재하면 1회 로드
-				if rm := b.getRopeMark(op.RopeID); rm.ID != 0 {
-					a.rm = rm
-					a.hasLoaded = true
-				} else {
-					a.rm = domain.RopeMark{
-						ID:          op.RopeID,
-						Trait:       op.Trait,
-						ValueOrNull: decimal.Zero,
-					}
-				}
-				agg[op.RopeID] = a
-			}
-
-			// 누적 규칙
-			if !op.ValueOrNull.IsZero() {
-				a.rm.ValueOrNull = a.rm.ValueOrNull.Add(op.ValueOrNull)
-			}
-			if len(op.AddMembers) > 0 {
-				a.rm.Members = dedupAppend(a.rm.Members, op.AddMembers)
-				a.rm.Size = uint32(len(a.rm.Members))
-			}
-			if op.VolumeDelta > 0 {
-				a.rm.Volume += op.VolumeDelta
-			}
-			if op.LastSeen.After(a.rm.LastSeen) {
-				a.rm.LastSeen = op.LastSeen
-			}
-			if len(op.TrapVertexes) > 0 {
-				a.rm.TrapVertexes = MergeTrapVerticesUniquePairs(a.rm.TrapVertexes, op.TrapVertexes)
-			}
-			if len(op.MergeFrom) > 0 {
-				a.toDelete = append(a.toDelete, op.MergeFrom...)
-			}
 			totalItems++
 			if totalItems >= batchMaxItems {
 				flush()
 			}
-
 		case <-timer.C:
 			flush()
 		}
+
 	}
 }
 
@@ -1129,7 +1121,7 @@ func (b *BadgerRopeDB) polyRopeWorker() {
 
 			// 누적 규칙
 			if len(op.AddRopes) > 0 {
-				a.prm.Ropes = dedupRopes(a.prm.Ropes, op.AddRopes)
+				a.prm.Ropes = computation.DedupAppend(a.prm.Ropes, op.AddRopes)
 			}
 			if len(op.MergeFrom) > 0 {
 				a.toDelete = append(a.toDelete, op.MergeFrom...)
@@ -1217,16 +1209,16 @@ func (b *BadgerRopeDB) applyRopeUpsert(op domain.RopeMarkUpsert) {
 				ValueOrNull: decimal.Zero,
 			}
 		}
-		if len(rm.Members) >= maxRopeSize {
-			fmt.Printf("도메인 특수 감지: %d번 로프의 멤버가 %d개를 초과하려 함.\nDB로 1000개 이상의 증폭은 막음", rm.ID, maxRopeSize)
-			return nil
-		}
+		// if len(rm.Members) >= maxRopeSize {
+		// 	fmt.Printf("도메인 특수 감지: %d번 로프의 멤버가 %d개를 초과하려 함.\nDB로 1000개 이상의 증폭은 막음", rm.ID, maxRopeSize)
+		// 	return nil
+		// }
 		// 값 누적 (null이면 Zero가 와서 변화 없음)
 		if !op.ValueOrNull.IsZero() {
 			rm.ValueOrNull = rm.ValueOrNull.Add(op.ValueOrNull) // ✅ 누적
 		}
 		if len(op.AddMembers) > 0 {
-			rm.Members = dedupAppend(rm.Members, op.AddMembers)
+			rm.Members = computation.DedupAppend(rm.Members, op.AddMembers)
 		}
 		if op.SizeDelta != 0 {
 			rm.Size = uint32(len(rm.Members))
@@ -1307,7 +1299,7 @@ func (b *BadgerRopeDB) applyPolyRopeUpsert(op PolyRopeMarkUpsert) {
 			}
 		}
 		if len(op.AddRopes) > 0 {
-			prm.Ropes = dedupRopes(prm.Ropes, op.AddRopes)
+			prm.Ropes = computation.DedupAppend(prm.Ropes, op.AddRopes)
 		}
 		for _, sid := range op.MergeFrom {
 			if sid == prm.ID {

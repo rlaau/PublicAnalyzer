@@ -1,10 +1,8 @@
 package app
 
 import (
-	"bytes"
 	"fmt"
 	"slices"
-	"sort"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
@@ -49,30 +47,6 @@ func (b *BadgerRopeDB) needToAddTrap(v *domain.Vertex, trapCode domain.TrapCode)
 	return slices.ContainsFunc(requiredRuleOrZero, v.IsContainRule)
 }
 
-// 유틸: dedup + 정렬(순서 안정성)
-func dedupAppend(base, inc []shareddomain.Address) []shareddomain.Address {
-	if len(inc) == 0 {
-		return base
-	}
-	m := map[shareddomain.Address]struct{}{}
-	out := make([]shareddomain.Address, 0, len(base)+len(inc))
-	for _, x := range base {
-		m[x] = struct{}{}
-		out = append(out, x)
-	}
-	for _, y := range inc {
-		if _, ok := m[y]; ok {
-			continue
-		}
-		m[y] = struct{}{}
-		out = append(out, y)
-	}
-	sort.Slice(out, func(i, j int) bool { return bytes.Compare([]byte(out[i].String()), []byte(out[j].String())) < 0 })
-	return out
-}
-
-func sizeOf(rm domain.RopeMark) int { return int(rm.Size) }
-
 // getPolyRopeFromVertex: Vertex에서 특정 PolyTrait의 PolyRope ID 가져오기
 func (b *BadgerRopeDB) getPolyRopeFromVertex(v *domain.Vertex, polyTrait domain.PolyTraitCode) (domain.PolyRopeID, bool) {
 	for _, pr := range v.PolyRopes {
@@ -106,28 +80,6 @@ func (b *BadgerRopeDB) calculatePolyRopeSize(ropeIDs []domain.RopeID) int {
 		totalSize += int(ropeMark.Size)
 	}
 	return totalSize
-}
-
-// dedupRopes: RopeID 중복 제거
-func dedupRopes(base, inc []domain.RopeID) []domain.RopeID {
-	if len(inc) == 0 {
-		return base
-	}
-	m := map[domain.RopeID]struct{}{}
-	out := make([]domain.RopeID, 0, len(base)+len(inc))
-	for _, x := range base {
-		m[x] = struct{}{}
-		out = append(out, x)
-	}
-	for _, y := range inc {
-		if _, ok := m[y]; ok {
-			continue
-		}
-		m[y] = struct{}{}
-		out = append(out, y)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
 }
 
 // updateAllVerticesPolyRope: source PolyRope에 속한 모든 Vertex를 target PolyRope로 업데이트

@@ -16,12 +16,12 @@ import (
 	contApp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/infra"
 	eoapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/eo/app"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/sharedface"
 	relapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
 	relapi "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/api"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/roperepo"
 	rsface "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/sharedface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
@@ -67,13 +67,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// 2. RelPool 생성 (RopeDB 및 Triplet 포함)
+	relPool, co, err := GetRelPoolAndCo()
 	// 1. Contract DB 초기화
-	co := contApp.NewCo(contApp.CoCfg{Mode: mode.ProductionModeProcess}, nil)
 	contractDB := co.GetContDB()
 	defer contractDB.Close()
-
-	// 2. RelPool 생성 (RopeDB 및 Triplet 포함)
-	relPool, err := GetRelPool()
 	if err != nil {
 		log.Fatalf("❌ Failed to create RelPool: %v", err)
 	}
@@ -382,14 +380,14 @@ func main() {
 
 	// 최종 안전장치: 15초 후 강제 종료
 	go func() {
-		time.Sleep(15 * time.Second)
+		time.Sleep(30 * time.Second)
 		log.Printf("   ⚠️ EMERGENCY: Force exit after 15s timeout")
 		os.Exit(1)
 	}()
 }
 
-// GetRelPool creates and configures the RelationPool
-func GetRelPool() (*relapp.RelationPool, error) {
+// GetRelPoolAndCo creates and configures the RelationPool
+func GetRelPoolAndCo() (*relapp.RelationPool, sharedface.CoPort, error) {
 	apool := &aapp.AnalyzerPool{}
 	// nodPool을 강제로 생성
 	nodPool := &nodapp.NodPool{}
@@ -401,7 +399,7 @@ func GetRelPool() (*relapp.RelationPool, error) {
 	apool.RegisterPorts(nodPool, nil)
 	relPool := relapp.ComposeRelPool(mode.ProductionModeProcess, "ingest_creator_created", apool)
 	apool.RegisterPorts(nodPool, relPool)
-	return relPool, nil
+	return relPool, co, nil
 }
 
 // RegisterModule registers the RelPool API with the monitoring server
@@ -443,31 +441,6 @@ func countTotalContracts(contractDB *infra.ContractDB) (int64, error) {
 		return true // 계속
 	})
 	return count, err
-}
-
-// 더미 TraitEvent 생성 (나중에 실제 로직으로 교체)
-func createDummyTraitEvent(contract shareddomain.Contract) domain.TraitEvent {
-	// 더미 creator 주소 생성 (실제로는 contract의 생성자 정보 필요)
-	dummyCreator, _ := shareddomain.ParseAddressFromString("0x0000000000000000000000000000000000000001")
-
-	// 현재 시간을 ChainTime으로
-	currentTime := chaintimer.ChainTime(time.Now())
-
-	// 더미 TxId
-	dummyTxId, _ := shareddomain.ParseTxId("0x0000000000000000000000000000000000000000000000000000000000000001")
-
-	return domain.TraitEvent{
-		Author:      domain.AuthorCode(1),  // Triplet author code
-		Trait:       domain.TraitCode(100), // CREATOR_CREATED trait code
-		AddressA:    dummyCreator,
-		RuleA:       domain.RuleCode(1), // CREATOR rule
-		AddressB:    contract.Address,
-		RuleB:       domain.RuleCode(2), // CREATED rule
-		TxID:        dummyTxId,
-		Time:        currentTime,
-		Score:       1,
-		ValueOrNull: decimal.Zero,
-	}
 }
 
 // 모니터링 통계 출력

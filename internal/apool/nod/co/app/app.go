@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"math/big"
 	"path/filepath"
 
@@ -38,6 +39,7 @@ func NewCo(coCfg CoCfg, nodPool iface.NodPort) *Co {
 	contDbDir := filepath.Join(rootDir, "cont")
 	contDB, err := infra.NewContractDB(coCfg.Mode, contDbDir)
 	if err != nil {
+		fmt.Printf("NewCo: 에러 발생: %s", err.Error())
 		panic("contDB오픈 중에 에러 발생")
 	}
 
