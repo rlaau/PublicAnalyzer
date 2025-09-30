@@ -35,8 +35,9 @@ const (
 	kCRope     = "ctr:rope" // BigEndian uint64
 	kCTrait    = "ctr:trait"
 	kCPolyRope = "ctr:polyrope" // BigEndian uint64 - PolyRope counter
-
 )
+
+const MaxRopeSize = 1000
 
 func NewRopeDB(isTest mode.ProcessingMode, dbName string, traitLegend map[domain.TraitCode]string,
 	ruleLegend map[domain.RuleCode]string,
@@ -532,7 +533,7 @@ func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
 			}
 
 			// 타겟과 소스를 병합시키는 "업서트 명령어"를 계산해냄.
-			ropeMergingUpsert := b.ropeAggCache.GetMergingRopeUpsert(target, source, ev.Trait)
+			ropeMergingUpsert := b.ropeAggCache.GetMergingRopeUpsertOpertation(target, source, ev.Trait)
 			// 계측: 병합된 로프 크기 기록
 			b.ropeMergeMetrics.totalMergeSize.Add(int64(ropeMergingUpsert.SizeDelta))
 			b.ropeMergeMetrics.mergeCount.Add(1)
@@ -875,12 +876,6 @@ func (b *BadgerRopeDB) traitWorker() {
 	}
 }
 
-type ropeAgg struct {
-	rm        domain.RopeMark
-	toDelete  []domain.RopeID // MergeFrom 누적
-	hasLoaded bool
-}
-
 const (
 	batchMaxItems = 2048
 	batchMaxWait  = 50 * time.Millisecond
@@ -949,14 +944,15 @@ func (b *BadgerRopeDB) ropeWorker() {
 			// 실패 시 캐시 델타 유지 (롤백)
 		} else {
 			// 3) 캐시 커밋 및 사이즈 캐시 갱신
-			ids := make([]domain.RopeID, 0, len(snaps))
-			for id, snap := range snaps {
-				ids = append(ids, id)
-				if b.ropeSizeCache != nil {
+			// 스냅샷을 그대로 커밋 (재계산 X)
+			b.ropeAggCache.CommitFlushSnaps(snaps)
+
+			// 사이즈 캐시 갱신도 스냅샷에서 바로
+			if b.ropeSizeCache != nil {
+				for id, snap := range snaps {
 					b.ropeSizeCache.Put(id, snap.Size)
 				}
 			}
-			b.ropeAggCache.CommitFlush(ids)
 		}
 
 		totalItems = 0
@@ -982,6 +978,10 @@ func (b *BadgerRopeDB) ropeWorker() {
 				startTimer()
 			}
 			// 일반 upsert: 캐시에 누적
+			if b.ropeSizeCache.Get(op.RopeID) >= MaxRopeSize {
+				//fmt.Printf("도메인 특수 감지: %d번 로프의 멤버가 %d개를 초과하려 함.\nDB로 1000개 이상의 증폭은 막음", op.RopeID, MaxRopeSize)
+				continue
+			}
 			b.ropeAggCache.Upsert(op)
 
 			totalItems++

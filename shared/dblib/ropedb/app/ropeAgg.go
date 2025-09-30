@@ -148,7 +148,7 @@ func (c *RopeAggCache) Upsert(op domain.RopeMarkUpsert) {
 
 // ConsumeMerge는 타겟과 소스를 병합하는 "업서트 오퍼레이션"을 생성해줌.
 // 그리고 나서 "소스"를 어그리게이터에서 제거함.
-func (c *RopeAggCache) GetMergingRopeUpsert(target, source domain.RopeID, trait domain.TraitCode) domain.RopeMarkUpsert {
+func (c *RopeAggCache) GetMergingRopeUpsertOpertation(target, source domain.RopeID, trait domain.TraitCode) domain.RopeMarkUpsert {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -221,32 +221,28 @@ func (c *RopeAggCache) BuildFlushBatch(marshal func(domain.RopeMark) ([]byte, er
 }
 
 // DB 반영 성공 후 델타 정리
-func (c *RopeAggCache) CommitFlush(committedIDs []domain.RopeID) {
+// DB 반영 성공 후 델타 정리(스냅샷 재활용 버전)
+func (c *RopeAggCache) CommitFlushSnaps(snaps map[domain.RopeID]domain.RopeMark) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(committedIDs) == 0 {
-		// 모두 정리(옵션)
-		for _, e := range c.m {
-			e.addMembers = e.addMembers[:0]
-			e.valueDelta = decimal.Zero
-			e.volumeDelta = 0
-			e.trapDelta = nil
-			e.toDelete = nil
-			e.dirty = false
-			e.base = e.snapshot() // base 동기화
-		}
-		return
-	}
-	for _, id := range committedIDs {
+
+	for id, snap := range snaps {
 		if e, ok := c.m[id]; ok {
-			// base를 스냅샷으로 동기화하고 델타 비움
-			base := e.snapshot()
-			e.base = base
-			e.addMembers = e.addMembers[:0]
+			// 스냅샷을 그대로 base로 채택 (깊은 복사 아님: slice header만 복사)
+			e.base = snap
+
+			// 델타 리셋
+			if len(e.addMembers) > 0 {
+				e.addMembers = e.addMembers[:0]
+			}
 			e.valueDelta = decimal.Zero
 			e.volumeDelta = 0
-			e.trapDelta = nil
-			e.toDelete = nil
+			if len(e.trapDelta) > 0 {
+				e.trapDelta = nil
+			}
+			if len(e.toDelete) > 0 {
+				e.toDelete = nil
+			}
 			e.dirty = false
 		}
 	}
