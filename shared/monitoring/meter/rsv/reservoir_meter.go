@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// FunctionReservoirMeter는 함수별로 Reservoir Sampling을 사용하여 성능 메트릭을 측정하는 미터입니다.
-type FunctionReservoirMeter struct {
+// ReservoirMeter는 함수별로 Reservoir Sampling을 사용하여 성능 메트릭을 측정하는 미터입니다.
+type ReservoirMeter struct {
 	mu        sync.RWMutex
 	functions map[string]*reservoirSampler
 	capacity  int
@@ -27,19 +27,19 @@ type reservoirSampler struct {
 }
 
 // NewFunctionReservoirMeter는 새로운 FunctionReservoirMeter를 생성합니다.
-func NewFunctionReservoirMeter(capacity int) *FunctionReservoirMeter {
+func NewFunctionReservoirMeter(capacity int) *ReservoirMeter {
 	if capacity <= 0 {
 		capacity = 1024 // 기본값
 	}
 
-	return &FunctionReservoirMeter{
+	return &ReservoirMeter{
 		functions: make(map[string]*reservoirSampler),
 		capacity:  capacity,
 	}
 }
 
 // Record는 함수명과 듀레이션을 기록합니다.
-func (frm *FunctionReservoirMeter) Record(functionName string, duration time.Duration) {
+func (frm *ReservoirMeter) Record(functionName string, duration time.Duration) {
 	frm.mu.Lock()
 	defer frm.mu.Unlock()
 
@@ -89,7 +89,7 @@ type FunctionStats struct {
 }
 
 // GetFunctionStats는 특정 함수의 통계를 반환합니다.
-func (frm *FunctionReservoirMeter) GetFunctionStats(functionName string) (FunctionStats, bool) {
+func (frm *ReservoirMeter) GetFunctionStats(functionName string) (FunctionStats, bool) {
 	frm.mu.RLock()
 	defer frm.mu.RUnlock()
 
@@ -102,7 +102,7 @@ func (frm *FunctionReservoirMeter) GetFunctionStats(functionName string) (Functi
 }
 
 // GetAllStats는 모든 함수의 통계를 반환합니다.
-func (frm *FunctionReservoirMeter) GetAllStats() map[string]FunctionStats {
+func (frm *ReservoirMeter) GetAllStats() map[string]FunctionStats {
 	frm.mu.RLock()
 	defer frm.mu.RUnlock()
 
@@ -115,9 +115,9 @@ func (frm *FunctionReservoirMeter) GetAllStats() map[string]FunctionStats {
 }
 
 // GetSortedStats는 평균 시간 기준으로 정렬된 모든 함수의 통계를 반환합니다.
-func (frm *FunctionReservoirMeter) GetSortedStats() []FunctionStats {
+func (frm *ReservoirMeter) GetSortedStats() []FunctionStats {
 	allStats := frm.GetAllStats()
-	
+
 	stats := make([]FunctionStats, 0, len(allStats))
 	for _, stat := range allStats {
 		stats = append(stats, stat)
@@ -205,7 +205,7 @@ func percentile(sortedSamples []time.Duration, p float64) time.Duration {
 }
 
 // Reset은 모든 함수의 미터를 초기화합니다.
-func (frm *FunctionReservoirMeter) Reset() {
+func (frm *ReservoirMeter) Reset() {
 	frm.mu.Lock()
 	defer frm.mu.Unlock()
 
@@ -213,7 +213,7 @@ func (frm *FunctionReservoirMeter) Reset() {
 }
 
 // ResetFunction은 특정 함수의 미터만 초기화합니다.
-func (frm *FunctionReservoirMeter) ResetFunction(functionName string) {
+func (frm *ReservoirMeter) ResetFunction(functionName string) {
 	frm.mu.Lock()
 	defer frm.mu.Unlock()
 
@@ -221,7 +221,7 @@ func (frm *FunctionReservoirMeter) ResetFunction(functionName string) {
 }
 
 // GetFunctionNames는 등록된 모든 함수명을 반환합니다.
-func (frm *FunctionReservoirMeter) GetFunctionNames() []string {
+func (frm *ReservoirMeter) GetFunctionNames() []string {
 	frm.mu.RLock()
 	defer frm.mu.RUnlock()
 
@@ -235,11 +235,11 @@ func (frm *FunctionReservoirMeter) GetFunctionNames() []string {
 }
 
 // PrintBottlenecks는 병목 함수들을 콘솔에 출력합니다.
-func (frm *FunctionReservoirMeter) PrintBottlenecks(topN int) {
+func (frm *ReservoirMeter) PrintBottlenecks(topN int) {
 	stats := frm.GetSortedStats()
-	
+
 	fmt.Printf("\n=== Top %d Function Bottlenecks ===\n", topN)
-	fmt.Printf("%-30s %12s %12s %12s %12s %12s %8s\n", 
+	fmt.Printf("%-30s %12s %12s %12s %12s %12s %8s\n",
 		"Function", "Count", "Mean", "P50", "P95", "P99", "Samples")
 	fmt.Println(strings.Repeat("-", 110))
 

@@ -27,7 +27,7 @@ type DualManager struct {
 	mutex sync.RWMutex // 전체 구조체 보호용 (구조 변경 등)
 
 	// Performance monitoring
-	perfMeter *rsv.FunctionReservoirMeter
+	perfMeter *rsv.ReservoirMeter
 	ctx       context.Context
 	cancel    context.CancelFunc
 }
@@ -207,7 +207,7 @@ func (dm *DualManager) handleTxFromDepositWithNotCex(deposit domain.Address, oth
 
 // 새 디포짓 주소 발견한 경우
 func (dm *DualManager) DetectNewDepositAddress(dd *domain.DetectedDeposit) error {
-	defer rsv.MeasureFunction(dm.perfMeter, "DetectNewDepositAddress")()
+	defer rsv.MeasureTime(dm.perfMeter, "DetectNewDepositAddress")()
 	return dm.relPool.GetApooPort().GetNodPort().GetEoPort().SaveDetectedDeposit(dd)
 }
 
@@ -249,7 +249,7 @@ func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Addres
 	return nil
 }
 func (dm *DualManager) getPendingRelations(deposit domain.Address) ([]infra.FromScala, error) {
-	defer rsv.MeasureFunction(dm.perfMeter, "getPendingRelations")()
+	defer rsv.MeasureTime(dm.perfMeter, "getPendingRelations")()
 	return dm.infra.HeavyTimeBucketManager.GetFromScalas(deposit), nil
 }
 
@@ -259,7 +259,7 @@ func (dm *DualManager) saveDualToGraphDB(fromScala infra.FromScala, toAddr domai
 }
 
 func (dm *DualManager) saveCexAndDepositToGraphDB(cex, deposit domain.Address, tx *domain.MarkedTransaction, lastTime chaintimer.ChainTime) error {
-	defer rsv.MeasureFunction(dm.perfMeter, "saveCexAndDepositToGraphDB")()
+	defer rsv.MeasureTime(dm.perfMeter, "saveCexAndDepositToGraphDB")()
 
 	trait := roperepo.TraitCexAndDeposit
 	addrAndRule1 := ropedomain.AddressAndRule{
@@ -288,7 +288,7 @@ func (dm *DualManager) saveCexAndDepositToGraphDB(cex, deposit domain.Address, t
 
 // saveDualRelationToGraphDB saves a connection between two EOAs to the graph database
 func (dm *DualManager) saveDualRelationToGraphDB(fromScala infra.FromScala, toAddr domain.Address) error {
-	defer rsv.MeasureFunction(dm.perfMeter, "saveDualRelationToGraphDB")()
+	defer rsv.MeasureTime(dm.perfMeter, "saveDualRelationToGraphDB")()
 
 	trait := roperepo.TraitDepositAndUser
 	addressAndRule1 := ropedomain.AddressAndRule{
@@ -320,7 +320,7 @@ func (dm *DualManager) saveDualRelationToGraphDB(fromScala infra.FromScala, toAd
 
 // 일반 트랜잭션 → 윈도 버퍼/팬딩 적재
 func (dm *DualManager) AddToWindowBuffer(tx *domain.MarkedTransaction) (*domain.MarkedTransaction, error) {
-	defer rsv.MeasureFunction(dm.perfMeter, "AddToWindowBuffer")()
+	defer rsv.MeasureTime(dm.perfMeter, "AddToWindowBuffer")()
 
 	toAddr := tx.To
 	fromAddr := tx.From
@@ -334,7 +334,7 @@ func (dm *DualManager) AddToWindowBuffer(tx *domain.MarkedTransaction) (*domain.
 		LastTime:    tx.BlockTime,
 	}
 	func() {
-		defer rsv.MeasureFunction(dm.perfMeter, "AddToWindowBuffer.AddIfAbsent")()
+		defer rsv.MeasureTime(dm.perfMeter, "AddToWindowBuffer.AddIfAbsent")()
 		_, _ = dm.infra.HeavyTimeBucketManager.AddIfAbsent(toAddr, fromScala)
 	}()
 

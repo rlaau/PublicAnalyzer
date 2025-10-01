@@ -19,6 +19,7 @@ import (
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring/meter/rsv"
 	"github.com/shopspring/decimal"
 	"google.golang.org/protobuf/proto"
 )
@@ -82,6 +83,8 @@ type BadgerRopeDB struct {
 	// NOTE: 호환을 위해 남겨둠. 이제 b.db 는 "마크 DB(M-DB)"를 가리킴.
 	dbV *badger.DB // Vertex 전용 (v:) - 락프리 (일관성 오류 허용)
 	dbM *badger.DB // Marks 전용 (r:, t:, pr:)
+
+	perfMeter *rsv.ReservoirMeter
 
 	// 인메모리 버텍스 캐시
 	vertexCache *VertexCache
@@ -299,6 +302,7 @@ func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, t
 		dbV:                     dbV,
 		dbM:                     dbM,
 		isTest:                  isTest.IsTest(),
+		perfMeter:               rsv.NewFunctionReservoirMeter(10_000),
 		ctx:                     ctx,
 		cancel:                  cancel,
 		traitLegend:             traitLegend,

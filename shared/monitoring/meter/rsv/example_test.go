@@ -17,7 +17,7 @@ func ExampleFunctionReservoirMeter() {
 	meter.Record("saveToDatabase", 50*time.Millisecond)
 	meter.Record("processTransaction", 15*time.Millisecond)
 	meter.Record("validateInput", 3*time.Millisecond)
-	
+
 	// 특정 함수의 통계 조회
 	if stats, exists := meter.GetFunctionStats("processTransaction"); exists {
 		fmt.Printf("processTransaction - Mean: %v, P95: %v\n", stats.Mean, stats.P95)
@@ -73,7 +73,7 @@ func TestFunctionReservoirMeter(t *testing.T) {
 	if len(sortedStats) != 3 {
 		t.Error("정렬된 통계 개수가 잘못됨")
 	}
-	
+
 	// 가장 느린 함수가 첫 번째에 와야 함
 	if sortedStats[0].FunctionName != "func3" {
 		t.Errorf("정렬이 잘못됨: expected func3 first, got %s", sortedStats[0].FunctionName)
@@ -86,7 +86,7 @@ func TestMeasureFunction(t *testing.T) {
 
 	// defer 패턴으로 함수 측정
 	func() {
-		defer MeasureFunction(meter, "testFunction")()
+		defer MeasureTime(meter, "testFunction")()
 		time.Sleep(10 * time.Millisecond) // 시뮬레이션
 	}()
 
@@ -105,7 +105,7 @@ func TestMeasureFunction(t *testing.T) {
 // BenchmarkFunctionReservoirMeter 성능 벤치마크
 func BenchmarkFunctionReservoirMeter(b *testing.B) {
 	meter := NewFunctionReservoirMeter(1024)
-	
+
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
