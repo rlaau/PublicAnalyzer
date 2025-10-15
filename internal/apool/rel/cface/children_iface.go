@@ -1,4 +1,4 @@
-package sharedface
+package cface
 
 import (
 	"context"

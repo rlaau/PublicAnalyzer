@@ -13,14 +13,14 @@ import (
 
 	aapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool"
 	nodapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/cface"
 	contApp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/infra"
 	eoapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/eo/app"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/sharedface"
 	relapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
 	relapi "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/api"
+	rsface "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/cface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/roperepo"
-	rsface "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/sharedface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
@@ -387,7 +387,7 @@ func main() {
 }
 
 // GetRelPoolAndCo creates and configures the RelationPool
-func GetRelPoolAndCo() (*relapp.RelationPool, sharedface.CoPort, error) {
+func GetRelPoolAndCo() (*relapp.RelationPool, cface.CoPort, error) {
 	apool := &aapp.AnalyzerPool{}
 	// nodPool을 강제로 생성
 	nodPool := &nodapp.NodPool{}

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/roperepo"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/pface"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
@@ -21,7 +21,7 @@ import (
 type DualManager struct {
 	infra *infra.DualManagerInfra
 
-	relPool iface.RelPort
+	relPool pface.RelPort
 
 	// Synchronization (최적화된 뮤텍스)
 	mutex sync.RWMutex // 전체 구조체 보호용 (구조 변경 등)
@@ -33,7 +33,7 @@ type DualManager struct {
 }
 
 // NewDualManager creates a new dual manager instance
-func NewDualManager(managerInfra *infra.DualManagerInfra, pool iface.RelPort) (*DualManager, error) {
+func NewDualManager(managerInfra *infra.DualManagerInfra, pool pface.RelPort) (*DualManager, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	dm := &DualManager{
 		infra:     managerInfra,
@@ -293,7 +293,7 @@ func (dm *DualManager) saveCexAndDepositToGraphDB(cex, deposit domain.Address, t
 		addrAndRule2,
 		txScala,
 	)
-	return dm.relPool.ClusterDB().HandleTraitEvent(traitEvent)
+	return dm.relPool.DispatchTraitEvent(traitEvent)
 }
 
 // saveDualRelationToGraphDB saves a connection between two EOAs to the graph database
@@ -324,7 +324,7 @@ func (dm *DualManager) saveDualRelationToGraphDB(fromScala infra.FromScala, toAd
 		addressAndRule2,
 		txScala,
 	)
-	return dm.relPool.ClusterDB().HandleTraitEvent(traitEvent)
+	return dm.relPool.DispatchTraitEvent(traitEvent)
 
 }
 

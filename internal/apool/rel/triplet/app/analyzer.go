@@ -11,11 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/dgraph-io/badger/v4"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/roperepo"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
-	ropeapp "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/app"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/pface"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
@@ -71,7 +68,7 @@ type SimpleTriplet struct {
 	stats SimpleAnalyzerStats
 
 	infra   *infra.TripletAndDualManagerInfra
-	relPool iface.RelPort
+	relPool pface.RelPort
 }
 
 // SimpleAnalyzerStats 간단한 분석기 통계
@@ -87,19 +84,19 @@ type SimpleAnalyzerStats struct {
 }
 
 // NewProductionEOAAnalyzer 프로덕션용 분석기 생성
-func NewProductionEOAAnalyzer(config *TripletConfig, relPool iface.RelPort) (CommonTriplet, error) {
+func NewProductionEOAAnalyzer(config *TripletConfig, relPool pface.RelPort) (CommonTriplet, error) {
 	infraStructure := NewInfraByConfig(config)
 	return newSimpleAnalyzer(config, infraStructure, relPool)
 }
 
 // NewTestingEOAAnalyzer 테스트용 분석기 생성
-func NewTestingEOAAnalyzer(config *TripletConfig, relPool iface.RelPort) (CommonTriplet, error) {
+func NewTestingEOAAnalyzer(config *TripletConfig, relPool pface.RelPort) (CommonTriplet, error) {
 	infraStructure := NewInfraByConfig(config)
 	return newSimpleAnalyzer(config, infraStructure, relPool)
 }
 
 // newSimpleAnalyzer 공통 분석기 생성 로직
-func newSimpleAnalyzer(config *TripletConfig, infraStructure *infra.TripletAndDualManagerInfra, relPool iface.RelPort) (*SimpleTriplet, error) {
+func newSimpleAnalyzer(config *TripletConfig, infraStructure *infra.TripletAndDualManagerInfra, relPool pface.RelPort) (*SimpleTriplet, error) {
 	//전체 EOA인프라에서 꺼내 쓰는 형식
 	dualManagerInfra := infra.NewDualManagerInfra(infraStructure.HeavyTimeBucketManager)
 	dualManager, _ := NewDualManager(dualManagerInfra, relPool)
@@ -120,16 +117,17 @@ func newSimpleAnalyzer(config *TripletConfig, infraStructure *infra.TripletAndDu
 
 	return analyzer, nil
 }
-func (a *SimpleTriplet) GraphDB() *badger.DB {
-	if p, ok := a.relPool.ClusterDB().(roperepo.RawBadgerProvider); ok {
-		return p.RawBadgerDB()
-	}
-	return nil
-}
 
-func (a *SimpleTriplet) RopeDB() ropeapp.RopeDB {
-	return a.relPool.ClusterDB()
-}
+// func (a *SimpleTriplet) GraphDB() *badger.DB {
+// 	if p, ok := a.relPool.ClusterDB().(roperepo.RawBadgerProvider); ok {
+// 		return p.RawBadgerDB()
+// 	}
+// 	return nil
+// }
+
+// func (a *SimpleTriplet) RopeDB() ropeapp.RopeDB {
+// 	return a.relPool.ClusterDB()
+// }
 
 // Start 분석기 시작
 // TODO 추후엔 당연히!!! 배치 컨슈머에서 자기만 직접 받는게 아니라 apool에서부터 정식으로 받을 것
@@ -242,46 +240,6 @@ func (a *SimpleTriplet) ComsumeTransaction(ctx context.Context) {
 	}
 }
 
-// transactionWorker는 이제 워커풀에 의해 대체됨 - 하위 호환성을 위해 주석 처리
-// 실제 작업은 TransactionJob.Do()에서 처리됨
-// // batchConsumerWorker 배치 Consumer 워커 (고성능 배치 처리)
-// func (a *SimpleTriplet) batchConsumerWorker(ctx context.Context) {
-// 	defer a.wg.Done()
-
-// 	log.Printf("🚀 Batch consumer worker started")
-
-// 	for {
-// 		select {
-// 		case <-ctx.Done():
-// 			log.Printf("🛑 Batch consumer worker stopping (context)")
-// 			return
-// 		case <-a.stopChannel:
-// 			log.Printf("🛑 Batch consumer worker stopping (signal)")
-// 			return
-// 		default:
-// 			// 배치 메시지 읽기 (블로킹)
-// 			messages, err := a.infra.TxBus.ReadMessagesBatch(ctx)
-// 			if err != nil {
-// 				// Context cancellation은 정상적인 종료
-// 				if ctx.Err() != nil {
-// 					return
-// 				}
-// 				// 기타 에러는 로깅하고 계속
-// 				log.Printf("⚠️ Batch read error: %v", err)
-// 				time.Sleep(100 * time.Millisecond) // 에러 시 짧은 대기
-// 				continue
-// 			}
-
-// 			// 배치가 비어있으면 스킵
-// 			if len(messages) == 0 {
-// 				continue
-// 			}
-
-//				// 배치 처리 (진정한 배칭!)
-//				a.processTransactionParrell(messages)
-//			}
-//		}
-//	}
 func (a *SimpleTriplet) GetMyTxBus() *eventbus.EventBus[*shareddomain.MarkedTransaction] {
 	return a.infra.TxBus
 }
@@ -421,7 +379,7 @@ func (a *SimpleTriplet) printStatistics() {
 			windowStats["active_buckets"], windowStats["pending_relations"])
 	}
 
-	graphStats := a.relPool.ClusterDB().GetGraphStats()
+	graphStats := a.relPool.GetGraphStats()
 	log.Printf("   Graph: %v nodes | %v edges",
 		graphStats["total_nodes"], graphStats["total_edges"])
 
@@ -446,7 +404,7 @@ func (a *SimpleTriplet) GetStatistics() map[string]any {
 }
 
 func (a *SimpleTriplet) GetRopeDBStats() map[string]any {
-	return a.relPool.ClusterDB().GetGraphStats()
+	return a.relPool.GetGraphStats()
 }
 
 // IsHealthy 헬스 상태 체크
@@ -515,10 +473,6 @@ func (a *SimpleTriplet) shutdown() error {
 		log.Printf("⚠️ Error closing dual manager: %v", err)
 	}
 
-	if err := a.relPool.ClusterDB().Close(); err != nil {
-		log.Printf("⚠️ Error closing graph repository: %v", err)
-	}
-
 	// 테스트 모드에서 데이터 정리
 	if a.config.AutoCleanup {
 		a.cleanup()
@@ -564,7 +518,7 @@ func (a *SimpleTriplet) printFinalReport() {
 		}
 	}
 
-	graphStats := a.relPool.ClusterDB().GetGraphStats()
+	graphStats := a.relPool.GetGraphStats()
 	log.Printf("\n🗂️  Graph Database State:")
 	for key, value := range graphStats {
 		log.Printf("   %s: %v", key, value)
@@ -607,6 +561,6 @@ func (a *SimpleTriplet) Close() error {
 // TODO 추후 삭제할 것. 어쩌다 프로세스 도중에 DB바꿀 일이 있고, 하필 그게 테스트코드라 일다 놔뒀음
 // TODO 추후 ropeDB테스트 리팩토링 후 제거할 것
 // !!프로덕션 환경에선 절대절대 쓰지 말겄!!!
-func (a *SimpleTriplet) NullButAddDB(relPool iface.RelPort) {
+func (a *SimpleTriplet) NullButAddDB(relPool pface.RelPort) {
 	a.relPool = relPool
 }

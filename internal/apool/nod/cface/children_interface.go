@@ -1,4 +1,4 @@
-package sharedface
+package cface
 
 import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/infra"

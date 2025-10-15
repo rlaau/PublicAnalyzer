@@ -10,10 +10,12 @@ import (
 	"sync/atomic"
 	"syscall"
 
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/cface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/iface"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/pface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/roperepo"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/sharedface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
+	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
@@ -25,22 +27,22 @@ import (
 // TODO 근데 지금은 진짜 하기가 힘이 듦. 조금 쉬고 시간 날때 ㄱ
 type RelationPool struct {
 	isTest mode.ProcessingMode
-	Apool  iface.ApoolPort
+	Apool  pface.ApoolPort
 
 	ports struct {
-		triplet  sharedface.TripletPort
-		creation sharedface.CreationPort
+		triplet  cface.TripletPort
+		creation cface.CreationPort
 	}
 
-	busTriplet  *eventbus.EventBus[sharedface.TripletEventMsg]
-	busCreation *eventbus.EventBus[sharedface.CreationEventMsg]
+	busTriplet  *eventbus.EventBus[cface.TripletEventMsg]
+	busCreation *eventbus.EventBus[cface.CreationEventMsg]
 
 	txDistributor *TxDistributor
 	closed        atomic.Bool
 	ClusterRepo   iface.ClusterDB
 }
 
-func CreateRelationPoolFrame(isTest mode.ProcessingMode, apool iface.ApoolPort) (*RelationPool, error) {
+func CreateRelationPoolFrame(isTest mode.ProcessingMode, apool pface.ApoolPort) (*RelationPool, error) {
 	var root func() string
 	if isTest.IsTest() {
 		root = computation.FindTestingStorageRootPath
@@ -55,11 +57,11 @@ func CreateRelationPoolFrame(isTest mode.ProcessingMode, apool iface.ApoolPort) 
 	if !isTest.IsTest() {
 		capLimit = 8192
 	}
-	busTriplet, err := eventbus.NewWithRoot[sharedface.TripletEventMsg](root, rel("triplet"), capLimit)
+	busTriplet, err := eventbus.NewWithRoot[cface.TripletEventMsg](root, rel("triplet"), capLimit)
 	if err != nil {
 		return nil, err
 	}
-	busCreation, err := eventbus.NewWithRoot[sharedface.CreationEventMsg](root, rel("creation"), capLimit)
+	busCreation, err := eventbus.NewWithRoot[cface.CreationEventMsg](root, rel("creation"), capLimit)
 	if err != nil {
 		busTriplet.Close()
 		return nil, err
@@ -80,13 +82,17 @@ func CreateRelationPoolFrame(isTest mode.ProcessingMode, apool iface.ApoolPort) 
 	}, nil
 }
 
+func (r *RelationPool) DispatchTraitEvent(tv ropedomain.TraitEvent) error {
+	return r.ClusterRepo.HandleTraitEvent(tv)
+}
 func (r *RelationPool) ClusterDB() iface.ClusterDB {
 	return r.ClusterRepo
 }
 func (r *RelationPool) GetGraphStats() map[string]any {
 	return r.ClusterRepo.GetGraphStats()
 }
-func (r *RelationPool) Register(triplet sharedface.TripletPort, creation sharedface.CreationPort) error {
+
+func (r *RelationPool) Register(triplet cface.TripletPort, creation cface.CreationPort) error {
 
 	capLimit := 2048
 	if !r.isTest.IsTest() {
@@ -107,29 +113,29 @@ func (r *RelationPool) Register(triplet sharedface.TripletPort, creation sharedf
 	return nil
 }
 
-func (r *RelationPool) GetApooPort() iface.ApoolPort {
+func (r *RelationPool) GetApooPort() pface.ApoolPort {
 	return r.Apool
 }
 
 // 포트 기반 뷰어
-func (r *RelationPool) GetTripletPort() sharedface.TripletPort { return r.ports.triplet }
+func (r *RelationPool) GetTripletPort() cface.TripletPort { return r.ports.triplet }
 
-func (r *RelationPool) GetCreationPort() sharedface.CreationPort { return r.ports.creation }
+func (r *RelationPool) GetCreationPort() cface.CreationPort { return r.ports.creation }
 
 // 이벤트 버스 기반 커멘더
-func (r *RelationPool) EnqueueToTriplet(v sharedface.TripletEventMsg) error {
+func (r *RelationPool) EnqueueToTriplet(v cface.TripletEventMsg) error {
 	return r.busTriplet.Publish(v)
 }
-func (r *RelationPool) EnqueueToCreation(v sharedface.CreationEventMsg) error {
+func (r *RelationPool) EnqueueToCreation(v cface.CreationEventMsg) error {
 	return r.busCreation.Publish(v)
 }
 
 // 이벤트 버스 기반 소비
 // 분선 모듈 상호 간의 이벤트버스
-func (r *RelationPool) DequeueTriplet() <-chan sharedface.TripletEventMsg {
+func (r *RelationPool) DequeueTriplet() <-chan cface.TripletEventMsg {
 	return r.busTriplet.Dequeue()
 }
-func (r *RelationPool) DequeueCreation() <-chan sharedface.CreationEventMsg {
+func (r *RelationPool) DequeueCreation() <-chan cface.CreationEventMsg {
 	return r.busCreation.Dequeue()
 }
 

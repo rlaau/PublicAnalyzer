@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/sharedface"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/cface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
 	relapi "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/api"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/streamfeeder/bus"
@@ -220,7 +220,7 @@ func main() {
 func LoadAndFilterAndMarkAndIngestTransaction(
 	txBridge *eventbus.EventBus[domain.RawTransaction],
 	tripletBus *eventbus.EventBus[*domain.MarkedTransaction],
-	coPort sharedface.CoPort,
+	coPort cface.CoPort,
 	ctx context.Context,
 ) {
 	count := 0
@@ -295,7 +295,7 @@ func LoadAndFilterAndMarkAndIngestTransaction(
 // * 두 기능을 함
 // * 1) 필터: 오직 eoa to eoa만 받음
 // * 2) 변환. 트랜잭션을 marking함
-func transformAndFilterRawTxs(co sharedface.CoPort, tx *domain.RawTransaction) *domain.MarkedTransaction {
+func transformAndFilterRawTxs(co cface.CoPort, tx *domain.RawTransaction) *domain.MarkedTransaction {
 	from, _ := domain.ParseAddressFromString(tx.From)
 	to, _ := domain.ParseAddressFromString(tx.To)
 	//eoa-eoa의 거래일 경우

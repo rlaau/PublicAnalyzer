@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/iface"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/sharedface"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/cface"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/pface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/app"
 	triplet "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
@@ -31,7 +31,7 @@ func DefaultTestingTripletConfig(processName string) *triplet.TripletConfig {
 // TODO 추후 mode기반 컨피겨 분기(현재는 테스팅 컨피겨 뿐임)
 // TODO creation까지 달기
 // TODO 지금은, 형식이 이렇다는 거임
-func ComposeRelPool(mode mode.ProcessingMode, processName string, apool iface.ApoolPort) *RelationPool {
+func ComposeRelPool(mode mode.ProcessingMode, processName string, apool pface.ApoolPort) *RelationPool {
 	preRelPool, err := CreateRelationPoolFrame(mode, apool)
 	if err != nil {
 		panic(fmt.Sprintf("relPool Frame생성 중 에러: %v", err))
@@ -59,7 +59,7 @@ func ComposeRelPool(mode mode.ProcessingMode, processName string, apool iface.Ap
 		panic("preTriplet생성 중 에러")
 	}
 	//TODO 실구현 할것
-	var preCreation sharedface.CreationPort = nil
+	var preCreation cface.CreationPort = nil
 
 	preRelPool.Register(preTriplet, preCreation)
 	fmt.Println("rel pool에 두 모듈 등록 완료")

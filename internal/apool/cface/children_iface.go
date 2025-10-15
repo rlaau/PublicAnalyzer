@@ -1,16 +1,18 @@
-package sharedface
+package cface
 
 import (
 	"context"
 	"io"
 
-	nsface "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/sharedface"
-	rsface "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/sharedface"
+	nsface "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/cface"
+	rsface "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/cface"
+	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
 
 type RelPort interface {
 	//ClusterDB() rsface.ClusterDB
+	DispatchTraitEvent(tv ropedomain.TraitEvent) error
 	GetGraphStats() map[string]any
 	GetTripletPort() rsface.TripletPort
 	GetCreationPort() rsface.CreationPort

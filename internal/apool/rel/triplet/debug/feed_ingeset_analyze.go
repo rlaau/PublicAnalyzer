@@ -15,7 +15,7 @@ import (
 	eoapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/eo/app"
 	relapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
 	relapi "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/api"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/sharedface"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/cface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	kafka "github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 
@@ -365,7 +365,7 @@ func resetIsolatedEnvironmentPaths(cfg *IsolatedPathConfig) error {
 }
 
 // runSimplifiedMonitoring TPS 모니터링 포함
-func runSimplifiedMonitoring(generator *txFeeder.TxFeeder, relTriplet sharedface.TripletPort, ctx context.Context) {
+func runSimplifiedMonitoring(generator *txFeeder.TxFeeder, relTriplet cface.TripletPort, ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -394,7 +394,7 @@ func runSimplifiedMonitoring(generator *txFeeder.TxFeeder, relTriplet sharedface
 }
 
 // printSimplifiedResults 간소화된 결과 출력
-func printSimplifiedResults(generator *txFeeder.TxFeeder, relTriplet sharedface.TripletPort) {
+func printSimplifiedResults(generator *txFeeder.TxFeeder, relTriplet cface.TripletPort) {
 	stats := generator.GetPipelineStats()
 	tripletStats := relTriplet.GetStatistics()
 
@@ -409,7 +409,7 @@ func printSimplifiedResults(generator *txFeeder.TxFeeder, relTriplet sharedface.
 }
 
 // runTripletMonitoring TxDefineLoader용 모니터링
-func runTripletMonitoring(loader *txFeeder.TxDefineLoader, relTriplet sharedface.TripletPort, ctx context.Context) {
+func runTripletMonitoring(loader *txFeeder.TxDefineLoader, relTriplet cface.TripletPort, ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -441,7 +441,7 @@ func runTripletMonitoring(loader *txFeeder.TxDefineLoader, relTriplet sharedface
 }
 
 // printDeterministicResults TxDefineLoader용 결과 출력
-func printDeterministicResults(loader *txFeeder.TxDefineLoader, relTriplet sharedface.TripletPort) {
+func printDeterministicResults(loader *txFeeder.TxDefineLoader, relTriplet cface.TripletPort) {
 	stats := loader.GetPipelineStats()
 	tripletStats := relTriplet.GetStatistics()
 	graphStructure := loader.GetGraphStructure()
@@ -471,7 +471,7 @@ func printDeterministicResults(loader *txFeeder.TxDefineLoader, relTriplet share
 }
 
 // validateTripletResults TxDefineLoader 결과 검증
-func validateTripletResults(loader *txFeeder.TxDefineLoader, relTriplet sharedface.TripletPort) {
+func validateTripletResults(loader *txFeeder.TxDefineLoader, relTriplet cface.TripletPort) {
 	fmt.Println("\n🔍 DETERMINISTIC RESULTS VALIDATION")
 	fmt.Println(strings.Repeat("-", 40))
 

@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/sharedface"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/cface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
@@ -24,12 +24,12 @@ type AnalyzerPool struct {
 	isTest mode.ProcessingMode
 
 	ports struct {
-		rel sharedface.RelPort
-		nod sharedface.NodPort
+		rel cface.RelPort
+		nod cface.NodPort
 	}
 
-	busRel        *eventbus.EventBus[sharedface.RelMsg]
-	busNod        *eventbus.EventBus[sharedface.NodMsg]
+	busRel        *eventbus.EventBus[cface.RelMsg]
+	busNod        *eventbus.EventBus[cface.NodMsg]
 	fanoutManager *TxFanoutManager
 	closed        atomic.Bool
 }
@@ -56,11 +56,11 @@ func CreateAnalzerPoolFrame(isTest mode.ProcessingMode, bp tools.CountingBackpre
 		capLimit = 8192
 	}
 
-	busNod, err := eventbus.NewWithRoot[sharedface.NodMsg](root, rel("nod"), capLimit)
+	busNod, err := eventbus.NewWithRoot[cface.NodMsg](root, rel("nod"), capLimit)
 	if err != nil {
 		return nil, err
 	}
-	busRel, err := eventbus.NewWithRoot[sharedface.RelMsg](root, rel("rel"), capLimit)
+	busRel, err := eventbus.NewWithRoot[cface.RelMsg](root, rel("rel"), capLimit)
 	if err != nil {
 		busNod.Close()
 		return nil, err
@@ -100,28 +100,28 @@ func CreateAnalzerPoolFrame(isTest mode.ProcessingMode, bp tools.CountingBackpre
 	return a, nil
 }
 
-func (a *AnalyzerPool) Register(rel sharedface.RelPort, nod sharedface.NodPort) {
+func (a *AnalyzerPool) Register(rel cface.RelPort, nod cface.NodPort) {
 	a.busNod.Close()
 	a.busRel.Close()
 	a.ports.rel = rel
 	a.ports.nod = nod
 }
 
-func (a *AnalyzerPool) GetRelPort() sharedface.RelPort { return a.ports.rel }
-func (a *AnalyzerPool) GetNodPort() sharedface.NodPort { return a.ports.nod }
+func (a *AnalyzerPool) GetRelPort() cface.RelPort { return a.ports.rel }
+func (a *AnalyzerPool) GetNodPort() cface.NodPort { return a.ports.nod }
 
-func (a *AnalyzerPool) EnqueueToRel(v sharedface.RelMsg) error {
+func (a *AnalyzerPool) EnqueueToRel(v cface.RelMsg) error {
 	return a.busRel.Publish(v)
 }
-func (a *AnalyzerPool) EnqueueToNod(v sharedface.NodMsg) error {
+func (a *AnalyzerPool) EnqueueToNod(v cface.NodMsg) error {
 	return a.busNod.Publish(v)
 }
 
-func (a *AnalyzerPool) DeququeRel() <-chan sharedface.RelMsg {
+func (a *AnalyzerPool) DeququeRel() <-chan cface.RelMsg {
 	return a.busRel.Dequeue()
 }
 
-func (a *AnalyzerPool) DeququeNod() <-chan sharedface.NodMsg {
+func (a *AnalyzerPool) DeququeNod() <-chan cface.NodMsg {
 	return a.busNod.Dequeue()
 }
 
@@ -200,7 +200,7 @@ func (a *AnalyzerPool) Close() error {
 
 // TODO 추후 지울것.
 // TODO 포트 등록은 정식 생성자 통해서 할것!!!
-func (a *AnalyzerPool) RegisterPorts(nod sharedface.NodPort, rel sharedface.RelPort) {
+func (a *AnalyzerPool) RegisterPorts(nod cface.NodPort, rel cface.RelPort) {
 	if a.busNod != nil {
 		a.busNod.Close()
 	}
