@@ -7,10 +7,21 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/sharedface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
 
-// TODO 추후 일반화하기
+type NodPoolDesign interface {
+	gface.Module
+	GetCoPort() sharedface.CoPort
+	GetEoPort() sharedface.EoPort
+}
+
+// TODO 추후 스트리밍 가능하게 만든 후 아래 시그니처 채우기!!!!
+func (n *NodPool) Name() gface.ModuleName          { return gface.ParseModuleName("NodPool") }
+func (n *NodPool) Start(ctx context.Context) error { panic("not implemented") }
+func (n *NodPool) Close() error                    { panic("not implemented") }
+
 type NodPool struct {
 	isTest mode.ProcessingMode
 	Apool  iface.ApoolPort
@@ -44,10 +55,4 @@ func (n *NodPool) SetCoPort(c sharedface.CoPort) {
 
 func (n *NodPool) SetEoPort(e sharedface.EoPort) {
 	n.ports.eo = e
-}
-func (n *NodPool) Start(ctx context.Context) error {
-	panic("구현 안함 아직")
-}
-func (n *NodPool) Close() error {
-	panic("아직 미구현")
 }

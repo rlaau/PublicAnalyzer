@@ -121,14 +121,14 @@ func newSimpleAnalyzer(config *TripletConfig, infraStructure *infra.TripletAndDu
 	return analyzer, nil
 }
 func (a *SimpleTriplet) GraphDB() *badger.DB {
-	if p, ok := a.relPool.RopeDB().(roperepo.RawBadgerProvider); ok {
+	if p, ok := a.relPool.ClusterDB().(roperepo.RawBadgerProvider); ok {
 		return p.RawBadgerDB()
 	}
 	return nil
 }
 
 func (a *SimpleTriplet) RopeDB() ropeapp.RopeDB {
-	return a.relPool.RopeDB()
+	return a.relPool.ClusterDB()
 }
 
 // Start 분석기 시작
@@ -421,7 +421,7 @@ func (a *SimpleTriplet) printStatistics() {
 			windowStats["active_buckets"], windowStats["pending_relations"])
 	}
 
-	graphStats := a.relPool.RopeDB().GetGraphStats()
+	graphStats := a.relPool.ClusterDB().GetGraphStats()
 	log.Printf("   Graph: %v nodes | %v edges",
 		graphStats["total_nodes"], graphStats["total_edges"])
 
@@ -446,7 +446,7 @@ func (a *SimpleTriplet) GetStatistics() map[string]any {
 }
 
 func (a *SimpleTriplet) GetRopeDBStats() map[string]any {
-	return a.relPool.RopeDB().GetGraphStats()
+	return a.relPool.ClusterDB().GetGraphStats()
 }
 
 // IsHealthy 헬스 상태 체크
@@ -515,7 +515,7 @@ func (a *SimpleTriplet) shutdown() error {
 		log.Printf("⚠️ Error closing dual manager: %v", err)
 	}
 
-	if err := a.relPool.RopeDB().Close(); err != nil {
+	if err := a.relPool.ClusterDB().Close(); err != nil {
 		log.Printf("⚠️ Error closing graph repository: %v", err)
 	}
 
@@ -564,7 +564,7 @@ func (a *SimpleTriplet) printFinalReport() {
 		}
 	}
 
-	graphStats := a.relPool.RopeDB().GetGraphStats()
+	graphStats := a.relPool.ClusterDB().GetGraphStats()
 	log.Printf("\n🗂️  Graph Database State:")
 	for key, value := range graphStats {
 		log.Printf("   %s: %v", key, value)

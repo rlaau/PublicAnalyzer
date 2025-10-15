@@ -3,7 +3,6 @@ package iface
 import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/iface"
 	shared "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/sharedface"
-	ropeapp "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
 
@@ -16,5 +15,5 @@ type RelPort interface {
 	//자신 모듈을 소비
 	DequeueTriplet() <-chan shared.TripletEventMsg
 	ConsumeTripletTxByFanout() <-chan domain.MarkedTransaction
-	RopeDB() ropeapp.RopeDB
+	ClusterDB() iface.ClusterDB
 }

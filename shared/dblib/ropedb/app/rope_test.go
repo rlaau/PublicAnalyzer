@@ -119,7 +119,7 @@ func link(t *testing.T, db RopeDB, a1, a2 shareddomain.Address, trait domain.Tra
 			Time:     chaintimer.ChainTime(time.Now()),
 			ScoreInc: 1,
 		})
-	if err := db.PushTraitEvent(ev); err != nil {
+	if err := db.HandleTraitEvent(ev); err != nil {
 		t.Fatalf("PushTraitEvent(%v,%v,trait=%v): %v", a1, a2, trait, err)
 	}
 }
@@ -194,7 +194,7 @@ func TestRopeDB_UseCase_Spec(t *testing.T) {
 	monitoringServer.SetupBasicRoutes()
 	//TODO 그냥 서버용 API가 필요했기에 만듦.
 	relPool := &relapp.RelationPool{
-		RopeRepo: db,
+		ClusterRepo: db,
 	}
 	analyzer := &app.SimpleTriplet{}
 	analyzer.NullButAddDB(relPool)

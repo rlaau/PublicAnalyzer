@@ -11,6 +11,10 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 )
 
+
+//TODO 얘내 지우기
+//TODO ropeDB에 대한 쿼리는 rel의 책임이지, triplet의 책임이 아님!!
+//TODO 테스트 해 보면서 결국은 지우긴
 // TripletAPIHandler Triplet Analyzer API 핸들러
 type TripletAPIHandler struct {
 	analyzer app.CommonTriplet

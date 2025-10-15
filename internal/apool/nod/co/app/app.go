@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"math/big"
@@ -14,10 +15,16 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	"golang.org/x/crypto/sha3"
 )
 
+type CoDesign interface {
+	gface.Module
+	RegisterContract(creator domain.Address, nonce domain.Nonce, blockTime chaintimer.ChainTime, txId domain.TxId) (domain.Address, error)
+	CheckIsContract(address domain.Address) bool
+}
 type Co struct {
 	contDB *infra.ContractDB
 	mode   mode.ProcessingMode
@@ -25,6 +32,21 @@ type Co struct {
 
 type CoCfg struct {
 	Mode mode.ProcessingMode
+}
+
+func (co *Co) Name() gface.ModuleName {
+	return gface.ParseModuleName("Co")
+}
+
+func (co *Co) Start(ctx context.Context) error {
+	//TODO 이후 스트림 가능 한 구조로 만들것!!
+	panic("not implemented")
+}
+
+func (co *Co) Close() error {
+	//TODO 일단 Start기능 구현 후
+	//TODO 안정적으로 종료되도록 만들 것!
+	panic("not impletmented")
 }
 
 func NewCo(coCfg CoCfg, nodPool iface.NodPort) *Co {

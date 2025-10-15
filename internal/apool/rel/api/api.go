@@ -56,10 +56,10 @@ func (h *RelAPIPoolHandler) registerRelationPool(router *chi.Mux) error {
 		// PolyTrait 관련 엔드포인트들
 		r.Get("/polytrait/legend", h.handlePolyTraitLegend)
 		r.Get("/polyrope/search", h.handlePolyRopeSearch)
-		
+
 		// Author Legend 엔드포인트
 		r.Get("/author-legend", h.handleAuthorLegend)
-		
+
 		// Trait 상세 정보 엔드포인트
 		r.Get("/trait-detail/{id}", h.handleTraitDetail)
 	})

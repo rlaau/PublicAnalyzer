@@ -7,6 +7,9 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
 
+// TODO 트리플렛을 위한 전용 도메인 설계
+// TODO 그러니까, "이벤트"같은 도메인 이벤트랑
+// TODO 인프라가 다룰 엔티티들, 그리고 걔내를 위한 어그리게이터까지 추가!!!
 // DetectedDepositWithEvidence represents a deposit address that has been identified
 type DetectedDepositWithEvidence struct {
 	Address    domain.Address

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/iface"
 	ropeapp "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
@@ -12,7 +13,7 @@ type RawBadgerProvider interface {
 	RawBadgerDB() *badger.DB
 }
 
-func NewRelGraphDB(mode mode.ProcessingMode) (ropeapp.RopeDB, error) {
+func NewClusterDB(mode mode.ProcessingMode) (iface.ClusterDB, error) {
 	db, err := ropeapp.NewRopeDB(mode, "RelGraphDB", TraitLegend, RuleLegend, PolyTraitLegend, TrapLegend, AuthorLegend)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open rope db: %w", err)

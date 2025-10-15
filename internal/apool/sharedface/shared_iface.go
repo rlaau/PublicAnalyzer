@@ -6,12 +6,12 @@ import (
 
 	nsface "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/sharedface"
 	rsface "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/sharedface"
-	ropeapp "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
 
 type RelPort interface {
-	RopeDB() ropeapp.RopeDB
+	//ClusterDB() rsface.ClusterDB
+	GetGraphStats() map[string]any
 	GetTripletPort() rsface.TripletPort
 	GetCreationPort() rsface.CreationPort
 	EnqueueToTriplet(v rsface.TripletEventMsg) error

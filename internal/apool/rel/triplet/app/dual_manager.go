@@ -82,6 +82,14 @@ func (dm *DualManager) IsDepositAddress(addr domain.Address) bool {
 }
 
 // HandleAddress processes transaction addresses according to their types
+// TODO 함수명 변경 & 함수 끊기. 1) HandleXXX는 "XXX"라는 "이벤트"를 처리해야 함. 2) 그거 바탕으로 함수 끊기
+// TODO 그러므로 HandleAddress는 잘못된 작명임
+// TODO 수정 시 "선언적으로" 바꿔서 처리하기
+// TODO 그러니까, 내가 원하는 것은 (case1->case1 Callback)같은 거잖음.
+// TODO 그럼, 이렇게 처리하삼
+// TODO 1->  TransfromToRelation따라 케이스 분류
+// TODO 2-> PublishRelationEvent이벤트발행
+// TODO 3-> HandleRelationEvent 이벤트 처리
 func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.MarkedTransaction, error) {
 	fromAddr := tx.From
 	toAddr := tx.To
@@ -212,6 +220,8 @@ func (dm *DualManager) DetectNewDepositAddress(dd *domain.DetectedDeposit) error
 }
 
 // handleDepositDetection handles detection of new deposit addresses
+// TODO 이런걸 "이벤트"로 처리하기
+// TODO "디포짓 발견"을 처리하는 함수인데도, cex, depositAddr을 받는건 로직이 맞지 않음.
 func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Address, tx *domain.MarkedTransaction, time chaintimer.ChainTime) error {
 	//fmt.Printf("💰 handleDepositDetection: %s → CEX %s\n", depositAddr.String()[:10]+"...", cexAddr.String()[:10]+"...")
 	debugEnabled := false
@@ -283,7 +293,7 @@ func (dm *DualManager) saveCexAndDepositToGraphDB(cex, deposit domain.Address, t
 		addrAndRule2,
 		txScala,
 	)
-	return dm.relPool.RopeDB().PushTraitEvent(traitEvent)
+	return dm.relPool.ClusterDB().HandleTraitEvent(traitEvent)
 }
 
 // saveDualRelationToGraphDB saves a connection between two EOAs to the graph database
@@ -314,7 +324,7 @@ func (dm *DualManager) saveDualRelationToGraphDB(fromScala infra.FromScala, toAd
 		addressAndRule2,
 		txScala,
 	)
-	return dm.relPool.RopeDB().PushTraitEvent(traitEvent)
+	return dm.relPool.ClusterDB().HandleTraitEvent(traitEvent)
 
 }
 

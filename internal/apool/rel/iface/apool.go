@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/sharedface"
+	ropeapp "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
 
@@ -15,4 +16,8 @@ type ApoolPort interface {
 	ConsumeRelTxByFanout() <-chan domain.MarkedTransaction
 	Start(parent context.Context) error
 	Close() error
+}
+
+type ClusterDB interface {
+	ropeapp.RopeDB
 }

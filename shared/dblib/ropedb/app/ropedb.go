@@ -56,7 +56,7 @@ func NewRopeDB(isTest mode.ProcessingMode, dbName string, traitLegend map[domain
 
 type RopeDB interface {
 	// 이벤트 입력(내부적으로 Vertex 동기 갱신 + Rope/Trait Upsert 큐잉)
-	PushTraitEvent(ev domain.TraitEvent) error
+	HandleTraitEvent(ev domain.TraitEvent) error
 
 	// 조회
 	ViewRopeByNode(a shareddomain.Address) (*domain.Rope, error) // 첫 번째 Rope 기준(필요 시 Trait 선택 버전 추가)
@@ -395,9 +395,9 @@ func (b *BadgerRopeDB) Close() error {
 // ==== PATCH END ====
 
 // * 결국 로프 DB 튜닝의 핵심
-// * PushTraitEvent가 빠르게 작동하면 됨
+// * HandleTraitEvent가 빠르게 작동하면 됨
 // *근데, Vertex 읽기 쓰기 외엔 전부 비동기로 동작 중임
-func (b *BadgerRopeDB) PushTraitEvent(ev domain.TraitEvent) error {
+func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 	debugEnabled := true
 	if b.publishCounter%10_000 == 0 && debugEnabled {
 		fmt.Printf(`

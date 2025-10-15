@@ -1,4 +1,4 @@
-package iface
+package gface
 
 import "context"
 
@@ -7,7 +7,6 @@ type Closable interface {
 	Closed() bool
 	Errors() <-chan error
 }
-
 
 type DomainConsumer interface {
 	Consumer[DomainEvent]

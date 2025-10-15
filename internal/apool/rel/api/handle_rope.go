@@ -22,11 +22,11 @@ type graphProvider interface {
 }
 
 func (h *RelAPIPoolHandler) withGraph(w http.ResponseWriter) (graphProvider, bool) {
-	if h.relPool == nil || h.relPool.RopeRepo == nil {
+	if h.relPool == nil || h.relPool.ClusterRepo == nil {
 		utils.WriteErrorResponse(w, "Graph DB not accessible", http.StatusServiceUnavailable)
 		return nil, false
 	}
-	gp, ok := h.relPool.RopeRepo.(graphProvider)
+	gp, ok := h.relPool.ClusterRepo.(graphProvider)
 	if !ok {
 		utils.WriteErrorResponse(w, "Graph provider not supported by DB implementation", http.StatusServiceUnavailable)
 		return nil, false
@@ -161,13 +161,13 @@ func (h *RelAPIPoolHandler) handleRopeInfo(w http.ResponseWriter, r *http.Reques
 	}
 
 	// RopeDB 접근 확인
-	if h.relPool == nil || h.relPool.RopeRepo == nil {
+	if h.relPool == nil || h.relPool.ClusterRepo == nil {
 		utils.WriteErrorResponse(w, "Graph DB not accessible", http.StatusServiceUnavailable)
 		return
 	}
 
 	// RopeDB에서 직접 RopeMark 정보를 가져오는 새로운 메소드가 필요
-	if ropeDB, ok := h.relPool.RopeRepo.(interface {
+	if ropeDB, ok := h.relPool.ClusterRepo.(interface {
 		GetRopeInfo(id ropedomain.RopeID) (map[string]interface{}, error)
 	}); ok {
 		info, err := ropeDB.GetRopeInfo(ropedomain.RopeID(u))
@@ -188,13 +188,13 @@ func (h *RelAPIPoolHandler) handlePolyTraitLegend(w http.ResponseWriter, r *http
 	}
 
 	// RopeDB 접근 확인
-	if h.relPool == nil || h.relPool.RopeRepo == nil {
+	if h.relPool == nil || h.relPool.ClusterRepo == nil {
 		utils.WriteErrorResponse(w, "Graph DB not accessible", http.StatusServiceUnavailable)
 		return
 	}
 
 	// PolyTrait 범례 정보를 제공하는 메소드가 필요
-	if ropeDB, ok := h.relPool.RopeRepo.(interface {
+	if ropeDB, ok := h.relPool.ClusterRepo.(interface {
 		GetPolyTraitLegend() map[ropedomain.PolyTraitCode]ropedomain.PolyNameAndTraits
 	}); ok {
 		legend := ropeDB.GetPolyTraitLegend()
@@ -241,13 +241,13 @@ func (h *RelAPIPoolHandler) handlePolyRopeSearch(w http.ResponseWriter, r *http.
 	}
 
 	// RopeDB 접근 확인
-	if h.relPool == nil || h.relPool.RopeRepo == nil {
+	if h.relPool == nil || h.relPool.ClusterRepo == nil {
 		utils.WriteErrorResponse(w, "Graph DB not accessible", http.StatusServiceUnavailable)
 		return
 	}
 
 	// ViewInSameRopeByPolyTrait 메소드 호출
-	if ropeDB, ok := h.relPool.RopeRepo.(interface {
+	if ropeDB, ok := h.relPool.ClusterRepo.(interface {
 		ViewInSameRopeByPolyTrait(addr1, addr2 shareddomain.Address, polyTraitCode ropedomain.PolyTraitCode) (bool, error)
 	}); ok {
 		inSameRope, err := ropeDB.ViewInSameRopeByPolyTrait(address1, address2, polyTraitCode)
@@ -305,13 +305,13 @@ func (h *RelAPIPoolHandler) handleTraitDetail(w http.ResponseWriter, r *http.Req
 	}
 
 	// RopeDB 접근 확인
-	if h.relPool == nil || h.relPool.RopeRepo == nil {
+	if h.relPool == nil || h.relPool.ClusterRepo == nil {
 		utils.WriteErrorResponse(w, "Graph DB not accessible", http.StatusServiceUnavailable)
 		return
 	}
 
 	// TraitMark 정보를 가져오는 메소드가 필요
-	if ropeDB, ok := h.relPool.RopeRepo.(interface {
+	if ropeDB, ok := h.relPool.ClusterRepo.(interface {
 		GetTraitDetail(id ropedomain.TraitID) (map[string]interface{}, error)
 	}); ok {
 		detail, err := ropeDB.GetTraitDetail(ropedomain.TraitID(u))
@@ -333,15 +333,8 @@ func (h *RelAPIPoolHandler) handleGraphStats(w http.ResponseWriter, r *http.Requ
 	}
 
 	// RopeDB에서 실제 그래프 통계 조회
-	ropeDB := h.relPool.RopeDB()
-	if ropeDB == nil {
-		http.Error(w, "Graph DB not accessible", http.StatusServiceUnavailable)
-		return
-	}
+	stats := h.relPool.GetGraphStats()
 
-	// 실제 그래프 통계 가져오기
-	stats := ropeDB.GetGraphStats()
-	
 	// 추가 메타데이터
 	response := map[string]interface{}{
 		"database_available": true,
@@ -349,7 +342,7 @@ func (h *RelAPIPoolHandler) handleGraphStats(w http.ResponseWriter, r *http.Requ
 		"stats":              stats,
 		// 호환성을 위해 stats의 내용을 최상위 레벨에도 복사
 		"nodes":     stats["nodes"],
-		"ropes":     stats["ropes"], 
+		"ropes":     stats["ropes"],
 		"traits":    stats["traits"],
 		"polyRopes": stats["polyRopes"],
 	}

@@ -1,5 +1,4 @@
-// iface/event.go
-package iface
+package gface
 
 import (
 	"fmt"

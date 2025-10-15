@@ -128,7 +128,7 @@ func main() {
 	apool.RegisterPorts(nodPool, nil)
 	//* 여기서 일단은 relPool이 apool로 nodPool접근
 	relPool := relapp.ComposeRelPool(mode.TestingModeProcess, "feed_ingest_ee_test", apool)
-	
+
 	//* apool에 다시 강제로 등록
 	apool.RegisterPorts(nodPool, relPool)
 	monitoringServer := server.NewServer(":8080")

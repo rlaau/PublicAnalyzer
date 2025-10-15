@@ -14,7 +14,6 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/roperepo"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/sharedface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
-	ropeapp "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
@@ -22,7 +21,7 @@ import (
 
 // 관계 분석 시, 각 단일 분석기가 통신하기 위한 풀
 // TODO 대부분의 코드를 RelPool, NodPool에 대해 일반화하기!!
-// TODO 구조가 아주~ 많이 겹침!!
+// TODO 구조가 많이 겹침
 // TODO 근데 지금은 진짜 하기가 힘이 듦. 조금 쉬고 시간 날때 ㄱ
 type RelationPool struct {
 	isTest mode.ProcessingMode
@@ -38,7 +37,7 @@ type RelationPool struct {
 
 	txDistributor *TxDistributor
 	closed        atomic.Bool
-	RopeRepo      ropeapp.RopeDB
+	ClusterRepo   iface.ClusterDB
 }
 
 func CreateRelationPoolFrame(isTest mode.ProcessingMode, apool iface.ApoolPort) (*RelationPool, error) {
@@ -65,7 +64,7 @@ func CreateRelationPoolFrame(isTest mode.ProcessingMode, apool iface.ApoolPort) 
 		busTriplet.Close()
 		return nil, err
 	}
-	ropeRepo, err := roperepo.NewRelGraphDB(isTest)
+	ropeRepo, err := roperepo.NewClusterDB(isTest)
 	if err != nil {
 		busTriplet.Close()
 		busCreation.Close()
@@ -76,13 +75,16 @@ func CreateRelationPoolFrame(isTest mode.ProcessingMode, apool iface.ApoolPort) 
 		isTest:      isTest,
 		busTriplet:  busTriplet,
 		busCreation: busCreation,
-		RopeRepo:    ropeRepo,
+		ClusterRepo: ropeRepo,
 		Apool:       apool,
 	}, nil
 }
 
-func (r *RelationPool) RopeDB() ropeapp.RopeDB {
-	return r.RopeRepo
+func (r *RelationPool) ClusterDB() iface.ClusterDB {
+	return r.ClusterRepo
+}
+func (r *RelationPool) GetGraphStats() map[string]any {
+	return r.ClusterRepo.GetGraphStats()
 }
 func (r *RelationPool) Register(triplet sharedface.TripletPort, creation sharedface.CreationPort) error {
 
@@ -187,7 +189,7 @@ func (r *RelationPool) Close() error {
 	fmt.Printf("relpool의 txDistributor 정리 완료\n")
 	r.busTriplet.Close()
 	r.busCreation.Close()
-	r.RopeRepo.Close()
+	r.ClusterRepo.Close()
 	fmt.Printf("BUS들 정리 완료\n")
 	return nil
 }

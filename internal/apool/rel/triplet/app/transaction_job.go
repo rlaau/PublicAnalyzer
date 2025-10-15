@@ -50,7 +50,7 @@ func (a *SimpleTriplet) processSingleTransactionJob(tx *shareddomain.MarkedTrans
 		return nil
 	}
 
-	//* 모나드 처리로 로직 간명화
+
 	_, err := fp.NewMonadFlow[*domain.MarkedTransaction]().
 		RegisterInput(tx).
 		Then(a.dualManager.CheckTransaction).

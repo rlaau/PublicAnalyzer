@@ -211,7 +211,7 @@ func main() {
 					continue
 				}
 				//해당 생성 이벤트 전달
-				relPool.RopeRepo.PushTraitEvent(traitEvent)
+				relPool.ClusterRepo.HandleTraitEvent(traitEvent)
 
 				atomic.AddInt64(&stats.convertedEvents, 1)
 			}
