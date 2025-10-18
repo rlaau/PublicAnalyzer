@@ -55,7 +55,7 @@ ex:
 ```
 
 3. cface (children interface)
-자기가 보고픈 자식으 기능, 즉, 자신이 본 자식의 포트를 정의
+자기가 보고픈 자식의 기능, 즉, 자신이 본 자식의 포트를 정의
 
 ex:
 ```go 
@@ -79,6 +79,7 @@ ex:
 "자기 자신의 설계도"를 그리는 인터페이스임.
 다른 모듈은 이 인터페이스를 임포트 해선 안됨.
 "코드로 하는 문서화"라고 보면 됨.
+ex:
 ```go
     type XxxDesign interface {
         DomSometing()
@@ -101,7 +102,7 @@ ex:
 모듈 내 도메인은 domain에 정의
 ex:
 ```go
-    type SpecialTxEvent {
+    type SpecialTxEvent struct {
         Message string
         Signal int64
     }

@@ -16,6 +16,7 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring/tools"
 )
 
+// TODO 이건 아무리봐도 iface + infra조합임.
 // 새로운 단일 Kafka 배치 소비자 + eventbus 팬아웃
 type TxFanoutManager struct {
 	consumer *kafka.KafkaBatchConsumer[domain.MarkedTransaction]

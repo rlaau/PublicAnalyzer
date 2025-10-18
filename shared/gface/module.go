@@ -5,7 +5,7 @@ import "context"
 type Module interface {
 	Name() ModuleName
 	Start(ctx context.Context) error
-	Close() error
+	Closable
 }
 
 type SubModule interface {
