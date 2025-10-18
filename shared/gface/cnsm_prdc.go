@@ -5,9 +5,15 @@ import "context"
 type Closable interface {
 	Close() error
 	Closed() bool
-	Errors() <-chan error
 }
 
+type WithErrors interface {
+	Errors() <-chan error
+}
+type ClosableWithErrors interface {
+	Closable
+	WithErrors
+}
 type DomainConsumer interface {
 	Consumer[DomainEvent]
 }

@@ -1,4 +1,4 @@
-package mem
+package fanout
 
 import (
 	"context"
@@ -16,17 +16,6 @@ type FanoutInMemoryDesign interface {
 	OnBus(name string) bool
 }
 
-type BusInfo[T any] struct {
-	busName  string
-	bus      *eventbus.EventBus[T]
-	isClosed bool
-}
-
-type BusRequest struct {
-	busName   string
-	wantClose bool
-}
-
 type FanoutInMemory[T any] struct {
 	inputBus *eventbus.EventBus[T]
 	name     string
@@ -35,9 +24,20 @@ type FanoutInMemory[T any] struct {
 	stop chan struct{}
 	wg   sync.WaitGroup
 
-	mu         sync.RWMutex
-	closedFlag atomic.Bool
-	errors     chan error
+	mu          sync.RWMutex
+	closedFlag  atomic.Bool
+	startedFlag atomic.Bool
+}
+
+type BusInfo[T any] struct {
+	busName  string
+	bus      *eventbus.EventBus[T]
+	isClosed bool
+}
+
+type BusRequest struct {
+	BusName   string
+	WantClose bool
 }
 
 func NewFanoutInMemory[T any](name string, busRequest []BusRequest, inputCap, outputCap int) *FanoutInMemory[T] {
@@ -48,9 +48,9 @@ func NewFanoutInMemory[T any](name string, busRequest []BusRequest, inputCap, ou
 	for i, e := range busRequest {
 		newOutputBus := eventbus.NewInMemory[T](outputCap)
 		newBusInfo := &BusInfo[T]{
-			busName:  e.busName,
+			busName:  e.BusName,
 			bus:      newOutputBus,
-			isClosed: e.wantClose,
+			isClosed: e.WantClose,
 		}
 		busList[i] = newBusInfo
 	}
@@ -62,7 +62,6 @@ func NewFanoutInMemory[T any](name string, busRequest []BusRequest, inputCap, ou
 		stop:     make(chan struct{}),
 		wg:       sync.WaitGroup{},
 		mu:       sync.RWMutex{},
-		errors:   make(chan error, 16),
 	}
 
 	return f
@@ -71,35 +70,31 @@ func (f *FanoutInMemory[T]) Name() string {
 	return f.name
 }
 func (f *FanoutInMemory[T]) Start(ctx context.Context) error {
+	if f.startedFlag.Swap(true) {
+		return fmt.Errorf("fanout %q already started", f.name)
+	}
+
 	f.wg.Add(1)
+	defer f.wg.Done()
 
-	go func() {
-		defer f.wg.Done()
-		input := f.inputBus.Dequeue()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-f.stop:
-				return
-			case msg, ok := <-input:
-				if !ok {
-					return
-				}
-				if err := f.fanoutMsg(msg); err != nil {
-					select {
-					case f.errors <- err:
-					default:
-						//막혀도 드롭 가능하게 default열어둚.
-					}
-					return
-				}
+	input := f.inputBus.Dequeue()
 
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-f.stop:
+			return nil
+		case msg, ok := <-input:
+			if !ok {
+				return nil
 			}
-
+			if err := f.fanoutMsg(msg); err != nil {
+				return err
+			}
 		}
-	}()
-	return nil
+	}
+
 }
 
 func (f *FanoutInMemory[T]) fanoutMsg(msg T) error {
@@ -143,13 +138,10 @@ func (f *FanoutInMemory[T]) Close() error {
 		b.bus.Close()
 	}
 	f.mu.Unlock()
-	close(f.errors)
 
 	return nil
 }
-func (f *FanoutInMemory[T]) Errors() <-chan error {
-	return f.errors
-}
+
 func (f *FanoutInMemory[T]) GetBus(name string) *eventbus.EventBus[T] {
 	f.mu.RLock()
 	defer f.mu.RUnlock()

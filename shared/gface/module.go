@@ -8,6 +8,10 @@ type Module interface {
 	Closable
 }
 
+type ModuleWithErrors interface {
+	Module
+	WithErrors
+}
 type SubModule interface {
 	MainModule() ModuleName
 }
