@@ -2,13 +2,17 @@ package nod
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/cface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/pface"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/fanout"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
+	"golang.org/x/sync/errgroup"
 )
 
 type NodPoolDesign interface {
@@ -16,12 +20,6 @@ type NodPoolDesign interface {
 	GetCoPort() cface.CoPort
 	GetEoPort() cface.EoPort
 }
-
-// TODO 추후 스트리밍 가능하게 만든 후 아래 시그니처 채우기!!!!
-func (n *NodPool) Name() gface.ModuleName          { return gface.ParseModuleName("NodPool") }
-func (n *NodPool) Start(ctx context.Context) error { panic("not implemented") }
-func (n *NodPool) Close() error                    { panic("not implemented") }
-
 type NodPool struct {
 	isTest mode.ProcessingMode
 	Apool  pface.ApoolPort
@@ -33,18 +31,97 @@ type NodPool struct {
 
 	busEo *eventbus.EventBus[cface.EoMsg]
 	busCo *eventbus.EventBus[cface.CoMsg]
-
-	txDistributor *TxDistributor
+	//TODO 추후 iface, infra구분해서 리팩토링 하기. Apool의 사례 참고.
+	txDistributor *fanout.FanoutInMemory[domain.MarkedTransaction]
 	closed        atomic.Bool
 }
 
-// TODO 추후 마저 쓰기!
-// TODO 생성자 초기화 후, NodPool꽉 채우기
-func (n *NodPool) GetCoPort() cface.CoPort {
-	return n.ports.co
+func NewNodPool(istest mode.ProcessingMode, fanoutMnager *fanout.FanoutInMemory[domain.MarkedTransaction],
+	eo cface.EoPort, co cface.CoPort) *NodPool {
+	capLimit := 128
+	busEo := eventbus.NewInMemory[cface.EoMsg](capLimit)
+	busCo := eventbus.NewInMemory[cface.CoMsg](capLimit)
+
+	n := &NodPool{
+		isTest:        istest,
+		busEo:         busEo,
+		busCo:         busCo,
+		txDistributor: fanoutMnager,
+		ports: struct {
+			eo cface.EoPort
+			co cface.CoPort
+		}{
+			eo: eo,
+			co: co,
+		},
+	}
+	// 중요. 트리 구조에선 반드시 부모가 자식을 책임지고 레지스터 해야함
+	eo.RegisterParent(n)
+	co.RegisterParent(n)
+	return n
 }
-func (n *NodPool) GetEoPort() cface.EoPort {
-	return n.ports.eo
+func (n *NodPool) Name() gface.ModuleName { return gface.ParseModuleName("NodPool") }
+func (n *NodPool) Start(parent context.Context) error {
+	if n.txDistributor == nil {
+		return fmt.Errorf("Nodpool fanout manager not initialized")
+	}
+	g, ctx := errgroup.WithContext(parent)
+	// 분배기로 분배
+	g.Go(func() error { return n.txDistributor.Start(ctx) })
+	//분배기에 먹일 tx를 위에서 받아옴
+	g.Go(func() error {
+		upstream := n.Apool.ConsumeNodTxByFanout()
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case v, ok := <-upstream:
+				if !ok {
+					return nil
+				}
+				if err := n.txDistributor.Publish(v); err != nil {
+					return fmt.Errorf("publish failed: %w", err)
+				}
+			}
+		}
+	})
+	if n.ports.co != nil {
+		g.Go(func() error { return n.ports.co.Start(ctx) })
+	}
+	if n.ports.eo != nil {
+		g.Go(func() error { return n.ports.eo.Start(ctx) })
+	}
+
+	err := g.Wait()
+	n.Close()
+	return err
+}
+
+func (n *NodPool) Close() error {
+	if n.closed.Swap(true) {
+		return nil
+	}
+	if n.txDistributor != nil {
+		n.txDistributor.Close()
+	}
+	if n.busCo != nil {
+		n.busCo.Close()
+	}
+	if n.busEo != nil {
+		n.busEo.Close()
+	}
+	return nil
+}
+func (n *NodPool) Closed() bool { return n.closed.Load() }
+
+func (n *NodPool) GetCoPort() cface.CoPort { return n.ports.co }
+func (n *NodPool) GetEoPort() cface.EoPort { return n.ports.eo }
+
+func (n *NodPool) ConsumeCoTxByFanout() <-chan domain.MarkedTransaction {
+	return n.txDistributor.GetBus(string(CoBusName)).Dequeue()
+}
+func (n *NodPool) ConsumeEoTxByFanout() <-chan domain.MarkedTransaction {
+	return n.txDistributor.GetBus(string(EoBusName)).Dequeue()
 }
 
 // TODO 수직 슬라이스 테스트를 위해 어쩔 수 없이 만든 함수임.

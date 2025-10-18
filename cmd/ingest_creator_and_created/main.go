@@ -392,8 +392,8 @@ func GetRelPoolAndCo() (*relapp.RelationPool, cface.CoPort, error) {
 	// nodPool을 강제로 생성
 	nodPool := &nodapp.NodPool{}
 	// CO생성 및 nodPool에 강제 등록
-	co := contApp.NewCo(contApp.CoCfg{Mode: mode.ProductionModeProcess}, nodPool)
-	eo := eoapp.NewEo(mode.ProductionModeProcess, nodPool)
+	co := contApp.NewCo(contApp.CoCfg{Mode: mode.ProductionModeProcess})
+	eo := eoapp.NewEo(mode.ProductionModeProcess)
 	nodPool.SetCoPort(co)
 	nodPool.SetEoPort(eo)
 	apool.RegisterPorts(nodPool, nil)

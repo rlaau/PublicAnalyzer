@@ -9,6 +9,7 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	"golang.org/x/sync/errgroup"
 )
@@ -28,6 +29,26 @@ type AnalyzerPool struct {
 	closed        atomic.Bool
 }
 
+func NewAnalyzerPool(istest mode.ProcessingMode, fanoutManager iface.ApoolFanoutManager, nod cface.NodPort, rel cface.RelPort) *AnalyzerPool {
+	capLimit := 128
+	busNod := eventbus.NewInMemory[cface.NodMsg](capLimit)
+
+	busRel := eventbus.NewInMemory[cface.RelMsg](capLimit)
+	a := &AnalyzerPool{
+		isTest: istest,
+		busRel: busRel,
+		busNod: busNod,
+		ports: struct {
+			rel cface.RelPort
+			nod cface.NodPort
+		}{
+			rel: rel,
+			nod: nod,
+		},
+		fanoutManager: fanoutManager,
+	}
+	return a
+}
 func CreateAnalzerPoolFrame(istest mode.ProcessingMode, fanoutManager iface.ApoolFanoutManager) (*AnalyzerPool, error) {
 	capLimit := 128
 	busNod := eventbus.NewInMemory[cface.NodMsg](capLimit)
@@ -42,6 +63,19 @@ func CreateAnalzerPoolFrame(istest mode.ProcessingMode, fanoutManager iface.Apoo
 	return a, nil
 }
 
+// TODO 추후 삭제. 포트 등록은 정식 생성자 통해서 할것!!!
+func (a *AnalyzerPool) RegisterPorts(nod cface.NodPort, rel cface.RelPort) {
+	if a.busNod != nil {
+		a.busNod.Close()
+	}
+	if a.busRel != nil {
+		a.busRel.Close()
+	}
+	a.ports.rel = rel
+	a.ports.nod = nod
+}
+
+// TODO 추후 삭제.
 func (a *AnalyzerPool) Register(rel cface.RelPort, nod cface.NodPort) {
 
 	a.ports.rel = rel
@@ -86,7 +120,9 @@ func (a *AnalyzerPool) ConsumeNodTxByFanout() <-chan domain.MarkedTransaction {
 	}
 	return a.fanoutManager.GetBus(string(iface.NodBusName)).Dequeue()
 }
-
+func (a *AnalyzerPool) Name() gface.ModuleName {
+	return "AnalyzerPool"
+}
 func (a *AnalyzerPool) Start(parent context.Context) error {
 	if a.fanoutManager == nil {
 		return fmt.Errorf("fanout manager not initialized")
@@ -96,15 +132,12 @@ func (a *AnalyzerPool) Start(parent context.Context) error {
 	}
 
 	g, ctx := errgroup.WithContext(parent)
-	// NodPort
 	if a.ports.nod != nil {
 		g.Go(func() error { return a.ports.nod.Start(ctx) })
 	}
-	// RelPort
 	if a.ports.rel != nil {
 		g.Go(func() error { return a.ports.rel.Start(ctx) })
 	}
-	// Fanout manager
 	if a.fanoutManager != nil {
 		g.Go(func() error { return a.fanoutManager.Start(ctx) })
 	}
@@ -131,15 +164,6 @@ func (a *AnalyzerPool) Close() error {
 	}
 	return nil
 }
-
-// TODO 추후 삭제. 포트 등록은 정식 생성자 통해서 할것!!!
-func (a *AnalyzerPool) RegisterPorts(nod cface.NodPort, rel cface.RelPort) {
-	if a.busNod != nil {
-		a.busNod.Close()
-	}
-	if a.busRel != nil {
-		a.busRel.Close()
-	}
-	a.ports.rel = rel
-	a.ports.nod = nod
+func (a *AnalyzerPool) Closed() bool {
+	return a.closed.Load()
 }

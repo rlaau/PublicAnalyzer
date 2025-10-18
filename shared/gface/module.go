@@ -16,9 +16,9 @@ type SubModule interface {
 	MainModule() ModuleName
 }
 
-type ParentModule interface {
-	RegisterChildren(...ChildModule) error
+type Parent interface {
+	RegisterChildren(...Child) error
 }
-type ChildModule interface {
-	RefisterParent(Module) error
+type Child interface {
+	RegisterParent(Module) error
 }

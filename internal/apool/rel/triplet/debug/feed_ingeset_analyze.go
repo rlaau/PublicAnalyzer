@@ -120,8 +120,8 @@ func main() {
 	//* nodPool을 강제로 생성
 	nodPool := &nodapp.NodPool{}
 	//* CO생성 및 nodPool에 강제 등록
-	co := coapp.NewCo(coapp.CoCfg{Mode: mode.TestingModeProcess}, nodPool)
-	eo := eoapp.NewEo(mode.TestingModeProcess, nodPool)
+	co := coapp.NewCo(coapp.CoCfg{Mode: mode.TestingModeProcess})
+	eo := eoapp.NewEo(mode.TestingModeProcess)
 	nodPool.SetCoPort(co)
 	nodPool.SetEoPort(eo)
 	//* 1차포 apool에 nolPool등록

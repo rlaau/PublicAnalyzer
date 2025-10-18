@@ -7,10 +7,11 @@ import (
 	"fmt"
 	"math/big"
 	"path/filepath"
+	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/infra"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/pface"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
@@ -18,16 +19,21 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	"golang.org/x/crypto/sha3"
+	"golang.org/x/sync/errgroup"
 )
 
 type CoDesign interface {
 	gface.Module
+	gface.Child
 	RegisterContract(creator domain.Address, nonce domain.Nonce, blockTime chaintimer.ChainTime, txId domain.TxId) (domain.Address, error)
 	CheckIsContract(address domain.Address) bool
 }
 type Co struct {
-	contDB *infra.ContractDB
-	mode   mode.ProcessingMode
+	nodPort pface.NodPort
+	closed  atomic.Bool
+	count   atomic.Int64
+	contDB  *infra.ContractDB
+	mode    mode.ProcessingMode
 }
 
 type CoCfg struct {
@@ -38,18 +44,49 @@ func (co *Co) Name() gface.ModuleName {
 	return gface.ParseModuleName("Co")
 }
 
-func (co *Co) Start(ctx context.Context) error {
-	//TODO 이후 스트림 가능 한 구조로 만들것!!
-	panic("not implemented")
+
+func (co *Co) Start(parent context.Context) error {
+	if co.nodPort == nil {
+		return fmt.Errorf("Co not have notport")
+	}
+	g, ctx := errgroup.WithContext(parent)
+	g.Go(func() error {
+		upstream := co.nodPort.ConsumeCoTxByFanout()
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case _, ok := <-upstream:
+				if !ok {
+					return nil
+				}
+				co.count.Add(1)
+				if co.count.Load()%100_000 == 0 {
+					fmt.Printf("현재 co가 %d개의 메시지 받고 버렸음\n", co.count.Load())
+				}
+			}
+		}
+	})
+	err := g.Wait()
+	co.Close()
+	return err
 }
 
 func (co *Co) Close() error {
-	//TODO 일단 Start기능 구현 후
-	//TODO 안정적으로 종료되도록 만들 것!
-	panic("not impletmented")
+	if co.closed.Swap(true) {
+		return nil
+	}
+	if err := co.contDB.Close(); err != nil {
+		return err
+	}
+	return nil
 }
 
-func NewCo(coCfg CoCfg, nodPool iface.NodPort) *Co {
+func (co *Co) Closed() bool {
+	return co.closed.Load()
+}
+
+func NewCo(coCfg CoCfg) *Co {
 	var rootDir string
 	if coCfg.Mode.IsTest() {
 		rootDir = computation.ComputeThisTestingStorage("nod/co")
@@ -71,6 +108,14 @@ func NewCo(coCfg CoCfg, nodPool iface.NodPort) *Co {
 	}
 }
 
+func (co *Co) RegisterParent(nod gface.Module) error {
+	np, ok := nod.(pface.NodPort)
+	if !ok {
+		return fmt.Errorf("parent is not NodPort")
+	}
+	co.nodPort = np
+	return nil
+}
 func (co *Co) RegisterContract(creator domain.Address, nonce domain.Nonce, blockTime chaintimer.ChainTime, txId domain.TxId) (domain.Address, error) {
 	//TODO 이건 좀 로직임. 생성 시 잡는거라서
 	inferedCreated, isOk := tryPredictCreatedContractAddress(creator, nonce)

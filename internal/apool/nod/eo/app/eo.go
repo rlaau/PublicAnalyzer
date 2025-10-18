@@ -2,20 +2,22 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"sync/atomic"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/eo/infra"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/eo/pface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
+	"golang.org/x/sync/errgroup"
 )
 
-// TODO 어그리게이터에 맞게, 이벤트 기반으로 잘 꾸며보기.
-// TODO 밑의 TODO들 참고하삼.
 type EoDesign interface {
 	gface.Module
+	gface.Child
 	SaveDetectedDeposit(deposit *domain.DetectedDeposit) error
 	IsDepositAddress(addr domain.Address) (bool, error)
 	IsCex(addr domain.Address) bool
@@ -24,18 +26,70 @@ type EoDesign interface {
 	GetDepositInfo(addr domain.Address) (*domain.DetectedDeposit, error)
 }
 
-// TODO 추후 EO도 스트리밍 가능하게 바꾸기!! 그럴 시엔 아래 인터페이스를 매꿀 것!!!
-func (eo *Eo) Name() gface.ModuleName          { return gface.ParseModuleName("Eo") }
-func (eo *Eo) Start(ctx context.Context) error { panic("not implemented") }
-func (eo *Eo) Close() error                    { panic("not implemented") }
+func (eo *Eo) Name() gface.ModuleName { return gface.ParseModuleName("Eo") }
+func (eo *Eo) Start(parent context.Context) error {
+
+	if eo.nodPort == nil {
+		return fmt.Errorf("EO not have nodport")
+	}
+
+	g, ctx := errgroup.WithContext(parent)
+
+	g.Go(func() error {
+		upstream := eo.nodPort.ConsumeEoTxByFanout()
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case _, ok := <-upstream:
+				if !ok {
+					return nil
+				}
+				eo.count.Add(1)
+				if eo.count.Load()%100_000 == 0 {
+					fmt.Printf("현재 eo가 %d개의 메시지 받고 버렸음\n", eo.count.Load())
+				}
+			}
+		}
+	})
+	err := g.Wait()
+	eo.Close()
+	return err
+}
+
+func (eo *Eo) Close() error {
+	if eo.closed.Swap(true) {
+		return nil
+	}
+	if err := eo.cexDB.Close(); err != nil {
+		return err
+	}
+
+	if err := eo.depositDB.Close(); err != nil {
+		return err
+	}
+	return nil
+}
+func (eo *Eo) Closed() bool { return eo.closed.Load() }
+func (eo *Eo) RegisterParent(nod gface.Module) error {
+	np, ok := nod.(pface.NodPort)
+	if !ok {
+		return fmt.Errorf("parent is not NodPort")
+	}
+	eo.nodPort = np
+	return nil
+}
 
 type Eo struct {
 	mode      mode.ProcessingMode
+	nodPort   pface.NodPort
+	closed    atomic.Bool
+	count     atomic.Int64
 	cexDB     *infra.FileCEXRepository
 	depositDB *infra.DepositRepository
 }
 
-func NewEo(mode mode.ProcessingMode, nodPool iface.NodPort) *Eo {
+func NewEo(mode mode.ProcessingMode) *Eo {
 	var rootDir string
 	if mode.IsTest() {
 		rootDir = computation.ComputeThisTestingStorage("nod", "eo")
@@ -51,9 +105,12 @@ func NewEo(mode mode.ProcessingMode, nodPool iface.NodPort) *Eo {
 	if err != nil {
 		panic("deposit열기 중 에러 발생")
 	}
-	return &Eo{cexDB: cexDB,
+	return &Eo{
+		cexDB:     cexDB,
 		depositDB: depDb,
-		mode:      mode}
+		mode:      mode,
+		count:     atomic.Int64{},
+	}
 
 }
 
