@@ -140,7 +140,7 @@ func main() {
 		fmt.Printf("   ✅ Relation Pool API registered successfully\n")
 	}
 	txBridge := loadKafkaBatchConsumer(mode.TestingModeProcess, "ingest-and-triplet-test")
-	tripletBus := relPool.GetTripletPort().GetMyTxBus()
+	//tripletBus := relPool.GetTripletPort().GetMyTx()
 	go func(ctx context.Context) {
 		log.Printf("🚀 Batch consumer worker started")
 		for {
@@ -171,7 +171,9 @@ func main() {
 						fmt.Printf("processTransactionParrell 에러:메시지를 받지 않음")
 					}
 				}
-				tripletBus.PublishBatch(transactions)
+				//TODO 일부러 이 구문 막아놨음.
+				//TODO tripletBus는 send-only야
+				//tripletBus.PublishBatch(transactions)
 			}
 		}
 

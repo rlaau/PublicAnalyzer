@@ -54,7 +54,7 @@ func ComposeRelPool(mode mode.ProcessingMode, processName string, apool pface.Ap
 			HealthCheckInterval: 3_000_000_000, // 3초
 		}
 	}
-	preTriplet, err := app.CreateTriplet(tripletCfg, preRelPool)
+	preTriplet, err := app.NewTriplet(tripletCfg)
 	if err != nil {
 		panic("preTriplet생성 중 에러")
 	}

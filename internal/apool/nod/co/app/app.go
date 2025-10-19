@@ -40,10 +40,30 @@ type CoCfg struct {
 	Mode mode.ProcessingMode
 }
 
+func NewCo(coCfg CoCfg) *Co {
+	var rootDir string
+	if coCfg.Mode.IsTest() {
+		rootDir = computation.ComputeThisTestingStorage("nod/co")
+	} else {
+		//프로덕션 환경에선 고유 루트 디렉터리 사용
+		rootDir = computation.ComputeThisProductionStorage("nod/co")
+	}
+
+	contDbDir := filepath.Join(rootDir, "cont")
+	contDB, err := infra.NewContractDB(coCfg.Mode, contDbDir)
+	if err != nil {
+		fmt.Printf("NewCo: 에러 발생: %s", err.Error())
+		panic("contDB오픈 중에 에러 발생")
+	}
+
+	return &Co{
+		contDB: contDB,
+		mode:   coCfg.Mode,
+	}
+}
 func (co *Co) Name() gface.ModuleName {
 	return gface.ParseModuleName("Co")
 }
-
 
 func (co *Co) Start(parent context.Context) error {
 	if co.nodPort == nil {
@@ -84,28 +104,6 @@ func (co *Co) Close() error {
 
 func (co *Co) Closed() bool {
 	return co.closed.Load()
-}
-
-func NewCo(coCfg CoCfg) *Co {
-	var rootDir string
-	if coCfg.Mode.IsTest() {
-		rootDir = computation.ComputeThisTestingStorage("nod/co")
-	} else {
-		//프로덕션 환경에선 고유 루트 디렉터리 사용
-		rootDir = computation.ComputeThisProductionStorage("nod/co")
-	}
-
-	contDbDir := filepath.Join(rootDir, "cont")
-	contDB, err := infra.NewContractDB(coCfg.Mode, contDbDir)
-	if err != nil {
-		fmt.Printf("NewCo: 에러 발생: %s", err.Error())
-		panic("contDB오픈 중에 에러 발생")
-	}
-
-	return &Co{
-		contDB: contDB,
-		mode:   coCfg.Mode,
-	}
 }
 
 func (co *Co) RegisterParent(nod gface.Module) error {

@@ -1,37 +1,32 @@
 package cface
 
 import (
-	"context"
-	"io"
-
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
 )
 
 type TripletEventMsg any
 type TripletPort interface {
+	gface.Child
+	gface.Module
 	// 분석기 생명주기 관리
-	Start(ctx context.Context) error
-	Stop() error
+	// Stop() error
 
 	// 트랜잭션 처리
 	//ProcessTransaction(tx *domain.MarkedTransaction) error
 	//ProcessTransactions(txs []*domain.MarkedTransaction) error
-	GetMyTxBus() *eventbus.EventBus[*domain.MarkedTransaction]
+	GetMyTx() <-chan domain.MarkedTransaction
 	// 상태 조회
 	GetStatistics() map[string]any
 	IsHealthy() bool
 	GetChannelStatus() (usage int, capacity int)
 
 	GetRopeDBStats() map[string]any
-
-	// 리소스 관리
-	io.Closer
 }
 
 type CreationPort interface {
-	Start(ctx context.Context) error
-	io.Closer
+	gface.Child
+	gface.Module
 }
 
 type CreationEventMsg any

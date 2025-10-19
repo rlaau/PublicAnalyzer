@@ -51,7 +51,7 @@ func main() {
 	defer cancel()
 	relPool, err := relapp.CreateRelationPoolFrame(mode.TestingModeProcess, nil)
 	// 분석기 생성
-	analyzer, err := app.CreateTriplet(config, relPool)
+	analyzer, err := app.NewTriplet(config)
 	relPool.Register(analyzer, nil)
 	if err != nil {
 		log.Fatalf("❌ Failed to create analyzer: %v", err)
@@ -159,7 +159,7 @@ func main() {
 
 TestComplete:
 	// 분석기 정지
-	analyzer.Stop()
+	analyzer.Close()
 
 	// 완료 대기
 	select {

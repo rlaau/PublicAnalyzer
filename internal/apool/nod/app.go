@@ -65,8 +65,14 @@ func (n *NodPool) Start(parent context.Context) error {
 	if n.txDistributor == nil {
 		return fmt.Errorf("Nodpool fanout manager not initialized")
 	}
+
+	if n.ports.co == nil || n.ports.eo == nil {
+		return fmt.Errorf("Nodpool의 모듈 중 일부가 초기화되지 않음.")
+	}
 	g, ctx := errgroup.WithContext(parent)
 	// 분배기로 분배
+	g.Go(func() error { return n.ports.co.Start(ctx) })
+	g.Go(func() error { return n.ports.eo.Start(ctx) })
 	g.Go(func() error { return n.txDistributor.Start(ctx) })
 	//분배기에 먹일 tx를 위에서 받아옴
 	g.Go(func() error {
@@ -85,12 +91,6 @@ func (n *NodPool) Start(parent context.Context) error {
 			}
 		}
 	})
-	if n.ports.co != nil {
-		g.Go(func() error { return n.ports.co.Start(ctx) })
-	}
-	if n.ports.eo != nil {
-		g.Go(func() error { return n.ports.eo.Start(ctx) })
-	}
 
 	err := g.Wait()
 	n.Close()

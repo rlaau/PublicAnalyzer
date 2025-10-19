@@ -1,7 +1,6 @@
 package app
 
 import (
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/pface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
 
@@ -33,11 +32,3 @@ type TripletConfig struct {
 // AnalyzerFactory 분석기 팩토리 함수
 type AnalyzerFactory func(config *TripletConfig) (CommonTriplet, error)
 
-// CreateTriplet 설정에 따라 적절한 분석기 생성
-func CreateTriplet(config *TripletConfig, relPool pface.RelPort) (CommonTriplet, error) {
-	if config.Mode.IsTest() {
-		return NewTestingEOAAnalyzer(config, relPool)
-	} else {
-		return NewProductionEOAAnalyzer(config, relPool)
-	}
-}

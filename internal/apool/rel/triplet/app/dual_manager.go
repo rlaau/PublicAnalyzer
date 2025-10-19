@@ -60,14 +60,14 @@ func (dm *DualManager) Close() error {
 }
 
 // CheckTransaction is the main entry point for transaction analysis
-func (dm *DualManager) CheckTransaction(tx *domain.MarkedTransaction) (*domain.MarkedTransaction, error) {
+func (dm *DualManager) CheckTransaction(tx domain.MarkedTransaction) (domain.MarkedTransaction, error) {
 	dm.mutex.Lock()
 	defer dm.mutex.Unlock()
 	// Only process EOA-EOA transactions
 	//todo 근데 이거 중복 체킹이긴 함. 프로덕션 후 문제 없으면 충분히 제거 가능
 	//todo ProcessSingle에서 미리 검사함. 애초에 카프카 큐에서 분리 시 신뢰도 가능하고
 	if tx.TxSyntax[0] != domain.EOAMark || tx.TxSyntax[1] != domain.EOAMark {
-		return nil, fp.ErrorSkipStep
+		return domain.MarkedTransaction{}, fp.ErrorSkipStep
 	}
 	return tx, nil
 }
@@ -90,7 +90,7 @@ func (dm *DualManager) IsDepositAddress(addr domain.Address) bool {
 // TODO 1->  TransfromToRelation따라 케이스 분류
 // TODO 2-> PublishRelationEvent이벤트발행
 // TODO 3-> HandleRelationEvent 이벤트 처리
-func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.MarkedTransaction, error) {
+func (dm *DualManager) HandleAddress(tx domain.MarkedTransaction) (domain.MarkedTransaction, error) {
 	fromAddr := tx.From
 	toAddr := tx.To
 
@@ -113,7 +113,7 @@ func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.Mark
 			fmt.Printf("   → Case 1: CEX → Address (txFromCexAddress)\n")
 		}
 		err := dm.handleTxFromCex(fromAddr, tx.To, tx)
-		return nil, fp.HandleErrOrNilToSkipStep(err)
+		return domain.MarkedTransaction{}, fp.HandleErrOrNilToSkipStep(err)
 	}
 
 	// Case 2: to가 CEX인 경우 - 새로운 입금주소 탐지
@@ -122,7 +122,7 @@ func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.Mark
 			fmt.Printf("   → Case 2: Deposit Detection (Address → CEX)\n")
 		}
 		err := dm.handleDepositDetection(toAddr, fromAddr, tx, tx.BlockTime)
-		return nil, fp.HandleErrOrNilToSkipStep(err)
+		return domain.MarkedTransaction{}, fp.HandleErrOrNilToSkipStep(err)
 	}
 
 	// Case 3: from이 detectedDepositAddress인 경우 - to는 "txFromDepositAddress"로 특수 처리
@@ -131,7 +131,7 @@ func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.Mark
 			fmt.Printf("   → Case 3: Detected Deposit → Address (txFromDepositAddress)\n")
 		}
 		err := dm.handleTxFromDepositWithNotCex(fromAddr, tx.To, tx)
-		return nil, fp.HandleErrOrNilToSkipStep(err)
+		return domain.MarkedTransaction{}, fp.HandleErrOrNilToSkipStep(err)
 	}
 
 	// Case 4: to가 detectedDepositAddress인 경우 - from,to 듀얼을 그래프DB에 저장
@@ -148,7 +148,7 @@ func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.Mark
 			LastTime:    tx.BlockTime,
 		}
 		err := dm.saveDualToGraphDB(fromScala, toAddr)
-		return nil, fp.HandleErrOrNilToSkipStep(err)
+		return domain.MarkedTransaction{}, fp.HandleErrOrNilToSkipStep(err)
 	}
 
 	// Case 5: 일반 트랜잭션 - DualManager 윈도우 버퍼에 추가
@@ -158,7 +158,7 @@ func (dm *DualManager) HandleAddress(tx *domain.MarkedTransaction) (*domain.Mark
 	return tx, nil
 }
 
-func (dm *DualManager) handleTxFromCex(cex domain.Address, other domain.Address, tx *domain.MarkedTransaction) error {
+func (dm *DualManager) handleTxFromCex(cex domain.Address, other domain.Address, tx domain.MarkedTransaction) error {
 	// author := roperepo.AuthorSystem
 	// trait := roperepo.TraitCexToOther
 
@@ -186,7 +186,7 @@ func (dm *DualManager) handleTxFromCex(cex domain.Address, other domain.Address,
 	return nil
 }
 
-func (dm *DualManager) handleTxFromDepositWithNotCex(deposit domain.Address, other domain.Address, tx *domain.MarkedTransaction) error {
+func (dm *DualManager) handleTxFromDepositWithNotCex(deposit domain.Address, other domain.Address, tx domain.MarkedTransaction) error {
 	// author := roperepo.AuthorSystem
 	// trait := roperepo.TraitDepositToOther
 	// depositAndRule := ropedomain.AddressAndRule{
@@ -222,7 +222,7 @@ func (dm *DualManager) DetectNewDepositAddress(dd *domain.DetectedDeposit) error
 // handleDepositDetection handles detection of new deposit addresses
 // TODO 이런걸 "이벤트"로 처리하기
 // TODO "디포짓 발견"을 처리하는 함수인데도, cex, depositAddr을 받는건 로직이 맞지 않음.
-func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Address, tx *domain.MarkedTransaction, time chaintimer.ChainTime) error {
+func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Address, tx domain.MarkedTransaction, time chaintimer.ChainTime) error {
 	//fmt.Printf("💰 handleDepositDetection: %s → CEX %s\n", depositAddr.String()[:10]+"...", cexAddr.String()[:10]+"...")
 	debugEnabled := false
 	// 1. 새로운 입금주소를 detectedDepositAddress에 추가
@@ -268,7 +268,7 @@ func (dm *DualManager) saveDualToGraphDB(fromScala infra.FromScala, toAddr domai
 	return dm.saveDualRelationToGraphDB(fromScala, toAddr)
 }
 
-func (dm *DualManager) saveCexAndDepositToGraphDB(cex, deposit domain.Address, tx *domain.MarkedTransaction, lastTime chaintimer.ChainTime) error {
+func (dm *DualManager) saveCexAndDepositToGraphDB(cex, deposit domain.Address, tx domain.MarkedTransaction, lastTime chaintimer.ChainTime) error {
 	defer rsv.MeasureTime(dm.perfMeter, "saveCexAndDepositToGraphDB")()
 
 	trait := roperepo.TraitCexAndDeposit
@@ -329,7 +329,7 @@ func (dm *DualManager) saveDualRelationToGraphDB(fromScala infra.FromScala, toAd
 }
 
 // 일반 트랜잭션 → 윈도 버퍼/팬딩 적재
-func (dm *DualManager) AddToWindowBuffer(tx *domain.MarkedTransaction) (*domain.MarkedTransaction, error) {
+func (dm *DualManager) AddToWindowBuffer(tx domain.MarkedTransaction) (domain.MarkedTransaction, error) {
 	defer rsv.MeasureTime(dm.perfMeter, "AddToWindowBuffer")()
 
 	toAddr := tx.To
@@ -348,7 +348,7 @@ func (dm *DualManager) AddToWindowBuffer(tx *domain.MarkedTransaction) (*domain.
 		_, _ = dm.infra.HeavyTimeBucketManager.AddIfAbsent(toAddr, fromScala)
 	}()
 
-	return nil, fp.ErrorSkipStep
+	return domain.MarkedTransaction{}, fp.ErrorSkipStep
 }
 
 // 디버깅용 전역 카운터

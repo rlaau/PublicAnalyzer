@@ -3,33 +3,24 @@ package app
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/pface"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
+	"golang.org/x/sync/errgroup"
 )
 
-// CommonTriplet 인터페이스 - 테스트용과 프로덕션용 공통 인터페이스
-// 그냥 최소 구조 정도를 정의한 인터페이스.
-// * 혹시라도 많이 임포트 할 시 꺼내 쓰라고 만든 정도임. 굳이 이 인터페이스 쓸 필요는 없음
-// ! 인터페이스는 쓰는 측에서 정의하는 것
 type CommonTriplet interface {
 	// 분석기 생명주기 관리
-	Start(ctx context.Context) error
-	Stop() error
-
-	// 트랜잭션 처리
-	//ProcessTransaction(tx *shareddomain.MarkedTransaction) error
-	//ProcessTransactions(txs []*shareddomain.MarkedTransaction) error
+	gface.Module
+	gface.Child
 
 	// 상태 조회
 	GetStatistics() map[string]any
@@ -39,10 +30,7 @@ type CommonTriplet interface {
 	//근데 이거 고치려면 또 리팩토링 해야함. 또!!!
 	//그건 나중에 하자고.
 	GetRopeDBStats() map[string]any
-	GetMyTxBus() *eventbus.EventBus[*shareddomain.MarkedTransaction]
-	//TODO 이딴건 당연히 금지임. 추후 로프DB관련 인터페이스 싹 제거하기
-	// 리소스 관리
-	io.Closer
+	GetMyTx() <-chan domain.MarkedTransaction
 }
 
 // SimpleTriplet 간단한 EOA 분석기 구현체
@@ -50,13 +38,6 @@ type CommonTriplet interface {
 type SimpleTriplet struct {
 	// Core domain components
 	dualManager *DualManager
-
-	// WorkerPool integration
-	//내부 채널임
-	stopChannel  chan struct{}
-	stopOnce     sync.Once
-	shutdownOnce sync.Once
-	wg           sync.WaitGroup
 
 	// Transaction consumer (Kafka 기반)
 	batchMode bool // 배치 모드 활성화 여부
@@ -69,6 +50,7 @@ type SimpleTriplet struct {
 
 	infra   *infra.TripletAndDualManagerInfra
 	relPool pface.RelPort
+	closed  atomic.Bool
 }
 
 // SimpleAnalyzerStats 간단한 분석기 통계
@@ -83,34 +65,38 @@ type SimpleAnalyzerStats struct {
 	StartTime         time.Time
 }
 
+// NewTriplet 설정에 따라 적절한 분석기 생성
+func NewTriplet(config *TripletConfig) (CommonTriplet, error) {
+	if config.Mode.IsTest() {
+		return NewTestingEOAAnalyzer(config)
+	} else {
+		return NewProductionEOAAnalyzer(config)
+	}
+}
+
 // NewProductionEOAAnalyzer 프로덕션용 분석기 생성
-func NewProductionEOAAnalyzer(config *TripletConfig, relPool pface.RelPort) (CommonTriplet, error) {
+func NewProductionEOAAnalyzer(config *TripletConfig) (CommonTriplet, error) {
 	infraStructure := NewInfraByConfig(config)
-	return newSimpleAnalyzer(config, infraStructure, relPool)
+	return newSimpleAnalyzer(config, infraStructure)
 }
 
 // NewTestingEOAAnalyzer 테스트용 분석기 생성
-func NewTestingEOAAnalyzer(config *TripletConfig, relPool pface.RelPort) (CommonTriplet, error) {
+func NewTestingEOAAnalyzer(config *TripletConfig) (CommonTriplet, error) {
 	infraStructure := NewInfraByConfig(config)
-	return newSimpleAnalyzer(config, infraStructure, relPool)
+	return newSimpleAnalyzer(config, infraStructure)
 }
 
 // newSimpleAnalyzer 공통 분석기 생성 로직
-func newSimpleAnalyzer(config *TripletConfig, infraStructure *infra.TripletAndDualManagerInfra, relPool pface.RelPort) (*SimpleTriplet, error) {
+func newSimpleAnalyzer(config *TripletConfig, infraStructure *infra.TripletAndDualManagerInfra) (*SimpleTriplet, error) {
 	//전체 EOA인프라에서 꺼내 쓰는 형식
-	dualManagerInfra := infra.NewDualManagerInfra(infraStructure.HeavyTimeBucketManager)
-	dualManager, _ := NewDualManager(dualManagerInfra, relPool)
-	log.Printf("듀얼 매니져 초기화. 현재 cex주소 개수: %d", len(dualManager.relPool.GetApooPort().GetNodPort().GetEoPort().CEXAddresses()))
+
 	analyzer := &SimpleTriplet{
-		infra:       infraStructure,
-		dualManager: dualManager,
-		stopChannel: make(chan struct{}),
-		batchMode:   true, // 기본값: 배치 모드 활성화
-		config:      config,
+		infra:     infraStructure,
+		batchMode: true, // 기본값: 배치 모드 활성화
+		config:    config,
 		stats: SimpleAnalyzerStats{
 			StartTime: time.Now(),
 		},
-		relPool: relPool,
 	}
 
 	log.Printf("✅ Simple EOA Analyzer created: %s", config.Name)
@@ -118,65 +104,70 @@ func newSimpleAnalyzer(config *TripletConfig, infraStructure *infra.TripletAndDu
 	return analyzer, nil
 }
 
-// func (a *SimpleTriplet) GraphDB() *badger.DB {
-// 	if p, ok := a.relPool.ClusterDB().(roperepo.RawBadgerProvider); ok {
-// 		return p.RawBadgerDB()
-// 	}
-// 	return nil
-// }
-
-// func (a *SimpleTriplet) RopeDB() ropeapp.RopeDB {
-// 	return a.relPool.ClusterDB()
-// }
-
-// Start 분석기 시작
-// TODO 추후엔 당연히!!! 배치 컨슈머에서 자기만 직접 받는게 아니라 apool에서부터 정식으로 받을 것
-func (a *SimpleTriplet) Start(ctx context.Context) error {
-	log.Printf("🚀 Starting Triplet: %s", a.config.Name)
-	a.infra.WorkerPool.Restart(ctx)
-	// 워커풀 만든 직후
-	fmt.Printf("bus@pool   = %p\n", a.infra.WorkerPool.JobChan)
-
-	// Consumer 시작 (배치 모드 or 단건 모드)
-	if a.batchMode && a.infra.TxBus != nil {
-		// 배치 모드: 배치 Consumer 시작
-		a.wg.Add(1)
-		go a.ComsumeTransaction(ctx)
-		log.Printf("🚀 Batch consumer started")
-	} else {
-		log.Printf("단건 컨슈머는 걍 지웠음.")
+func (a *SimpleTriplet) Name() gface.ModuleName {
+	return "tripletAnalyzer"
+}
+func (a *SimpleTriplet) Start(parent context.Context) error {
+	log.Printf("Starting Triplet: %s", a.config.Name)
+	if a.infra.WorkerPool == nil {
+		return fmt.Errorf("트리플렛의 워커풀 초기화되지 못함")
 	}
-
-	// 통계 리포터 시작
-	a.wg.Add(1)
-	go a.statsReporter(ctx)
-
-	log.Printf("✅ Simple Analyzer started: %s (%d workers + kafka consumer)", a.config.Name, a.config.WorkerCount)
-
-	// 컨텍스트 취소 또는 정지 시그널 대기
-	select {
-	case <-ctx.Done():
-		log.Printf("🛑 Context cancelled: %s", a.config.Name)
-	case <-a.stopChannel:
-		log.Printf("🛑 Stop signal received: %s", a.config.Name)
+	if a.relPool == nil {
+		return fmt.Errorf("트리플렛의 relpool존재하지 않음")
 	}
+	dmi := infra.NewDualManagerInfra(a.infra.HeavyTimeBucketManager)
+	dm, err := NewDualManager(dmi, a.relPool)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("듀얼 매니져 초기화 완료\n")
+	log.Printf("듀얼 매니져 초기화. 현재 cex주소 개수: %d", len(a.dualManager.relPool.GetApooPort().GetNodPort().GetEoPort().CEXAddresses()))
 
-	return a.shutdown()
+	a.dualManager = dm
+
+	g, ctx := errgroup.WithContext(parent)
+	g.Go(func() error { a.infra.WorkerPool.Restart(ctx); return nil })
+	g.Go(func() error { return a.ComsumeTransaction(ctx) })
+	g.Go(func() error { a.statsReporter(ctx); return nil })
+	err = g.Wait()
+	a.Close()
+	return err
 }
 
-// Stop 분석기 중지
-func (a *SimpleTriplet) Stop() error {
-	a.stopOnce.Do(func() {
-		close(a.stopChannel)
-	})
+// Close io.Closer 인터페이스 구현
+func (a *SimpleTriplet) Close() error {
+	if a.closed.Swap(true) {
+		return nil
+	}
+
+	if a.infra.WorkerPool != nil {
+		a.infra.WorkerPool.Shutdown()
+	}
+	if a.dualManager != nil {
+		a.dualManager.Close()
+	}
+	a.printFinalReport()
+	a.printStatistics()
+	a.cleanup()
+	return nil
+}
+func (a *SimpleTriplet) Closed() bool {
+	return a.closed.Load()
+}
+
+func (a *SimpleTriplet) RegisterParent(relPool gface.Module) error {
+	rp, ok := relPool.(pface.RelPort)
+	if !ok {
+		return fmt.Errorf("SimpleTriplet이 Register한 Parent가 Relpool이 아님")
+	}
+	a.relPool = rp
 	return nil
 }
 
 // ProcessTransaction 트랜잭션 처리 (non-blocking)
-// TODO 현재 이 부분에서 스레드 간 성능 저하 발생함. 스레드 1개나 16개나 동일 성능 보임
 // TODO TxJob의 Do()가 서로 경합 발생. 패닉은 아니지만, 암묵적 성능 저하 발생중
 // TODO 문제에 대한 진단 및 추후 개선 방안은 /debug의 upgrade_solution.md에 자세히 적어놨음.
-func (a *SimpleTriplet) ProcessTransaction(tx *shareddomain.MarkedTransaction) error {
+func (a *SimpleTriplet) ProcessTransaction(tx shareddomain.MarkedTransaction) error {
 	job := NewTransactionJob(tx, a, 0) // workerID는 워커풀에서 자동 관리
 	// 퍼블리시하는 쪽(Analyzer) 직전
 	if err := a.infra.TxJobBus.Publish(job); err != nil { // <- 블로킹
@@ -188,110 +179,48 @@ func (a *SimpleTriplet) ProcessTransaction(tx *shareddomain.MarkedTransaction) e
 	return nil
 }
 
-func (a *SimpleTriplet) ComsumeTransaction(ctx context.Context) {
-	defer a.wg.Done()
-	in := a.infra.TxBus.Dequeue()
+func (a *SimpleTriplet) ComsumeTransaction(ctx context.Context) error {
+	in := a.GetMyTx()
 	log.Printf("🚀 이벤트버스 시작")
-
-	// Shutdown timeout for graceful exit
-	shutdownTimer := time.NewTimer(time.Hour) // Initial large value, will be reset on shutdown
-	defer shutdownTimer.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			log.Printf("🛑 Batch consumer worker stopping (context) - starting graceful shutdown")
-			// Start shutdown timer
-			shutdownTimer.Reset(2 * time.Second)
-			// Process remaining messages quickly during shutdown
 			for {
 				select {
 				case msg, ok := <-in:
 					if !ok {
 						log.Printf("🛑 TxBus closed during shutdown")
-						return
+						return nil
 					}
-					if msg != nil {
-						a.ProcessTransaction(msg) // Ignore errors during shutdown
-					}
-				case <-shutdownTimer.C:
-					log.Printf("🛑 Consumer shutdown timeout - forcing exit")
-					return
+					a.ProcessTransaction(msg) // Ignore errors during shutdown
 				default:
-					return // No more messages, exit immediately
+					return nil
 				}
 			}
-		case <-a.stopChannel:
-			log.Printf("🛑 Batch consumer worker stopping (signal)")
-			return
+
 		case msg, ok := <-in: // ← 채널 수신을 select로
 			if !ok {
 				log.Printf("🛑 TxBus closed; consumer exit")
-				return
-			}
-			if msg == nil {
-				continue
+				return nil
 			}
 			if err := a.ProcessTransaction(msg); err != nil {
-				// 워커풀 포화시 약간의 backoff
-				time.Sleep(10 * time.Millisecond)
+				return err
 			}
 		}
 	}
 }
 
-func (a *SimpleTriplet) GetMyTxBus() *eventbus.EventBus[*shareddomain.MarkedTransaction] {
-	return a.infra.TxBus
-}
-
-// processTransactionParrell 배치 메시지 처리 (고효율)
-func (a *SimpleTriplet) processTransactionParrell(messages []kafka.Message[*shareddomain.MarkedTransaction]) {
-	batchSize := len(messages)
-	processedCount := atomic.LoadInt64(&a.stats.TotalProcessed)
-
-	// 배치 처리 시작 로깅 (처음 몇 배치만)
-	if processedCount < 5 {
-		log.Printf("📦 Processing batch of %d messages (total processed: %d)", batchSize, processedCount)
-	}
-
-	transactions := make([]*shareddomain.MarkedTransaction, 0, batchSize)
-
-	// 1. 메시지에서 직접 트랜잭션 추출 (파싱 불필요!)
-	for _, msg := range messages {
-		if msg.Value != nil {
-			transactions = append(transactions, msg.Value)
-		} else {
-			fmt.Printf("processTransactionParrell 에러:메시지를 받지 않음")
-			atomic.AddInt64(&a.stats.ErrorCount, 1)
-		}
-	}
-
-	// 2. 트랜잭션 처리 (배치로 처리)
-
-	for _, tx := range transactions {
-		// 워커풀로 작업 전달
-		job := NewTransactionJob(tx, a, 0)
-
-		err := a.infra.TxJobBus.Publish(job)
-		if err != nil {
-			atomic.AddInt64(&a.stats.DroppedTxs, 1)
-			fmt.Printf("현재 EOA Analyzer의 워커풀 채널 다 참. 0.1초간 입력을 블로킹함.")
-			time.Sleep(10 * time.Millisecond) // 너무 무거운 대기는 피하기
-			continue                          // 개별 실패는 무시하고 계속 처리
-		}
-	}
-
-	// 배치 처리 완료 로깅 (처음 몇 배치만)
-	if processedCount < 5 {
-		log.Printf("📦 Batch processed: %d messages → %d transactions", batchSize, len(transactions))
-	}
+func (a *SimpleTriplet) GetMyTx() <-chan domain.MarkedTransaction {
+	return a.relPool.ConsumeTripletTxByFanout()
 }
 
 // processSingleTransaction 메서드는 TransactionJob.Do()로 이동됨
 // 하위 호환성을 위해 삭제
 
 // analyzeTransactionResult 트랜잭션 결과 분석
-func (a *SimpleTriplet) analyzeTransactionResult(tx *shareddomain.MarkedTransaction) {
+func (a *SimpleTriplet) analyzeTransactionResult(tx shareddomain.MarkedTransaction) {
 	isDebug := false
 	depositDetected := false
 
@@ -328,7 +257,6 @@ func (a *SimpleTriplet) analyzeTransactionResult(tx *shareddomain.MarkedTransact
 
 // statsReporter 주기적 통계 출력
 func (a *SimpleTriplet) statsReporter(ctx context.Context) {
-	defer a.wg.Done()
 
 	ticker := time.NewTicker(time.Duration(a.config.StatsInterval))
 	defer ticker.Stop()
@@ -337,8 +265,7 @@ func (a *SimpleTriplet) statsReporter(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-a.stopChannel:
-			return
+
 		case <-ticker.C:
 			a.printStatistics()
 		}
@@ -366,7 +293,7 @@ func (a *SimpleTriplet) printStatistics() {
 	log.Printf("   Deposits: %d | Graph: %d | Window: %d | Dropped: %d",
 		deposits, graphUpdates, windowUpdates, dropped)
 	log.Printf("   Triplet-TxJobChannel: %d/%d (%.1f%%)", channelUsage, channelCapacity, usagePercent)
-	log.Printf("   Triplet-MyTxBus: %d/%d", a.GetMyTxBus().Len(), a.GetMyTxBus().Len())
+	log.Printf("   Triplet-MyTxBus: %d/%d", len(a.GetMyTx()), cap(a.GetMyTx()))
 	if total > 0 {
 		tps := float64(total) / uptime.Seconds()
 		successRate := float64(success) / float64(total) * 100
@@ -425,61 +352,6 @@ func (a *SimpleTriplet) IsHealthy() bool {
 // GetChannelStatus 채널 상태 반환
 func (a *SimpleTriplet) GetChannelStatus() (int, int) {
 	return a.infra.TxJobBus.Len(), a.infra.TxJobBus.Cap()
-}
-
-// shutdown 우아한 종료
-func (a *SimpleTriplet) shutdown() error {
-	log.Printf("🔄 Shutting down: %s", a.config.Name)
-	// 1) 내부 stop 신호
-	_ = a.Stop()
-	// 2) 입력 채널 닫아 소비 고루틴 확실히 깨우기
-	if a.infra.TxBus != nil {
-		a.infra.TxBus.Close() // idempotent 가정
-	}
-
-	// 워커풀 종료
-	if a.infra.WorkerPool != nil {
-		a.infra.WorkerPool.Shutdown()
-		log.Printf("🔧 WorkerPool shutdown completed")
-	}
-
-	// 모든 워커 완료 대기
-	done := make(chan struct{})
-	go func() {
-		a.wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		log.Printf("✅ All workers stopped gracefully")
-	case <-time.After(3 * time.Second):
-		log.Printf("⚠️ Shutdown timeout - forcing worker termination")
-		// Force shutdown by not waiting for remaining workers
-	}
-	// 활동이 종료된 채널을 닫기
-	a.shutdownOnce.Do(func() {
-		a.infra.TxJobBus.Close()
-	})
-
-	// 최종 통계 출력
-	if a.config.ResultReporting {
-		a.printFinalReport()
-	}
-	a.printStatistics()
-
-	// 리소스 정리
-	if err := a.dualManager.Close(); err != nil {
-		log.Printf("⚠️ Error closing dual manager: %v", err)
-	}
-
-	// 테스트 모드에서 데이터 정리
-	if a.config.AutoCleanup {
-		a.cleanup()
-	}
-
-	log.Printf("✅ Triplet Shutdown completed: %s", a.config.Name)
-	return nil
 }
 
 // printFinalReport 최종 리포트 출력 (테스트 모드용)
@@ -545,17 +417,6 @@ func (a *SimpleTriplet) cleanup() {
 // GetDualManager DualManager 인스턴스 반환 (API 서버용)
 func (a *SimpleTriplet) GetDualManager() *DualManager {
 	return a.dualManager
-}
-
-// Close io.Closer 인터페이스 구현
-func (a *SimpleTriplet) Close() error {
-
-	// Batch Consumer 정리
-	if a.infra.TxBus != nil {
-		a.infra.TxBus.Close()
-	}
-
-	return a.Stop()
 }
 
 // TODO 추후 삭제할 것. 어쩌다 프로세스 도중에 DB바꿀 일이 있고, 하필 그게 테스트코드라 일다 놔뒀음
