@@ -60,6 +60,14 @@ func NewNodPool(istest mode.ProcessingMode, fanoutMnager *fanout.FanoutInMemory[
 	co.RegisterParent(n)
 	return n
 }
+func (n *NodPool) RegisterParent(apool gface.Module) error {
+	ap, ok := apool.(pface.ApoolPort)
+	if !ok {
+		return fmt.Errorf("NodPool이 받은 Apool이 ApoolPort조건을 만족하지 못함")
+	}
+	n.Apool = ap
+	return nil
+}
 func (n *NodPool) Name() gface.ModuleName { return gface.ParseModuleName("NodPool") }
 func (n *NodPool) Start(parent context.Context) error {
 	if n.txDistributor == nil {

@@ -115,7 +115,7 @@ func (co *Co) RegisterParent(nod gface.Module) error {
 	return nil
 }
 func (co *Co) RegisterContract(creator domain.Address, nonce domain.Nonce, blockTime chaintimer.ChainTime, txId domain.TxId) (domain.Address, error) {
-	//TODO 이건 좀 로직임. 생성 시 잡는거라서
+
 	inferedCreated, isOk := tryPredictCreatedContractAddress(creator, nonce)
 	if !isOk {
 		return domain.Address{}, errors.New("컨트렉트 주소 추론 실패")

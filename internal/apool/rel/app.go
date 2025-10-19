@@ -20,9 +20,7 @@ import (
 )
 
 // 관계 분석 시, 각 단일 분석기가 통신하기 위한 풀
-// TODO 대부분의 코드를 RelPool, NodPool에 대해 일반화하기!!
-// TODO 구조가 많이 겹침
-// TODO 근데 지금은 진짜 하기가 힘이 듦. 조금 쉬고 시간 날때 ㄱ
+
 type RelationPool struct {
 	isTest mode.ProcessingMode
 	Apool  pface.ApoolPort
@@ -97,6 +95,14 @@ func NewRelPool(isTest mode.ProcessingMode, txDistributor iface.RelPoolFanout, t
 	triplet.RegisterParent(r)
 	return r, nil
 }
+func (r *RelationPool) RegisterParent(apool gface.Module) error {
+	ap, ok := apool.(pface.ApoolPort)
+	if !ok {
+		return fmt.Errorf("RelationPool이 Register한 apool이 ApoolPort조건을 만족하지 못했음")
+	}
+	r.Apool = ap
+	return nil
+}
 func (r *RelationPool) DispatchTraitEvent(tv ropedomain.TraitEvent) error {
 	return r.ClusterRepo.HandleTraitEvent(tv)
 }
@@ -114,14 +120,13 @@ func (r *RelationPool) Register(triplet cface.TripletPort, creation cface.Creati
 	// if !r.isTest.IsTest() {
 	// 	capLimit = 8192
 	// }
-	var err error
+
 	// if r.Apool.ConsumeRelTxByFanout() != nil {
 	// 	//TODO 추후엔 그냥 패닉 내삼!
 	// 	r.txDistributor, err = NewTxDistributor(r.isTest, capLimit, r.Apool.ConsumeRelTxByFanout())
 	// }
 	r.busCreation.Close()
 	r.busTriplet.Close()
-	return err
 	r.ports.triplet = triplet
 	//r.ports.creation = creation
 	return nil

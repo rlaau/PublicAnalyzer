@@ -66,8 +66,8 @@ func NewFanoutInMemory[T any](name string, busRequest []BusRequest, inputCap, ou
 
 	return f
 }
-func (f *FanoutInMemory[T]) Name() string {
-	return f.name
+func (f *FanoutInMemory[T]) Name() gface.ModuleName {
+	return gface.ModuleName(f.name)
 }
 func (f *FanoutInMemory[T]) Start(ctx context.Context) error {
 	if f.startedFlag.Swap(true) {

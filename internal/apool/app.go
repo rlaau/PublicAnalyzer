@@ -47,6 +47,14 @@ func NewAnalyzerPool(istest mode.ProcessingMode, fanoutManager iface.ApoolFanout
 		},
 		fanoutManager: fanoutManager,
 	}
+	if err := rel.RegisterParent(a); err != nil {
+		panic("NewAnalyzerPool초기화 중 RelRegister에러 발생\n")
+	}
+	if err := nod.RegisterParent(a); err != nil {
+		panic("NewAnalyzerPool초기화 중 Register에러 발생\n")
+
+	}
+
 	return a
 }
 func CreateAnalzerPoolFrame(istest mode.ProcessingMode, fanoutManager iface.ApoolFanoutManager) (*AnalyzerPool, error) {
@@ -110,6 +118,9 @@ func (a *AnalyzerPool) Closed() bool {
 	return a.closed.Load()
 }
 
+func (a *AnalyzerPool) DispatchMarkedTx(tx domain.MarkedTransaction) error {
+	return a.fanoutManager.Publish(tx)
+}
 func (a *AnalyzerPool) GetRelPort() cface.RelPort { return a.ports.rel }
 func (a *AnalyzerPool) GetNodPort() cface.NodPort { return a.ports.nod }
 
