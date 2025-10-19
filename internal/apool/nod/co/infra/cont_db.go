@@ -64,6 +64,7 @@ func NewContractDB(processMode mode.ProcessingMode, rootPath string) (*ContractD
 	opts.SyncWrites = true
 	opts.CompactL0OnClose = true
 	opts.Logger = nil
+	// 손상된 파일 복구 옵션 (데이터 최대한 보존)
 
 	db, err := badger.Open(opts)
 	if err != nil {

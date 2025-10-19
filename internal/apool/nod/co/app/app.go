@@ -53,6 +53,7 @@ func NewCo(coCfg CoCfg) *Co {
 	contDB, err := infra.NewContractDB(coCfg.Mode, contDbDir)
 	if err != nil {
 		fmt.Printf("NewCo: 에러 발생: %s", err.Error())
+
 		panic("contDB오픈 중에 에러 발생")
 	}
 

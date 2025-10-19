@@ -16,7 +16,9 @@ import (
 	co "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/app"
 	eo "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/eo/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
+	relapi "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/api"
 	rinf "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/infra"
+	"github.com/rlaaudgjs5638/chainAnalyzer/server"
 	"golang.org/x/sync/errgroup"
 
 	triplet "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/app"
@@ -52,12 +54,20 @@ func main() {
 	relPool := ComposeRelPool()
 	nodPool := ComposeNodPool()
 	apoolFanout := ainf.NewApoolFanoutManager("Testing_apool", 2000, 2000)
-	//잠시 RelPool로 향하는 트랜잭션은 없앰
-	apoolFanout.OffBus("RelBus")
+
 	apool := ap.NewAnalyzerPool(mode.TestingModeProcess, apoolFanout, nodPool, relPool)
 
 	fmt.Println("apool 성공적으로 초기화됨")
+
+	srv := server.NewServer(":8080")
+	srv.SetupBasicRoutes()
+	relAPI := relapi.NewRelPoolAPIHandler(relPool)
+	if err := srv.RegisterModule(relAPI); err != nil {
+		fmt.Printf("서버에 Rel API등록 실패: %s\n", err)
+	}
+
 	g, ctx := errgroup.WithContext(root)
+	g.Go(func() error { fmt.Printf("   🌐 Starting API server on :8080\n"); return srv.Start() })
 	g.Go(func() error { return apool.Start(ctx) })
 	g.Go(func() error { return LoadAndTranslateToMarkedTransaction(sb, apool, ctx) })
 	sb.Start()
@@ -77,10 +87,12 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	select {
 	case <-sigChan:
-		fmt.Printf("시그널에 의해 종료\n")
+		fmt.Printf("시그널에 수신-> 종료 시작\n")
+		cancle()
 	case <-ctx.Done():
 		fmt.Printf("ctx의해 종료. %s", ctx.Err())
 	}
+	fmt.Printf("종료 완료")
 }
 
 func LoadAndTranslateToMarkedTransaction(
