@@ -41,44 +41,8 @@ type EventBus[T any] struct {
 	wg       sync.WaitGroup
 }
 
-// NewWithPath: filePath(JSONL)와 capLimit로 버스 생성.
-// - 시작 시 filePath의 JSONL을 로드해 pending에 적재, 로드 후 파일 삭제.
-// - capLimit>0이면 Publish가 cap을 넘을 때 cond wait로 역압.
-func NewWithPath[T any](filePath string, capLimit int) (*EventBus[T], error) {
-	filePath = ensureJSONLExt(filePath) // ← 여기서 단 한 줄로 강제
-
-	buf := max(capLimit/10, 4096)
-	b := &EventBus[T]{
-		out:      make(chan T, buf), // 10 -> capLimit(or 1024)
-		filePath: filePath,
-		capLimit: capLimit,
-		mode:     PersistentMode,
-	}
-	b.cv = sync.NewCond(&b.mu)
-
-	// 1) 시작 시 backlog 로드(동기)
-	backlog, err := loadBacklogJSONL[T](filePath)
-	if err != nil {
-		return nil, err
-	}
-	_ = os.Remove(filePath) // 중복 로드 방지
-
-	// 2) 런 루프 시작
-	b.wg.Add(1)
-	go b.run(backlog)
-	return b, nil
-}
-
-// NewWithRoot: 루트 디렉토리 + 상대 경로로 JSONL 경로를 구성해서 생성
-// 예) rootResolver() == "/tmp/test"; rel == "analyzer_pool/eventbus/cc.jsonl"
-func NewWithRoot[T any](rootResolver func() string, rel string, capLimit int) (*EventBus[T], error) {
-	root := rootResolver()
-	fp := filepath.Join(root, rel)
-	if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
-		return nil, err
-	}
-	return NewWithPath[T](fp, capLimit)
-}
+//TODO 상태 저장 가능하도록 "종료"시 백로그 저장되게 하기
+//*다만 save, load기능이 있는 이벤트버스는 락을 잘 걸어야 함. 콘슈밍 중 종료 시 남은 것들만 정확히 기록 필요
 
 // NewInMemory: 단순한 메모리 전용 EventBus (채널 기반)
 // JSONL, condition variable, waitgroup 없는 간단한 구조
@@ -166,7 +130,7 @@ func (b *EventBus[T]) PublishBatch(vs []T) error {
 
 func (b *EventBus[T]) run(backlog []T) {
 	defer b.wg.Done()
-	local := make([]T, 0, 4096)
+	local := make([]T, 0, 128)
 
 	b.mu.Lock()
 	b.pending = append(b.pending, backlog...)
@@ -175,7 +139,9 @@ func (b *EventBus[T]) run(backlog []T) {
 			b.cv.Wait()
 		}
 		if b.stopping {
+			// pending + local의 미전송 항목 수집
 			rest := append([]T(nil), b.pending...)
+			rest = append(rest, local...)
 			b.mu.Unlock()
 
 			// ✅ 퍼시스턴트 모드에서만 JSONL 저장
@@ -193,16 +159,24 @@ func (b *EventBus[T]) run(backlog []T) {
 		b.cv.Signal()
 		b.mu.Unlock()
 
+		// local에서 out 채널로 전송 시도
+		sent := 0
 		for i := 0; i < len(local); i++ {
 			select {
 			case b.out <- local[i]:
+				sent++
 			default:
+				// 전송 실패 → 나머지를 pending으로 복원
 				b.mu.Lock()
 				b.pending = append(local[i:], b.pending...)
+				local = local[:0] // local 비우기 (모두 pending으로 이동)
 				b.mu.Unlock()
-				break
+				goto nextLoop
 			}
 		}
+		// 모두 전송 성공 → local 비우기
+		local = local[:0]
+	nextLoop:
 		b.mu.Lock()
 	}
 }
