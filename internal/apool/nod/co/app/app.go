@@ -157,25 +157,3 @@ func tryPredictCreatedContractAddress(from domain.Address, nonce domain.Nonce) (
 	copy(out[:], sum[12:])
 	return out, true
 }
-
-// !!! 이 밑은 테스트용으로 DB바꾸는 코드임. 주의!!
-// ! 프로덕션에선 쓰지 말 것!
-
-func (co *Co) ChangeDBPath(target string, path string) {
-	var err error
-	switch target {
-
-	case "CON":
-		co.contDB, err = infra.NewContractDB(co.mode, path)
-		if err != nil {
-			panic("Co DB 바꾸는 중 에러 발생")
-		}
-	default:
-		panic("DB코드 아님")
-	}
-}
-
-// *테스팅, cmd용 메서드
-func (co *Co) GetContDB() *infra.ContractDB {
-	return co.contDB
-}

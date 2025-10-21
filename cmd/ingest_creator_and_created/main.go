@@ -1,9 +1,5 @@
 package main
 
-func main() {
-	return
-}
-
 // // 5분 윈도우 TPS 기록
 // type WindowTPSRecord struct {
 // 	WindowStart time.Time

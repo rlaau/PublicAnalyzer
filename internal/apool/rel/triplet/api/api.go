@@ -11,10 +11,9 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 )
 
-
-//TODO 얘내 지우기
-//TODO ropeDB에 대한 쿼리는 rel의 책임이지, triplet의 책임이 아님!!
-//TODO 테스트 해 보면서 결국은 지우긴
+// TODO 1차적으론 TripletAPIHandler제거하기
+// TODO 2차적으론 ApoolHandler에서 API핸들링하기
+// TODO 최종적으론 CQRS-이벤트소싱DB기반 API핸들링
 // TripletAPIHandler Triplet Analyzer API 핸들러
 type TripletAPIHandler struct {
 	analyzer app.CommonTriplet

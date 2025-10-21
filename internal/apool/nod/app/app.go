@@ -1,4 +1,4 @@
-package nod
+package app
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/cface"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/pface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
@@ -32,7 +33,8 @@ type NodPool struct {
 	busEo *eventbus.EventBus[cface.EoMsg]
 	busCo *eventbus.EventBus[cface.CoMsg]
 	//TODO 추후 iface, infra구분해서 리팩토링 하기. Apool의 사례 참고.
-	txDistributor *fanout.FanoutInMemory[domain.MarkedTransaction]
+
+	txDistributor iface.NodPoolFanoutManager
 	closed        atomic.Bool
 }
 
@@ -126,10 +128,10 @@ func (n *NodPool) GetCoPort() cface.CoPort { return n.ports.co }
 func (n *NodPool) GetEoPort() cface.EoPort { return n.ports.eo }
 
 func (n *NodPool) ConsumeCoTxByFanout() <-chan domain.MarkedTransaction {
-	return n.txDistributor.GetBus(string(CoBusName)).Dequeue()
+	return n.txDistributor.GetBus(string(iface.CoBusName)).Dequeue()
 }
 func (n *NodPool) ConsumeEoTxByFanout() <-chan domain.MarkedTransaction {
-	return n.txDistributor.GetBus(string(EoBusName)).Dequeue()
+	return n.txDistributor.GetBus(string(iface.EoBusName)).Dequeue()
 }
 
 // TODO 수직 슬라이스 테스트를 위해 어쩔 수 없이 만든 함수임.

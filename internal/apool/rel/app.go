@@ -3,14 +3,12 @@ package rel
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"sync/atomic"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/cface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/pface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/roperepo"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
@@ -39,29 +37,16 @@ type RelationPool struct {
 }
 
 func CreateRelationPoolFrame(isTest mode.ProcessingMode, apool pface.ApoolPort) (*RelationPool, error) {
-	var root func() string
-	if isTest.IsTest() {
-		root = computation.FindTestingStorageRootPath
-	} else {
-		root = computation.FindProductionStorageRootPath
-	}
-	rel := func(name string) string {
-		return filepath.Join("relation_pool", "eventbus", fmt.Sprintf("%s.jsonl", name))
-	}
+
 	// capLimit: 모드에 따라 조정 (예시 값)
 	capLimit := 2048
 	if !isTest.IsTest() {
 		capLimit = 8192
 	}
-	busTriplet, err := eventbus.NewWithRoot[cface.TripletEventMsg](root, rel("triplet"), capLimit)
-	if err != nil {
-		return nil, err
-	}
-	busCreation, err := eventbus.NewWithRoot[cface.CreationEventMsg](root, rel("creation"), capLimit)
-	if err != nil {
-		busTriplet.Close()
-		return nil, err
-	}
+	busTriplet := eventbus.NewInMemory[cface.TripletEventMsg](capLimit)
+
+	busCreation := eventbus.NewInMemory[cface.CreationEventMsg](capLimit)
+
 	ropeRepo, err := roperepo.NewClusterDB(isTest)
 	if err != nil {
 		busTriplet.Close()

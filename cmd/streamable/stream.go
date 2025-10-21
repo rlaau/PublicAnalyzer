@@ -12,9 +12,10 @@ import (
 
 	ap "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool"
 	ainf "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/infra"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod"
+	np "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/app"
 	co "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/app"
 	eo "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/eo/app"
+	ninf "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/infra"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
 	relapi "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/api"
 	rinf "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/infra"
@@ -29,7 +30,7 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
 
-const ProcessName = "Texting_Streaming"
+const ProcessName = "Testing_Streaming"
 
 func main() {
 	root, cancle := context.WithCancel(context.Background())
@@ -176,14 +177,14 @@ func ComposeRelPool() *rel.RelationPool {
 	return relPool
 }
 
-func ComposeNodPool() *nod.NodPool {
+func ComposeNodPool() *np.NodPool {
 	co := co.NewCo(co.CoCfg{
 		Mode: mode.TestingModeProcess,
 	})
 	eo := eo.NewEo(mode.TestingModeProcess)
-	nodDistributor := nod.NewNodPoolFanoutManager("Testing_nod", 2000, 2000)
+	nodDistributor := ninf.NewNodPoolFanoutManager("Testing_nod", 2000, 2000)
 
-	nodPool := nod.NewNodPool(mode.TestingModeProcess, nodDistributor, eo, co)
+	nodPool := np.NewNodPool(mode.TestingModeProcess, nodDistributor, eo, co)
 	return nodPool
 
 }

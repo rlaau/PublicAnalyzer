@@ -137,24 +137,3 @@ func (eo *Eo) UpdateDepositTxCount(addr domain.Address, count int64) error {
 func (eo *Eo) GetDepositInfo(addr domain.Address) (*domain.DetectedDeposit, error) {
 	return eo.depositDB.GetDepositInfo(addr)
 }
-
-// !!! 이 밑은 테스트용으로 DB바꾸는 코드임. 주의!!
-// ! 프로덕션에선 쓰지 말 것!
-
-func (eo *Eo) ChangeDBPath(target string, path string) {
-	var err error
-	switch target {
-	case "CEX":
-		eo.cexDB, err = infra.NewFileCEXRepository(eo.mode, path)
-		if err != nil {
-			panic("Co DB 바꾸는 중 에러 발생")
-		}
-	case "DEP":
-		eo.depositDB, err = infra.NewBadgerDepositRepository(eo.mode, path, 128)
-		if err != nil {
-			panic("Co DB 바꾸는 중 에러 발생")
-		}
-	default:
-		panic("DB코드 아님")
-	}
-}

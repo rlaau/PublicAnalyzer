@@ -417,10 +417,3 @@ func (a *SimpleTriplet) cleanup() {
 func (a *SimpleTriplet) GetDualManager() *DualManager {
 	return a.dualManager
 }
-
-// TODO 추후 삭제할 것. 어쩌다 프로세스 도중에 DB바꿀 일이 있고, 하필 그게 테스트코드라 일다 놔뒀음
-// TODO 추후 ropeDB테스트 리팩토링 후 제거할 것
-// !!프로덕션 환경에선 절대절대 쓰지 말겄!!!
-func (a *SimpleTriplet) NullButAddDB(relPool pface.RelPort) {
-	a.relPool = relPool
-}

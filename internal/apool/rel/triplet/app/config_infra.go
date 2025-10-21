@@ -72,32 +72,3 @@ func loadKafkaBatchConsumer(mode mode.ProcessingMode, name string) *kafka.KafkaB
 	log.Printf("📡 Batch consumer initialized (test mode: %v, batch size: %d)", isTestMode, batchSize)
 	return batchConsumer
 }
-
-// func loadCEXSet(cexFilePath string) (*shareddomain.CEXSet, error) {
-// 	if cexFilePath == "" {
-// 		// 기본 경로 사용 (후방 호환성)
-// 		cexFilePath = "internal/triplet/cex.txt"
-// 	}
-// 	cexRepo := infra.NewFileCEXRepository(cexFilePath)
-// 	cexSet, err := cexRepo.LoadCEXSet()
-// 	if err != nil {
-// 		return nil, fmt.Errorf("failed to load CEX set from %s: %w", cexFilePath, err)
-// 	}
-// 	return cexSet, nil
-// }
-// func loadDetectedDepositSet(fileDBPath string, mode mode.ProcessingMode) (*infra.FileDepositRepository, error) {
-// 	// 데이터 디렉토리 생성
-// 	if err := os.MkdirAll(fileDBPath, 0755); err != nil {
-// 		return nil, fmt.Errorf("failed to create data directory: %w", err)
-// 	}
-// 	// Deposit 저장소 초기화 - 모드에 따른 경로 설정
-// 	var detectedDepositFilePath string
-
-// 	if mode.IsTest() {
-// 		detectedDepositFilePath = fileDBPath + "/test_detected_deposits.csv"
-// 	} else {
-// 		detectedDepositFilePath = fileDBPath + "/production_detected_deposits.csv"
-// 	}
-// 	depositRepo := infra.NewFileDepositRepository(detectedDepositFilePath)
-// 	return depositRepo, nil
-// }

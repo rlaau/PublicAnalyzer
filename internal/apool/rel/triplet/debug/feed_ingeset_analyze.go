@@ -19,7 +19,7 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	kafka "github.com/rlaaudgjs5638/chainAnalyzer/shared/kafka"
 
-	nodapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod"
+	nodapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/app"
 	coapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/app"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
