@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
-	"google.golang.org/protobuf/proto"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	ropeproto "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/proto"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"google.golang.org/protobuf/proto"
 )
 
 // ===== 형식 =====
@@ -88,11 +88,11 @@ func (g GraphData) MarshalPretty() ([]byte, error) { return json.MarshalIndent(g
 
 // ===== 기능(JSON) =====
 
-// 5) 기본 그래프: 가장 큰 로프 중심
+// 5) 기본 그래프: 랜덤 샘플링 후 가장 큰 로프 중심
 func (b *BadgerRopeDB) FetchDefaultGraphJson() (GraphData, error) {
-	ropeID, rm := b.topRopeByVolume()
+	ropeID, rm := b.topRopeFromRandomSample(50)
 	if ropeID == 0 || len(rm.Members) == 0 {
-		return GraphData{Meta: MetaInfo{GeneratedAt: time.Now().Unix(), GraphType: "default"}}, fmt.Errorf("no ropes found")
+		return GraphData{Meta: MetaInfo{GeneratedAt: time.Now().Unix(), GraphType: "default"}}, fmt.Errorf("no valid ropes with members found (total ropes may exist but have empty Members)")
 	}
 	start := rm.Members[0]
 	return b.buildGraphFromVertex(start, 3, 0, "default")
@@ -590,6 +590,47 @@ func (b *BadgerRopeDB) topRopeByVolume() (ropedomain.RopeID, ropedomain.RopeMark
 	return best.ID, best
 }
 
+// 내부: 랜덤 샘플링 후 Members가 있는 것 중 최대 Volume 선택
+func (b *BadgerRopeDB) topRopeFromRandomSample(sampleSize int) (ropedomain.RopeID, ropedomain.RopeMark) {
+	var candidates []ropedomain.RopeMark
+	_ = b.dbM.View(func(txn *badger.Txn) error {
+		itOpts := badger.DefaultIteratorOptions
+		it := txn.NewIterator(itOpts)
+		defer it.Close()
+		pfx := []byte(kR)
+		count := 0
+		for it.Seek(pfx); it.ValidForPrefix(pfx) && count < sampleSize; it.Next() {
+			item := it.Item()
+			var rm ropedomain.RopeMark
+			_ = item.Value(func(val []byte) error {
+				// Proto 형식 먼저 시도
+				protoRM := &ropeproto.RopeMarkProto{}
+				if proto.Unmarshal(val, protoRM) == nil {
+					rm = ProtoToRopeMark(protoRM)
+					return nil
+				}
+				// JSON 폴백 (하위 호환성)
+				return json.Unmarshal(val, &rm)
+			})
+			if rm.ID == 0 || len(rm.Members) == 0 {
+				continue // Members가 없는 rope는 건너뜀
+			}
+			candidates = append(candidates, rm)
+			count++
+		}
+		return nil
+	})
+
+	// 샘플 중 최고 선택
+	var best ropedomain.RopeMark
+	for _, rm := range candidates {
+		if betterRope(rm, best) {
+			best = rm
+		}
+	}
+	return best.ID, best
+}
+
 func betterRope(a, b ropedomain.RopeMark) bool {
 	if b.ID == 0 {
 		return true
@@ -602,8 +643,6 @@ func betterRope(a, b ropedomain.RopeMark) bool {
 	}
 	return a.LastSeen.After(b.LastSeen)
 }
-
-
 
 // GetTraitDetail TraitMark 상세 정보 조회
 func (b *BadgerRopeDB) GetTraitDetail(id ropedomain.TraitID) (map[string]interface{}, error) {

@@ -92,8 +92,8 @@ type BadgerRopeDB struct {
 	// 인메모리 로프 사이즈 캐시 (로프 ID -> 사이즈 매핑)
 	ropeSizeCache *RopeSizeCache
 
-	//배칭용 로프 어그리게이터 케시
-	ropeAggCache *RopeAggCache
+	//배칭용 로프 어그리게이터 케시 (주석 처리)
+	// ropeAggCache *RopeAggCache
 
 	isTest bool
 	ctx    context.Context
@@ -322,8 +322,8 @@ func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, t
 
 	// 인메모리 버텍스 캐시 초기화 (5만개 캐시)
 	b.vertexCache = NewVertexCache(b, 500000)
-	//로프 어그리게이터 케시 초기화
-	b.ropeAggCache = NewRopeAggCache(b.getRopeMark)
+	//로프 어그리게이터 케시 초기화 (주석 처리)
+	// b.ropeAggCache = NewRopeAggCache(b.getRopeMark)
 
 	// 인메모리 로프 사이즈 캐시 초기화 (최대 1천만개)
 	b.ropeSizeCache = NewRopeSizeCache(10_000_000, b)
@@ -536,28 +536,28 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 				target, source = id2, id1
 			}
 
-			// 타겟과 소스를 병합시키는 "업서트 명령어"를 계산해냄.
-			ropeMergingUpsert := b.ropeAggCache.GetMergingRopeUpsertOpertation(target, source, ev.Trait)
+			// source 로프의 멤버들을 DB에서 직접 가져와서 병합
+			sourceRopeMark := b.getRopeMark(source)
+
 			// 계측: 병합된 로프 크기 기록
-			b.ropeMergeMetrics.totalMergeSize.Add(int64(ropeMergingUpsert.SizeDelta))
+			b.ropeMergeMetrics.totalMergeSize.Add(int64(sourceRopeMark.Size))
 			b.ropeMergeMetrics.mergeCount.Add(1)
 
-			// "변경되는" 모든 멤버 대상으로 수정
-			for _, addr := range ropeMergingUpsert.AddMembers {
+			// source의 모든 멤버들을 target으로 변경
+			for _, addr := range sourceRopeMark.Members {
 				v := b.getOrCreateVertex(addr)
 				setRopeForTrait(v, target, ev.Trait)
 				b.putVertex(v)
-
 			}
-			// target 로프마크에 흡수 Upsert, source는 이후 제거/무시
+
+			// target 로프마크에 source 멤버들 흡수 Upsert
 			ropeErr := b.busRope.Publish(domain.RopeMarkUpsert{
 				RopeID:      target,
 				Trait:       ev.Trait,
-				AddMembers:  ropeMergingUpsert.AddMembers,
-				SizeDelta:   ropeMergingUpsert.SizeDelta,
-				ValueOrNull: ropeMergingUpsert.ValueOrNull,
-
-				VolumeDelta: ropeMergingUpsert.VolumeDelta + 1, //거래 볼륨이므로. 상대+자신+이번 거래
+				AddMembers:  sourceRopeMark.Members,
+				SizeDelta:   int32(sourceRopeMark.Size),
+				ValueOrNull: sourceRopeMark.ValueOrNull.Add(ev.ValueOrNull),
+				VolumeDelta: sourceRopeMark.Volume + 1, // source 볼륨 + 이번 거래
 				LastSeen:    ev.Time,
 				MergeFrom:   []domain.RopeID{source},
 			})
@@ -888,114 +888,115 @@ const (
 func (b *BadgerRopeDB) ropeWorker() {
 	defer b.wg.Done()
 
-	// 캐시 준비: DB 로더 주입
-
-	totalItems := 0
+	saveCount := 0 // 1000회마다 프린트하기 위한 카운터
 	ropeCh := b.busRope.Dequeue()
-
-	timer := time.NewTimer(time.Hour)
-	if !timer.Stop() {
-		<-timer.C
-	}
 
 	statusTicker := time.NewTicker(20 * time.Second)
 	defer statusTicker.Stop()
 
-	startTimer := func() {
-		if !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
-		timer.Reset(batchMaxWait)
-	}
-	stopTimer := func() {
-		if !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
-	}
-
-	flush := func() {
-		if totalItems == 0 {
-			return
-		}
-
-		// 1) 배치 생성 (마샬러는 Proto)
-		puts, dels, snaps := b.ropeAggCache.BuildFlushBatch(func(rm domain.RopeMark) ([]byte, error) {
-			return proto.Marshal(RopeMarkToProto(rm))
-		})
-
-		// 2) DB 반영
-		err := b.dbM.Update(func(txn *badger.Txn) error {
-			for _, kv := range puts {
-				if err := txn.Set(kv.key, kv.val); err != nil {
-					return err
-				}
-			}
-			for _, kd := range dels {
-				if err := txn.Delete(kd.key); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			fmt.Printf("rope flush err: %v\n", err)
-			// 실패 시 캐시 델타 유지 (롤백)
-		} else {
-			// 3) 캐시 커밋 및 사이즈 캐시 갱신
-			// 스냅샷을 그대로 커밋 (재계산 X)
-			b.ropeAggCache.CommitFlushSnaps(snaps)
-
-			// 사이즈 캐시 갱신도 스냅샷에서 바로
-			if b.ropeSizeCache != nil {
-				for id, snap := range snaps {
-					b.ropeSizeCache.Put(id, snap.Size)
-				}
-			}
-		}
-
-		totalItems = 0
-		stopTimer()
-	}
-
 	for {
 		select {
 		case <-b.ctx.Done():
-			flush()
 			return
 
 		case <-statusTicker.C:
 			fmt.Printf("[RopeWorker Status] busRope 큐 - len: %d, cap: %d\n",
 				b.busRope.Len(), b.busRope.Cap())
-		case op, ok := <-ropeCh:
 
+		case op, ok := <-ropeCh:
 			if !ok {
-				flush()
 				return
 			}
-			if totalItems == 0 {
-				startTimer()
-			}
-			// 일반 upsert: 캐시에 누적
+
+			// MaxRopeSize 체크
 			if b.ropeSizeCache.Get(op.RopeID) >= MaxRopeSize {
-				//fmt.Printf("도메인 특수 감지: %d번 로프의 멤버가 %d개를 초과하려 함.\nDB로 1000개 이상의 증폭은 막음", op.RopeID, MaxRopeSize)
 				continue
 			}
-			b.ropeAggCache.Upsert(op)
 
-			totalItems++
-			if totalItems >= batchMaxItems {
-				flush()
+			// 직접 DB에 업서트 (applyRopeUpsert 방식)
+			key := []byte(fmt.Sprintf("%s%d", kR, uint64(op.RopeID)))
+			err := b.dbM.Update(func(txn *badger.Txn) error {
+				var rm domain.RopeMark
+				if itm, err := txn.Get(key); err == nil {
+					_ = itm.Value(func(val []byte) error {
+						// Proto 형식 먼저 시도
+						protoRM := &ropeproto.RopeMarkProto{}
+						if proto.Unmarshal(val, protoRM) == nil {
+							rm = ProtoToRopeMark(protoRM)
+							return nil
+						}
+						// JSON 폴백
+						return json.Unmarshal(val, &rm)
+					})
+				}
+				if rm.ID == 0 {
+					rm = domain.RopeMark{
+						ID:          op.RopeID,
+						Trait:       op.Trait,
+						Size:        0,
+						Members:     nil,
+						Volume:      0,
+						LastSeen:    op.LastSeen,
+						ValueOrNull: decimal.Zero,
+					}
+				}
+
+				// 값 누적
+				if !op.ValueOrNull.IsZero() {
+					rm.ValueOrNull = rm.ValueOrNull.Add(op.ValueOrNull)
+				}
+				if len(op.AddMembers) > 0 {
+					rm.Members = computation.DedupAppend(rm.Members, op.AddMembers)
+				}
+				if op.SizeDelta != 0 {
+					rm.Size = uint32(len(rm.Members))
+				}
+				if op.VolumeDelta > 0 {
+					rm.Volume += op.VolumeDelta
+				}
+				if op.LastSeen.After(rm.LastSeen) {
+					rm.LastSeen = op.LastSeen
+				}
+				for _, sid := range op.MergeFrom {
+					if sid == rm.ID {
+						continue
+					}
+					skey := []byte(fmt.Sprintf("%s%d", kR, uint64(sid)))
+					_ = txn.Delete(skey)
+				}
+				if int(rm.Size) != len(rm.Members) {
+					rm.Size = uint32(len(rm.Members))
+				}
+				if len(op.TrapVertexes) > 0 {
+					rm.TrapVertexes = MergeTrapVerticesUniquePairs(rm.TrapVertexes, op.TrapVertexes)
+				}
+
+				// Proto Marshal로 저장
+				protoRM := RopeMarkToProto(rm)
+				data, err := proto.Marshal(protoRM)
+				if err != nil {
+					return err
+				}
+
+				// 사이즈 캐시 갱신
+				if b.ropeSizeCache != nil {
+					b.ropeSizeCache.Put(op.RopeID, rm.Size)
+				}
+
+				return txn.Set(key, data)
+			})
+
+			if err != nil {
+				fmt.Printf("로프 업서트 중 에러발생 %s\n", err.Error())
+				continue
 			}
-		case <-timer.C:
-			flush()
-		}
 
+			// 1000회마다 프린트
+			saveCount++
+			if saveCount%1000 == 0 {
+				fmt.Printf("[RopeWorker] 로프 마크 %d개 저장 완료\n", saveCount)
+			}
+		}
 	}
 }
 

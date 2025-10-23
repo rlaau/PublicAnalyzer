@@ -125,9 +125,10 @@ func (a *SimpleTriplet) Start(parent context.Context) error {
 	log.Printf("듀얼 매니져 초기화. 현재 cex주소 개수: %d", len(a.dualManager.relPool.GetApooPort().GetNodPort().GetEoPort().CEXAddresses()))
 
 	g, ctx := errgroup.WithContext(parent)
-	g.Go(func() error { a.infra.WorkerPool.Restart(ctx); return nil })
+	g.Go(func() error { a.infra.WorkerPool.Start(ctx); return nil })
 	g.Go(func() error { return a.ComsumeTransaction(ctx) })
 	g.Go(func() error { a.statsReporter(ctx); return nil })
+	g.Go(func() error { return a.infra.WorkerPool.Start(ctx) })
 	err = g.Wait()
 	a.Close()
 	return err
@@ -140,7 +141,7 @@ func (a *SimpleTriplet) Close() error {
 	}
 
 	if a.infra.WorkerPool != nil {
-		a.infra.WorkerPool.Shutdown()
+		a.infra.WorkerPool.Close()
 	}
 	if a.dualManager != nil {
 		a.dualManager.Close()

@@ -57,19 +57,7 @@ func NewAnalyzerPool(istest mode.ProcessingMode, fanoutManager iface.ApoolFanout
 
 	return a
 }
-func CreateAnalzerPoolFrame(istest mode.ProcessingMode, fanoutManager iface.ApoolFanoutManager) (*AnalyzerPool, error) {
-	capLimit := 128
-	busNod := eventbus.NewInMemory[cface.NodMsg](capLimit)
 
-	busRel := eventbus.NewInMemory[cface.RelMsg](capLimit)
-	a := &AnalyzerPool{
-		isTest:        istest,
-		busNod:        busNod,
-		busRel:        busRel,
-		fanoutManager: fanoutManager,
-	}
-	return a, nil
-}
 func (a *AnalyzerPool) Name() gface.ModuleName {
 	return "AnalyzerPool"
 }

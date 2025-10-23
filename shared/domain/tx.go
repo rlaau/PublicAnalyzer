@@ -10,15 +10,6 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-type Nonce struct {
-	Valid bool
-	Value uint64
-}
-
-func NewNonce(v uint64) Nonce          { return Nonce{Valid: true, Value: v} }
-func (Nonce) Null() Nonce              { return Nonce{Valid: false} }
-func (n Nonce) Uint64() (uint64, bool) { return n.Value, n.Valid }
-
 // ===================== RawTransaction =====================
 type RawTransaction struct {
 	TxId        string          // 0x + 64 hex
@@ -29,6 +20,14 @@ type RawTransaction struct {
 	RCAddr      string          // 0x + 40 hex or "" (receipt_contract_address)
 	ValueOrNull decimal.Decimal // wei 값 (integer)
 }
+type Nonce struct {
+	Valid bool
+	Value uint64
+}
+
+func NewNonce(v uint64) Nonce          { return Nonce{Valid: true, Value: v} }
+func (Nonce) Null() Nonce              { return Nonce{Valid: false} }
+func (n Nonce) Uint64() (uint64, bool) { return n.Value, n.Valid }
 
 func (r RawTransaction) String() string {
 	return fmt.Sprintf(`
