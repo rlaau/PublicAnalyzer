@@ -30,10 +30,8 @@ type NodPool struct {
 		co cface.CoPort
 	}
 
-	busEo *eventbus.EventBus[cface.EoMsg]
-	busCo *eventbus.EventBus[cface.CoMsg]
-	//TODO 추후 iface, infra구분해서 리팩토링 하기. Apool의 사례 참고.
-
+	busEo         *eventbus.EventBus[cface.EoMsg]
+	busCo         *eventbus.EventBus[cface.CoMsg]
 	txDistributor iface.NodPoolFanoutManager
 	closed        atomic.Bool
 }
@@ -133,14 +131,4 @@ func (n *NodPool) ConsumeCoTxByFanout() <-chan domain.MarkedTransaction {
 }
 func (n *NodPool) ConsumeEoTxByFanout() <-chan domain.MarkedTransaction {
 	return n.txDistributor.GetBus(string(iface.EoBusName)).Dequeue()
-}
-
-// TODO 수직 슬라이스 테스트를 위해 어쩔 수 없이 만든 함수임.
-// TODO 추후 정식 생성자 통해서 모든 것을 제대로 초기화 할 것!!
-func (n *NodPool) SetCoPort(c cface.CoPort) {
-	n.ports.co = c
-}
-
-func (n *NodPool) SetEoPort(e cface.EoPort) {
-	n.ports.eo = e
 }

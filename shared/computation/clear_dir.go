@@ -4,9 +4,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
 
-func SetCleanedDir(path string) error {
+func SetCleanedDir(mode mode.ProcessingMode, path string) error {
+	if !mode.IsTest() {
+		return fmt.Errorf("프로덕션 모드에선 디렉토리 클린이 금지됨")
+	}
 	dirEntries, err := os.ReadDir(path)
 	if err != nil {
 		// 디렉토리가 없다면 새로 만들기

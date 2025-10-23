@@ -57,7 +57,7 @@ func NewContractDB(processMode mode.ProcessingMode, rootPath string) (*ContractD
 		}
 	} else {
 		root = rootPath
-	}
+	}	
 
 	opts := badger.DefaultOptions(root)
 	// 내구성 우선(처리량 우선이면 false 고려)
