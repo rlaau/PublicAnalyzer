@@ -110,6 +110,7 @@ func (co *Co) Closed() bool {
 func (co *Co) RegisterParent(nod gface.Module) error {
 	np, ok := nod.(pface.NodPort)
 	if !ok {
+		fmt.Printf("RegisterParent:Co가 받은 NodPort가 런타임 타입체크 실패함.")
 		return fmt.Errorf("parent is not NodPort")
 	}
 	co.nodPort = np

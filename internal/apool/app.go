@@ -31,9 +31,9 @@ type AnalyzerPool struct {
 
 func NewAnalyzerPool(istest mode.ProcessingMode, fanoutManager iface.ApoolFanoutManager, nod cface.NodPort, rel cface.RelPort) *AnalyzerPool {
 	capLimit := 128
-	busNod := eventbus.NewInMemory[cface.NodMsg](capLimit)
+	busNod := eventbus.NewInMemory[cface.NodMsg](capLimit, "NodEventBus")
 
-	busRel := eventbus.NewInMemory[cface.RelMsg](capLimit)
+	busRel := eventbus.NewInMemory[cface.RelMsg](capLimit, "RelEventBus")
 	a := &AnalyzerPool{
 		isTest: istest,
 		busRel: busRel,

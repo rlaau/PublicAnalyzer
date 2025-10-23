@@ -36,38 +36,12 @@ type RelationPool struct {
 	ClusterRepo   iface.ClusterDB
 }
 
-func CreateRelationPoolFrame(isTest mode.ProcessingMode, apool pface.ApoolPort) (*RelationPool, error) {
-
-	// capLimit: 모드에 따라 조정 (예시 값)
-	capLimit := 2048
-	if !isTest.IsTest() {
-		capLimit = 8192
-	}
-	busTriplet := eventbus.NewInMemory[cface.TripletEventMsg](capLimit)
-
-	busCreation := eventbus.NewInMemory[cface.CreationEventMsg](capLimit)
-
-	ropeRepo, err := roperepo.NewClusterDB(isTest)
-	if err != nil {
-		busTriplet.Close()
-		busCreation.Close()
-		return nil, err
-	}
-
-	return &RelationPool{
-		isTest:      isTest,
-		busTriplet:  busTriplet,
-		busCreation: busCreation,
-		ClusterRepo: ropeRepo,
-		Apool:       apool,
-	}, nil
-}
 func NewRelPool(isTest mode.ProcessingMode, txDistributor iface.RelPoolFanout, triplet cface.TripletPort) (*RelationPool, error) {
 	ropeRepo, err := roperepo.NewClusterDB(isTest)
 	if err != nil {
 		return nil, err
 	}
-	busTriplet := eventbus.NewInMemory[cface.TripletEventMsg](128)
+	busTriplet := eventbus.NewInMemory[cface.TripletEventMsg](128, "TripletEventBus")
 	r := &RelationPool{
 		isTest:      isTest,
 		busTriplet:  busTriplet,
@@ -78,11 +52,13 @@ func NewRelPool(isTest mode.ProcessingMode, txDistributor iface.RelPoolFanout, t
 		txDistributor: txDistributor,
 	}
 	triplet.RegisterParent(r)
+	fmt.Printf("트리플렛 레지스터링 완료\n")
 	return r, nil
 }
 func (r *RelationPool) RegisterParent(apool gface.Module) error {
 	ap, ok := apool.(pface.ApoolPort)
 	if !ok {
+		fmt.Printf("RegisterParent: RelPool이 받은 appool이 apoolPort런타임 체크 실패함")
 		return fmt.Errorf("RelationPool이 Register한 apool이 ApoolPort조건을 만족하지 못했음")
 	}
 	r.Apool = ap
@@ -96,25 +72,6 @@ func (r *RelationPool) ClusterDB() iface.ClusterDB {
 }
 func (r *RelationPool) GetGraphStats() map[string]any {
 	return r.ClusterRepo.GetGraphStats()
-}
-
-// TODO 곧바로 제거
-func (r *RelationPool) Register(triplet cface.TripletPort, creation cface.CreationPort) error {
-
-	//	capLimit := 2048
-	// if !r.isTest.IsTest() {
-	// 	capLimit = 8192
-	// }
-
-	// if r.Apool.ConsumeRelTxByFanout() != nil {
-	// 	//TODO 추후엔 그냥 패닉 내삼!
-	// 	r.txDistributor, err = NewTxDistributor(r.isTest, capLimit, r.Apool.ConsumeRelTxByFanout())
-	// }
-	r.busCreation.Close()
-	r.busTriplet.Close()
-	r.ports.triplet = triplet
-	//r.ports.creation = creation
-	return nil
 }
 
 func (r *RelationPool) GetApooPort() pface.ApoolPort {
@@ -184,9 +141,14 @@ func (r *RelationPool) Start(parent context.Context) error {
 			}
 		}
 	})
-	err := g.Wait()
+	if err := g.Wait(); err != nil {
+		fmt.Printf("RelPool이 에러 받음.%s\n", err.Error())
+		r.Close()
+		return err
+	}
+
 	r.Close()
-	return err
+	return nil
 
 }
 func (r *RelationPool) Close() error {
@@ -199,7 +161,7 @@ func (r *RelationPool) Close() error {
 	fmt.Printf("relpool의 txDistributor 정리 완료\n")
 
 	r.busTriplet.Close()
-	r.busCreation.Close()
+	//r.busCreation.Close()
 	r.ClusterRepo.Close()
 	fmt.Printf("BUS들 정리 완료\n")
 	return nil

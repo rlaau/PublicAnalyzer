@@ -41,8 +41,8 @@ type NodPool struct {
 func NewNodPool(istest mode.ProcessingMode, fanoutMnager *fanout.FanoutInMemory[domain.MarkedTransaction],
 	eo cface.EoPort, co cface.CoPort) *NodPool {
 	capLimit := 128
-	busEo := eventbus.NewInMemory[cface.EoMsg](capLimit)
-	busCo := eventbus.NewInMemory[cface.CoMsg](capLimit)
+	busEo := eventbus.NewInMemory[cface.EoMsg](capLimit, "EoEventBus")
+	busCo := eventbus.NewInMemory[cface.CoMsg](capLimit, "CoEventBus")
 
 	n := &NodPool{
 		isTest:        istest,
@@ -65,6 +65,7 @@ func NewNodPool(istest mode.ProcessingMode, fanoutMnager *fanout.FanoutInMemory[
 func (n *NodPool) RegisterParent(apool gface.Module) error {
 	ap, ok := apool.(pface.ApoolPort)
 	if !ok {
+		fmt.Printf("RegisterParent: nodPool이 받은 apool의 ApoolPort의 런타임 타입체크 실패함\n")
 		return fmt.Errorf("NodPool이 받은 Apool이 ApoolPort조건을 만족하지 못함")
 	}
 	n.Apool = ap

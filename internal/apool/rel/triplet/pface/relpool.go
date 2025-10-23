@@ -11,7 +11,6 @@ type RelPort interface {
 	GetApooPort() pface.ApoolPort
 	DispatchTraitEvent(ropedomain.TraitEvent) error
 	GetGraphStats() map[string]any
-	Register(triplet shared.TripletPort, creation shared.CreationPort) error
 	//형제 모듈에 접근
 	GetCreationPort() shared.CreationPort
 	EnqueueToCreation(v shared.CreationEventMsg) error

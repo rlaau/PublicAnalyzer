@@ -10,6 +10,8 @@ import (
 	"errors"
 	"sync"
 	"sync/atomic"
+
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
 )
 
 // EventBusMode EventBus 동작 모드
@@ -27,7 +29,7 @@ type EventBus[T any] struct {
 	cv  *sync.Cond
 
 	capLimit int
-
+	name     gface.ModuleName
 	stopping bool
 	closed   atomic.Bool
 	wg       sync.WaitGroup
@@ -39,15 +41,34 @@ type EventBus[T any] struct {
 // NewInMemory: 단순한 메모리 전용 EventBus (채널 기반)
 // JSONL, condition variable, waitgroup 없는 간단한 구조
 // 워커풀이나 인터페이스 타입용으로 적합
-func NewInMemory[T any](bufferSize int) *EventBus[T] {
+func NewInMemory[T any](bufferSize int, name gface.ModuleName) *EventBus[T] {
 	if bufferSize <= 0 {
 		bufferSize = 1000 // 기본 버퍼 크기
 	}
 
 	return &EventBus[T]{
 		out:      make(chan T, bufferSize),
+		name:     name,
 		capLimit: 0, // 무제한
 	}
+}
+
+func (b *EventBus[T]) Name() gface.ModuleName {
+	return b.name
+}
+func (b *EventBus[T]) Closed() bool {
+	return b.closed.Load()
+}
+
+// Close: 생산 중단 → pending 스냅샷 JSONL 저장 → out close
+func (b *EventBus[T]) Close() error {
+	if b.closed.Swap(true) {
+		return nil
+	}
+
+	// 메모리 전용 모드: 단순히 채널만 닫기
+	close(b.out)
+	return nil
 }
 
 // Publish: 생산자 → pending. capLimit 초과 시 cond wait로 역압.
@@ -76,17 +97,6 @@ func (b *EventBus[T]) PublishBatch(vs []T) error {
 
 // Dequeue: 단일 소비자 채널
 func (b *EventBus[T]) Dequeue() <-chan T { return b.out }
-
-// Close: 생산 중단 → pending 스냅샷 JSONL 저장 → out close
-func (b *EventBus[T]) Close() {
-	if b.closed.Swap(true) {
-		return
-	}
-
-	// 메모리 전용 모드: 단순히 채널만 닫기
-	close(b.out)
-
-}
 
 // Len: 현재 pending 큐 길이(정확값). 내부 락으로 보호됨.
 func (b *EventBus[T]) Len() int {

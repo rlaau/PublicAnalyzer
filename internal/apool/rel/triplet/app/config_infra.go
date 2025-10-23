@@ -21,7 +21,7 @@ func NewInfraByConfig(config *TripletConfig) *infra.TripletAndDualManagerInfra {
 	}
 
 	// 워커 풀에 쓸 채널 생성 (메모리 전용 - 인터페이스 타입이므로 JSONL 불가)
-	txJobBus := eventbus.NewInMemory[workerpool.Job](config.BusCapLimit)
+	txJobBus := eventbus.NewInMemory[workerpool.Job](config.BusCapLimit, "TxJobBus")
 	//* 워커풀 생성 및 채널 등록
 	//*여기선 ctx를 그냥 백그라운드로 등록. 부모 컨텍스트는 Start시 기존 것 shuDown후 등록
 	workerPool := workerpool.New(config.WorkerCount, txJobBus, "TripletWorkerPool")

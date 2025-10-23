@@ -228,20 +228,20 @@ func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, t
 	// evTraitRel := filepath.Join("rope_db", dbname, "eventbus", "traitmark.jsonl")
 	// evPolyRopeRel := filepath.Join("rope_db", dbname, "eventbus", "polyropemark.jsonl")
 
-	busR := eventbus.NewInMemory[domain.RopeMarkUpsert](40_000)
+	busR := eventbus.NewInMemory[domain.RopeMarkUpsert](40_000, "RopeMarkBus")
 	// if err != nil {
 	// 	_ = dbV.Close()
 	// 	_ = dbM.Close()
 	// 	return nil, err
 	// }
-	busT := eventbus.NewInMemory[domain.TraitMarkUpsert](40_000)
+	busT := eventbus.NewInMemory[domain.TraitMarkUpsert](40_000, "TraitMarkBus")
 	// if err != nil {
 	// 	busR.Close()
 	// 	_ = dbV.Close()
 	// 	_ = dbM.Close()
 	// 	return nil, err
 	// }
-	busPR := eventbus.NewInMemory[PolyRopeMarkUpsert](40_000)
+	busPR := eventbus.NewInMemory[PolyRopeMarkUpsert](40_000, "PolyRopeMarkBus")
 	// if err != nil {
 	// 	busR.Close()
 	// 	busT.Close()

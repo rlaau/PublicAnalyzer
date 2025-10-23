@@ -125,10 +125,9 @@ func (a *SimpleTriplet) Start(parent context.Context) error {
 	log.Printf("듀얼 매니져 초기화. 현재 cex주소 개수: %d", len(a.dualManager.relPool.GetApooPort().GetNodPort().GetEoPort().CEXAddresses()))
 
 	g, ctx := errgroup.WithContext(parent)
-	g.Go(func() error { a.infra.WorkerPool.Start(ctx); return nil })
 	g.Go(func() error { return a.ComsumeTransaction(ctx) })
 	g.Go(func() error { a.statsReporter(ctx); return nil })
-	g.Go(func() error { return a.infra.WorkerPool.Start(ctx) })
+	g.Go(func() error { a.infra.WorkerPool.Start(ctx); return nil })
 	err = g.Wait()
 	a.Close()
 	return err
@@ -158,9 +157,11 @@ func (a *SimpleTriplet) Closed() bool {
 func (a *SimpleTriplet) RegisterParent(relPool gface.Module) error {
 	rp, ok := relPool.(pface.RelPort)
 	if !ok {
-		return fmt.Errorf("SimpleTriplet이 Register한 Parent가 Relpool이 아님")
+		fmt.Printf("런타임 타입 에러남. relPool이 RelPort조건을 만족하지 않음.\n")
+		return fmt.Errorf("SimpleTriplet이 Register한 Parent가 Relpool이 아님\n")
 	}
 	a.relPool = rp
+	fmt.Printf("트리플렛이 relPool을 레지스터링 함\n")
 	return nil
 }
 

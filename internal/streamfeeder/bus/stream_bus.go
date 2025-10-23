@@ -80,7 +80,7 @@ func NewStreamBus(cfg StreamBusConfig) (*StreamBus, error) {
 	txStreamer := txstreamer.NewTxStreamer(storageRoot)
 
 	// EventBus (RawTransaction)
-	bus := eventbus.NewInMemory[shareddomain.RawTransaction](cfg.BufferSize)
+	bus := eventbus.NewInMemory[shareddomain.RawTransaction](cfg.BufferSize, "RawTransactionBus")
 
 	// Position repo
 	positionRepo := streamfeeder.NewFileStreamPositionRepository(cfg.PositionDataDir)

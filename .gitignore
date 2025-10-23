@@ -14,3 +14,4 @@ testdata/
 *.bin
 chainanalyzer
 /debug_test_data
+/testing_enviroment

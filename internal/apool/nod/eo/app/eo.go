@@ -108,6 +108,7 @@ func (eo *Eo) Closed() bool { return eo.closed.Load() }
 func (eo *Eo) RegisterParent(nod gface.Module) error {
 	np, ok := nod.(pface.NodPort)
 	if !ok {
+		fmt.Printf("RegisterParent: Eo가 받은 NodPort가 런타임 타입체크 실패함")
 		return fmt.Errorf("parent is not NodPort")
 	}
 	eo.nodPort = np

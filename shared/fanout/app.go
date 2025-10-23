@@ -41,12 +41,12 @@ type BusRequest struct {
 }
 
 func NewFanoutInMemory[T any](name string, busRequest []BusRequest, inputCap, outputCap int) *FanoutInMemory[T] {
-
-	inputBus := eventbus.NewInMemory[T](inputCap)
+	fanountName := fmt.Sprintf("EventbusForFanoutFor%s", name)
+	inputBus := eventbus.NewInMemory[T](inputCap, gface.ModuleName(fanountName))
 
 	busList := make([]*BusInfo[T], len(busRequest))
 	for i, e := range busRequest {
-		newOutputBus := eventbus.NewInMemory[T](outputCap)
+		newOutputBus := eventbus.NewInMemory[T](outputCap, gface.ModuleName(e.BusName))
 		newBusInfo := &BusInfo[T]{
 			busName:  e.BusName,
 			bus:      newOutputBus,
