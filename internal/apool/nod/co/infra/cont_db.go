@@ -50,9 +50,9 @@ type ContractDB struct {
 func NewContractDB(processMode mode.ProcessingMode) (*ContractDB, error) {
 	var root string
 	if processMode.IsTest() {
-		root = computation.FindTestingStorageRootPath() + "/nod/co/cont"
+		root = computation.DockerTestingStorage() + "/nod/co/cont"
 	} else {
-		root = computation.FindProductionStorageRootPath() + "/nod/co/cont"
+		root = computation.DockerProductionStorage() + "/nod/co/cont"
 	}
 
 	opts := badger.DefaultOptions(root)

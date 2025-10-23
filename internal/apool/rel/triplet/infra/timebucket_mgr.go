@@ -65,9 +65,9 @@ func NewTimeBucketManager(mode mode.ProcessingMode) (*TimeBucketManager, error) 
 	var path string
 	timeBucketMGR := "timebucketmgr"
 	if mode.IsTest() {
-		path = filepath.Join(computation.FindTestingStorageRootPath(), timeBucketMGR)
+		path = filepath.Join(computation.DockerTestingStorage(), timeBucketMGR)
 	} else {
-		path = filepath.Join(computation.FindProductionStorageRootPath(), timeBucketMGR)
+		path = filepath.Join(computation.DockerProductionStorage(), timeBucketMGR)
 	}
 	m := &TimeBucketManager{
 		path:    filepath.Clean(path),

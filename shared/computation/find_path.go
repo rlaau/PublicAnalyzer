@@ -13,34 +13,49 @@ func ComputeRelClosure(root string) func(...string) string {
 }
 
 // @/testing_enviroment/{name1/name2/...}
-func ComputeThisTestingStorage(name ...string) string {
-	return ComputeRelClosure(FindTestingStorageRootPath())(name...)
+func ComputeThisTestingDocker(name ...string) string {
+	return ComputeRelClosure(DockerTestingStorage())(name...)
 }
 
 // @/production_storage/{name1/name2/...}
-func ComputeThisProductionStorage(name ...string) string {
-	relFn := ComputeRelClosure(FindProductionStorageRootPath())
+func ComputeThisProductionDocker(name ...string) string {
+	relFn := ComputeRelClosure(DockerProductionStorage())
 	return relFn(name...)
 }
 
+type StorageName string
+
+const (
+	PRODUCTION_STORAG StorageName = "production_storage"
+	TESTING_STORAGE   StorageName = "testing_enviroment"
+	WEB_STORAGE       StorageName = "web"
+)
+
 // 고립환경 테스팅 시의 루트패시 전달
-// 사용 시엔 FindTestingStorageRootPath+{테스트명}+{각 저장소}로 쓰면 됨
+// 사용 시엔 DockerTestingStorage+{테스트명}+{각 저장소}로 쓰면 됨
 // @/testing_enviroment
-func FindTestingStorageRootPath() string {
-	return os.Getenv("TESTING_STORAGE")
+func DockerTestingStorage() string {
+	return DockerRootResolver(TESTING_STORAGE)
 }
-func FindWebDir() string {
-	return os.Getenv("WEB_STORAGE")
+func DockerWebStroage() string {
+	return DockerRootResolver(WEB_STORAGE)
 }
 
 // @/production_storage
-func FindProductionStorageRootPath() string {
-	return os.Getenv("PRODUCTION_STORAGE")
+func DockerProductionStorage() string {
+	return DockerRootResolver(PRODUCTION_STORAG)
+}
+
+func DockerRootResolver(name StorageName) string {
+	return filepath.Join(DockerRoot(), string(name))
 }
 
 // 프로젝트 루트 경로 리턴
-func FindProjectRootPath() string {
-	return os.Getenv("PROJECT_ROOT")
+func DockerRoot() string {
+	return os.Getenv("DOCKER_ROOT")
+}
+func LocalRoot() string {
+	return os.Getenv("LOCAL_ROOT")
 }
 
 func GetENV() string {

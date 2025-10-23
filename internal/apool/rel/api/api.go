@@ -68,11 +68,11 @@ func (h *RelAPIPoolHandler) registerRelationPool(router *chi.Mux) error {
 	router.Route("/ui/triplet/graph", func(r chi.Router) {
 		// 부모(Background)
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-			http.ServeFile(w, r, filepath.Join(computation.FindWebDir(), "triplet", "graph", "index.html"))
+			http.ServeFile(w, r, filepath.Join(computation.DockerWebStroage(), "triplet", "graph", "index.html"))
 		})
 		// 자식(Frame/Sigma)
 		r.Get("/frame", func(w http.ResponseWriter, r *http.Request) {
-			http.ServeFile(w, r, filepath.Join(computation.FindWebDir(), "triplet", "graph", "frame.html"))
+			http.ServeFile(w, r, filepath.Join(computation.DockerWebStroage(), "triplet", "graph", "frame.html"))
 		})
 	})
 	return nil

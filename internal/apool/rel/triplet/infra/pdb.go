@@ -62,9 +62,9 @@ const (
 func NewBadgerPendingRelationRepo(mode mode.ProcessingMode) (*BadgerPendingRelationRepo, error) {
 	var dbPath string
 	if mode.IsTest() {
-		dbPath = filepath.Join(computation.FindTestingStorageRootPath(), "triplet/pendingdb")
+		dbPath = filepath.Join(computation.DockerTestingStorage(), "triplet/pendingdb")
 	} else {
-		dbPath = filepath.Join(computation.FindProductionStorageRootPath(), "triplet/pendingdb")
+		dbPath = filepath.Join(computation.DockerProductionStorage(), "triplet/pendingdb")
 	}
 	opts := badger.DefaultOptions(dbPath)
 	opts.Logger = nil

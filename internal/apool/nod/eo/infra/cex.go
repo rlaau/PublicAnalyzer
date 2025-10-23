@@ -46,9 +46,9 @@ func NewFileCEXRepository(processMode mode.ProcessingMode) (*FileCEXRepository, 
 	var path string
 
 	if processMode.IsTest() {
-		path = computation.FindTestingStorageRootPath() + "/nod/eo/cex.txt"
+		path = computation.DockerTestingStorage() + "/nod/eo/cex.txt"
 	} else {
-		path = computation.FindProductionStorageRootPath() + "/nod/eo/cex.txt"
+		path = computation.DockerProductionStorage() + "/nod/eo/cex.txt"
 	}
 
 	r := &FileCEXRepository{

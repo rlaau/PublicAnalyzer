@@ -47,9 +47,9 @@ func NewRopeDB(isTest mode.ProcessingMode, dbName string, traitLegend map[domain
 	authorLegned map[domain.AuthorCode]string) (RopeDB, error) {
 	var root string
 	if isTest.IsTest() {
-		root = computation.FindTestingStorageRootPath()
+		root = computation.DockerTestingStorage()
 	} else {
-		root = computation.FindProductionStorageRootPath()
+		root = computation.DockerProductionStorage()
 	}
 	return NewRopeDBWithRoot(isTest, root, dbName, traitLegend, ruleLegend, polyTraits, trapLegend, authorLegned)
 }

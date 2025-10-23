@@ -1,6 +1,26 @@
 version: '3.8'
 
 services:
+  streamable:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: streamable
+    ports:
+      - "8080:8080"
+    environment:
+      - DOCKER_ROOT=/data
+
+    volumes:
+      - ./testing_enviroment:/data/testing_enviroment
+      - ./production_storage:/data/production_storage
+      - ./stream_storage:/data/stream_storage
+      - ./web:/data/web
+    restart: "no"
+    #restart: unless-stopped
+
+
+
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.3
     environment:

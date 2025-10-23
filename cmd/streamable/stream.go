@@ -33,11 +33,13 @@ import (
 const ProcessName = "Testing_Streaming"
 
 func main() {
+	// Docker 환경에서는 환경변수가 이미 주입되어 있으므로 .env 로드 생략 가능
 	err := godotenv.Load(computation.GetENV())
 	if err != nil {
-		fmt.Println(computation.PWD())
-		panic("환경변수 로드 실패")
+		fmt.Printf("환경변수 주입 실패.\n")
+		fmt.Printf("그러나 도커 환경에선 정상 작동일 수 있음")
 	}
+
 	root, cancle := context.WithCancel(context.Background())
 	defer cancle()
 

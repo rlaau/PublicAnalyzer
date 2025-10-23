@@ -73,7 +73,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // API 라우팅: api/* (JSON API 응답)
 func (s *Server) SetupBasicRoutes() {
 	// Get absolute path to web directory
-	rootPath := computation.FindProjectRootPath()
+	rootPath := computation.DockerRoot()
 	webDir := filepath.Join(rootPath, "web")
 
 	// API 라우팅 그룹 - JSON API 응답

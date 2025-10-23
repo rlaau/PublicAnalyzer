@@ -21,7 +21,7 @@ type TxStreamer struct {
 // NewTxStreamer: base 디렉터리를 명시적으로 전달
 func NewTxStreamer() *TxStreamer {
 	return &TxStreamer{
-		dir:        computation.FindProjectRootPath() + "/stream_storage/sorted",
+		dir:        computation.DockerRoot() + "/stream_storage/sorted",
 		timeLayout: time.RFC3339,
 	}
 }

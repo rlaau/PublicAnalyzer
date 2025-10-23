@@ -51,7 +51,7 @@ func main() {
 }
 
 func extractRandomFromJsonl(count int) (map[string]ContractData, error) {
-	jsonlDir := filepath.Join(computation.FindProjectRootPath(), "internal/cce/cmd/load_all_contracts_once/out_jsonl")
+	jsonlDir := filepath.Join(computation.DockerRoot(), "internal/cce/cmd/load_all_contracts_once/out_jsonl")
 	pattern := filepath.Join(jsonlDir, "contracts-*.jsonl")
 	files, err := filepath.Glob(pattern)
 	if err != nil {

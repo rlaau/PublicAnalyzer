@@ -1,5 +1,6 @@
 .env
 testdata/
+testing_enviroment/
 *.log
 /data
 *.json
@@ -14,4 +15,3 @@ testdata/
 *.bin
 chainanalyzer
 /debug_test_data
-/testing_enviroment

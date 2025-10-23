@@ -1,0 +1,32 @@
+# Directories
+testing_enviroment/
+production_storage/
+stream_storage/
+web/
+
+# Build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+!README.md
+
+# Other
+.DS_Store

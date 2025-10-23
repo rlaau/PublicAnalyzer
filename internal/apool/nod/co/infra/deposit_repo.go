@@ -32,12 +32,10 @@ func NewBadgerDepositRepository(mode mode.ProcessingMode, numShards int) (*Depos
 	var root string
 
 	if !mode.IsTest() {
-		root = computation.ComputeThisProductionStorage("nod", "co", "deposit")
+		root = computation.ComputeThisProductionDocker("nod", "co", "deposit")
 	} else {
-		root = computation.ComputeThisTestingStorage("nod", "co", "deposit")
+		root = computation.ComputeThisTestingDocker("nod", "co", "deposit")
 	}
-
-
 
 	if numShards <= 0 {
 		numShards = 256

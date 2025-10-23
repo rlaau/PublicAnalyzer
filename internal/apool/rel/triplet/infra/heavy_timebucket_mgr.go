@@ -51,9 +51,9 @@ type HeavyTimeBucketManager struct {
 func NewHeavyTimeBucketManager(mode mode.ProcessingMode) (*HeavyTimeBucketManager, error) {
 	var path string
 	if mode.IsTest() {
-		path = filepath.Join(computation.FindTestingStorageRootPath(), "triplet/timebucket")
+		path = filepath.Join(computation.DockerTestingStorage(), "triplet/timebucket")
 	} else {
-		path = filepath.Join(computation.FindProductionStorageRootPath(), "triplet/timebucket")
+		path = filepath.Join(computation.DockerProductionStorage(), "triplet/timebucket")
 	}
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir buckets path: %w", err)
