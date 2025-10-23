@@ -3,12 +3,10 @@ package app
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"sync/atomic"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/eo/infra"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/eo/pface"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
@@ -36,18 +34,12 @@ type Eo struct {
 }
 
 func NewEo(mode mode.ProcessingMode) *Eo {
-	var rootDir string
-	if mode.IsTest() {
-		rootDir = computation.ComputeThisTestingStorage("nod", "eo")
 
-	} else {
-		rootDir = computation.ComputeThisProductionStorage("nod", "eo")
-	}
-	cexDB, err := infra.NewFileCEXRepository(mode, filepath.Join(rootDir, "cex.txt"))
+	cexDB, err := infra.NewFileCEXRepository(mode)
 	if err != nil {
 		panic("cexDB열기 중 에러 발생")
 	}
-	depDb, err := infra.NewBadgerDepositRepository(mode, filepath.Join(rootDir, "deposit"), 128)
+	depDb, err := infra.NewBadgerDepositRepository(mode, 128)
 	if err != nil {
 		panic("deposit열기 중 에러 발생")
 	}

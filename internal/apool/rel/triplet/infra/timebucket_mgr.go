@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
 
 // === 파라미터 ===
@@ -59,7 +61,14 @@ type TimeBucketManager struct {
 	OnRotate func(old *TimeBucket)
 }
 
-func NewTimeBucketManager(path string) (*TimeBucketManager, error) {
+func NewTimeBucketManager(mode mode.ProcessingMode) (*TimeBucketManager, error) {
+	var path string
+	timeBucketMGR := "timebucketmgr"
+	if mode.IsTest() {
+		path = filepath.Join(computation.FindTestingStorageRootPath(), timeBucketMGR)
+	} else {
+		path = filepath.Join(computation.FindProductionStorageRootPath(), timeBucketMGR)
+	}
 	m := &TimeBucketManager{
 		path:    filepath.Clean(path),
 		buckets: make([]*TimeBucket, MaxTimeBuckets),

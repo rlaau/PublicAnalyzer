@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/infra"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
@@ -25,7 +26,7 @@ type ValidationResult struct {
 }
 
 func main() {
-	contDB, err := infra.NewContractDB(mode.ProductionModeProcess, "")
+	contDB, err := infra.NewContractDB(mode.ProductionModeProcess)
 	if err != nil {
 		log.Fatalf("Failed to create ContractDB: %v", err)
 	}
@@ -50,7 +51,7 @@ func main() {
 }
 
 func extractRandomFromJsonl(count int) (map[string]ContractData, error) {
-	jsonlDir := "/home/rlaaudgjs5638/chainAnalyzer/internal/cce/cmd/load_all_contracts_once/out_jsonl"
+	jsonlDir := filepath.Join(computation.FindProjectRootPath(), "internal/cce/cmd/load_all_contracts_once/out_jsonl")
 	pattern := filepath.Join(jsonlDir, "contracts-*.jsonl")
 	files, err := filepath.Glob(pattern)
 	if err != nil {

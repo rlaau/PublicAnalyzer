@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -147,7 +146,6 @@ func (a *SimpleTriplet) Close() error {
 	}
 	a.printFinalReport()
 	a.printStatistics()
-	a.cleanup()
 	return nil
 }
 func (a *SimpleTriplet) Closed() bool {
@@ -398,21 +396,6 @@ func (a *SimpleTriplet) printFinalReport() {
 	}
 
 	log.Printf(strings.Repeat("=", 80) + "\n")
-}
-
-// cleanup 테스트 데이터 정리
-func (a *SimpleTriplet) cleanup() {
-	if !a.config.Mode.IsTest() {
-		return
-	}
-
-	log.Printf("🧹 Cleaning up test data: %s", a.config.IsolatedDBPath)
-
-	if err := os.RemoveAll(a.config.IsolatedDBPath); err != nil {
-		log.Printf("⚠️ Failed to cleanup test data: %v", err)
-	} else {
-		log.Printf("✅ Test data cleaned up")
-	}
 }
 
 // GetDualManager DualManager 인스턴스 반환 (API 서버용)

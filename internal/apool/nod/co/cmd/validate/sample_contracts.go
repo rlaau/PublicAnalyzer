@@ -23,7 +23,7 @@ func main() {
 	log.Printf("Opening ContractDB to sample %d contracts...", SAMPLE_SIZE)
 
 	// 프로덕션 모드로 ContractDB 열기
-	db, err := infra.NewContractDB(mode.ProductionModeProcess, "")
+	db, err := infra.NewContractDB(mode.ProductionModeProcess)
 	if err != nil {
 		log.Fatalf("Failed to open ContractDB: %v", err)
 	}

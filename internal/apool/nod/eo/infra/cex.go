@@ -42,17 +42,15 @@ const defaultHeader = `# CEX Hot Wallet Addresses
 `
 
 // NewFileCEXRepository: 파일 로드 + 메모리 set 구성 + append writer 준비
-func NewFileCEXRepository(processMode mode.ProcessingMode, filePath string) (*FileCEXRepository, error) {
+func NewFileCEXRepository(processMode mode.ProcessingMode) (*FileCEXRepository, error) {
 	var path string
-	if filePath == "" {
-		if processMode.IsTest() {
-			path = computation.FindTestingStorageRootPath() + "/nod/eo/cex.txt"
-		} else {
-			path = computation.FindProductionStorageRootPath() + "/nod/eo/cex.txt"
-		}
+
+	if processMode.IsTest() {
+		path = computation.FindTestingStorageRootPath() + "/nod/eo/cex.txt"
 	} else {
-		path = filePath
+		path = computation.FindProductionStorageRootPath() + "/nod/eo/cex.txt"
 	}
+
 	r := &FileCEXRepository{
 		filePath: path,
 		set:      make(map[string]struct{}, 4096),

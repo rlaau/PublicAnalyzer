@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
 
 // HeavyTimeBucket - 메모리 기반으로 toAddress -> []FromScala 매핑을 포함
@@ -46,16 +48,19 @@ type HeavyTimeBucketManager struct {
 	dirty bool // 변경 플래그
 }
 
-func NewHeavyTimeBucketManager(path string) (*HeavyTimeBucketManager, error) {
+func NewHeavyTimeBucketManager(mode mode.ProcessingMode) (*HeavyTimeBucketManager, error) {
+	var path string
+	if mode.IsTest() {
+		path = filepath.Join(computation.FindTestingStorageRootPath(), "triplet/timebucket")
+	} else {
+		path = filepath.Join(computation.FindProductionStorageRootPath(), "triplet/timebucket")
+	}
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir buckets path: %w", err)
+	}
 	m := &HeavyTimeBucketManager{
 		path:    filepath.Clean(path),
 		buckets: make([]*HeavyTimeBucket, MaxTimeBuckets),
-	}
-	if path == "" {
-		return m, nil
-	}
-	if err := os.MkdirAll(m.path, 0o755); err != nil {
-		return nil, fmt.Errorf("mkdir buckets path: %w", err)
 	}
 	_ = m.Load() // 있으면 로드(없으면 no-op)
 	return m, nil

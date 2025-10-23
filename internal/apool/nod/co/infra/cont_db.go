@@ -47,17 +47,13 @@ type ContractDB struct {
 }
 
 // NewContractDB: 프로세싱 모드에 따라 경로 선택
-func NewContractDB(processMode mode.ProcessingMode, rootPath string) (*ContractDB, error) {
+func NewContractDB(processMode mode.ProcessingMode) (*ContractDB, error) {
 	var root string
-	if rootPath == "" {
-		if processMode.IsTest() {
-			root = computation.FindTestingStorageRootPath() + "/nod/co/cont"
-		} else {
-			root = computation.FindProductionStorageRootPath() + "/nod/co/cont"
-		}
+	if processMode.IsTest() {
+		root = computation.FindTestingStorageRootPath() + "/nod/co/cont"
 	} else {
-		root = rootPath
-	}	
+		root = computation.FindProductionStorageRootPath() + "/nod/co/cont"
+	}
 
 	opts := badger.DefaultOptions(root)
 	// 내구성 우선(처리량 우선이면 false 고려)
@@ -82,6 +78,7 @@ func NewContractDB(processMode mode.ProcessingMode, rootPath string) (*ContractD
 }
 
 // NewContractDBWithPath: 명시 경로 버전
+// * 테스트 용으로만 쓸 것
 func NewContractDBWithPath(path string) (*ContractDB, error) {
 	opts := badger.DefaultOptions(path)
 	opts.SyncWrites = true

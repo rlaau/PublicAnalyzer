@@ -28,17 +28,15 @@ type DepositRepository struct {
 }
 
 // NewBadgerDepositRepository: path 아래에 Badger DB를 엽니다.
-func NewBadgerDepositRepository(mode mode.ProcessingMode, path string, numShards int) (*DepositRepository, error) {
+func NewBadgerDepositRepository(mode mode.ProcessingMode, numShards int) (*DepositRepository, error) {
 	var root string
-	if path == "" {
-		if !mode.IsTest() {
-			root = computation.ComputeThisProductionStorage("nod", "eo", "deposit")
-		} else {
-			root = computation.ComputeThisTestingStorage("nod", "eo", "deposit")
-		}
+
+	if !mode.IsTest() {
+		root = computation.ComputeThisProductionStorage("nod", "eo", "deposit")
 	} else {
-		root = path
+		root = computation.ComputeThisTestingStorage("nod", "eo", "deposit")
 	}
+
 	if numShards <= 0 {
 		numShards = 256
 	}

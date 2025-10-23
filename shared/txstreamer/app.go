@@ -7,6 +7,7 @@ import (
 	"time"
 
 	mmap "github.com/edsrzf/mmap-go"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	domain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
 
@@ -18,9 +19,9 @@ type TxStreamer struct {
 }
 
 // NewTxStreamer: base 디렉터리를 명시적으로 전달
-func NewTxStreamer(sortedDir string) *TxStreamer {
+func NewTxStreamer() *TxStreamer {
 	return &TxStreamer{
-		dir:        sortedDir,
+		dir:        computation.FindProjectRootPath() + "/stream_storage/sorted",
 		timeLayout: time.RFC3339,
 	}
 }

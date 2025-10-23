@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"path/filepath"
 	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/rlp"
@@ -14,7 +13,6 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/pface"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
@@ -41,16 +39,8 @@ type CoCfg struct {
 }
 
 func NewCo(coCfg CoCfg) *Co {
-	var rootDir string
-	if coCfg.Mode.IsTest() {
-		rootDir = computation.ComputeThisTestingStorage("nod/co")
-	} else {
-		//프로덕션 환경에선 고유 루트 디렉터리 사용
-		rootDir = computation.ComputeThisProductionStorage("nod/co")
-	}
 
-	contDbDir := filepath.Join(rootDir, "cont")
-	contDB, err := infra.NewContractDB(coCfg.Mode, contDbDir)
+	contDB, err := infra.NewContractDB(coCfg.Mode)
 	if err != nil {
 		fmt.Printf("NewCo: 에러 발생: %s", err.Error())
 

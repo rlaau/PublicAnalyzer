@@ -6,10 +6,10 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
+	"github.com/joho/godotenv"
 	ap "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool"
 	ainf "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/infra"
 	np "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/app"
@@ -33,6 +33,11 @@ import (
 const ProcessName = "Testing_Streaming"
 
 func main() {
+	err := godotenv.Load(computation.GetENV())
+	if err != nil {
+		fmt.Println(computation.PWD())
+		panic("환경변수 로드 실패")
+	}
 	root, cancle := context.WithCancel(context.Background())
 	defer cancle()
 
@@ -41,12 +46,8 @@ func main() {
 	endTime, _ := time.Parse("2006-01-02", "2024-12-31")
 
 	sb, err := bus.NewStreamBus(bus.StreamBusConfig{
-		RootPathFunc:      func() string { return computation.FindProjectRootPath() },
-		BusRelPath:        "streambus/rawtx.jsonl", // 원하면 경로 변경
-		BufferSize:        100_000,                 // 버퍼(큐) 크기
-		PositionDataDir:   computation.FindProductionStorageRootPath() + "/streambus_pos",
-		SaveInterval:      time.Second,
-		SortedStoragePath: computation.FindProjectRootPath() + "/stream_storage/sorted",
+		BufferSize:   100_000, // 버퍼(큐) 크기
+		SaveInterval: time.Second,
 	})
 	if err != nil {
 		log.Fatalf("StreamBus create error :%v", err)
@@ -157,11 +158,11 @@ func changeBoolToContractMark(isContract bool) domain.ContractBoolMark {
 }
 func ComposeRelPool() *rel.RelationPool {
 	tripletConfig := triplet.TripletConfig{
-		Name:           "Simple-Triplet",
-		Mode:           mode.TestingModeProcess,
-		BusCapLimit:    200_000,
-		WorkerCount:    2,
-		IsolatedDBPath: filepath.Join(computation.FindTestingStorageRootPath(), ProcessName),
+		Name:        "Simple-Triplet",
+		Mode:        mode.TestingModeProcess,
+		BusCapLimit: 200_000,
+		WorkerCount: 2,
+		// IsolatedDBPath: filepath.Join(computation.FindTestingStorageRootPath(), ProcessName),
 
 		AutoCleanup:         false, // ←★ 결과 보존 위해 비활성화
 		ResultReporting:     true,

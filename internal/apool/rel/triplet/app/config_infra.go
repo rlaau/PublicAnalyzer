@@ -3,22 +3,15 @@ package app
 import (
 	"fmt"
 	"log"
-	"os"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/workerpool"
 )
 
 func NewInfraByConfig(config *TripletConfig) *infra.TripletAndDualManagerInfra {
-	var isolateColusre = computation.ComputeRelClosure(config.IsolatedDBPath)
-	log.Printf("EOA Analyzer의 Infra 세팅 중: %s (Mode: %s)", config.Name, config.Mode)
 
-	// Ensure the isolated DB path exists
-	if err := os.MkdirAll(config.IsolatedDBPath, 0755); err != nil {
-		panic(fmt.Sprintf("Failed to create isolated DB directory: %v", err))
-	}
+	log.Printf("EOA Analyzer의 Infra 세팅 중: %s (Mode: %s)", config.Name, config.Mode)
 
 	// 워커 풀에 쓸 채널 생성 (메모리 전용 - 인터페이스 타입이므로 JSONL 불가)
 	txJobBus := eventbus.NewInMemory[workerpool.Job](config.BusCapLimit, "TxJobBus")
@@ -30,7 +23,7 @@ func NewInfraByConfig(config *TripletConfig) *infra.TripletAndDualManagerInfra {
 	// if err != nil {
 	// 	panic("펜딜 레포지토리를 열지 못함.")
 	// }
-	timeBucketManager, err := infra.NewHeavyTimeBucketManager(isolateColusre("timebucket"))
+	timeBucketManager, err := infra.NewHeavyTimeBucketManager(config.Mode)
 	if err != nil {
 		panic("타임버킷 메니져 로드 중 에러 발생")
 	}

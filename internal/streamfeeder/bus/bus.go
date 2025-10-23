@@ -8,7 +8,6 @@ import (
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/streamfeeder"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/streamfeeder/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/txstreamer"
@@ -39,58 +38,39 @@ type StreamBus struct {
 // StreamBusConfig 는 StreamBus 설정값이다.
 type StreamBusConfig struct {
 	// EventBus
-	// root 는 eventbus.NewWithRoot 에 넘길 루트 경로 제공자.
-	// 예: func() string { return computation.FindProjectRootPath() }
-	RootPathFunc func() string
-	BusRelPath   string // 예: "streambus/rawtx.jsonl"
-	BufferSize   int    // 이벤트버스 내부 채널 버퍼 크기 (예: 4096)
+
+	BufferSize int // 이벤트버스 내부 채널 버퍼 크기 (예: 4096)
 
 	// Position persistence
-	PositionDataDir string        // 포지션 저장 디렉토리
-	SaveInterval    time.Duration // 포지션 주기 저장(기본 1s)
-
-	// TxStreamer 설정
-	// 별도 경로를 주지 않으면 기본 프로젝트 경로/stream_storage/sorted 를 사용
-	SortedStoragePath string
+	//PositionDataDir string        // 포지션 저장 디렉토리
+	SaveInterval time.Duration // 포지션 주기 저장(기본 1s)
 }
 
 // NewStreamBus 는 StreamBus 인스턴스를 생성한다.
 func NewStreamBus(cfg StreamBusConfig) (*StreamBus, error) {
-	if cfg.RootPathFunc == nil {
-		cfg.RootPathFunc = func() string { return computation.FindProjectRootPath() }
-	}
-	if cfg.BusRelPath == "" {
-		cfg.BusRelPath = "streambus/rawtx.jsonl"
-	}
+
+	busRelPath := "streambus/rawtx.jsonl"
 	if cfg.BufferSize <= 0 {
 		cfg.BufferSize = 4096
 	}
 	if cfg.SaveInterval <= 0 {
 		cfg.SaveInterval = 1 * time.Second
 	}
-	if cfg.PositionDataDir == "" {
-		return nil, fmt.Errorf("PositionDataDir is required")
-	}
 
-	// TxStreamer
-	storageRoot := cfg.SortedStoragePath
-	if storageRoot == "" {
-		storageRoot = computation.FindProjectRootPath() + "/stream_storage/sorted"
-	}
-	txStreamer := txstreamer.NewTxStreamer(storageRoot)
+	txStreamer := txstreamer.NewTxStreamer()
 
 	// EventBus (RawTransaction)
 	bus := eventbus.NewInMemory[shareddomain.RawTransaction](cfg.BufferSize, "RawTransactionBus")
 
 	// Position repo
-	positionRepo := streamfeeder.NewFileStreamPositionRepository(cfg.PositionDataDir)
+	positionRepo := streamfeeder.NewFileStreamPositionRepository()
 
 	sb := &StreamBus{
 		txStreamer:   txStreamer,
 		bus:          bus,
 		positionRepo: positionRepo,
 		saveInterval: cfg.SaveInterval,
-		busRelPath:   cfg.BusRelPath,
+		busRelPath:   busRelPath,
 		stopChan:     make(chan struct{}),
 	}
 

@@ -5,13 +5,6 @@ import (
 	"path/filepath"
 )
 
-func FindWebDir() string {
-	rootPath := FindProjectRootPath()
-	webDir := filepath.Join(rootPath, "web")
-	return webDir
-
-}
-
 // func(...name)=> root/n1/n2
 func ComputeRelClosure(root string) func(...string) string {
 	return func(subpaths ...string) string {
@@ -21,8 +14,7 @@ func ComputeRelClosure(root string) func(...string) string {
 
 // @/testing_enviroment/{name1/name2/...}
 func ComputeThisTestingStorage(name ...string) string {
-	relFn := ComputeRelClosure(FindTestingStorageRootPath())
-	return relFn(name...)
+	return ComputeRelClosure(FindTestingStorageRootPath())(name...)
 }
 
 // @/production_storage/{name1/name2/...}
@@ -35,16 +27,26 @@ func ComputeThisProductionStorage(name ...string) string {
 // 사용 시엔 FindTestingStorageRootPath+{테스트명}+{각 저장소}로 쓰면 됨
 // @/testing_enviroment
 func FindTestingStorageRootPath() string {
-	return filepath.Join(FindProjectRootPath(), "testing_enviroment")
+	return os.Getenv("TESTING_STORAGE")
+}
+func FindWebDir() string {
+	return os.Getenv("WEB_STORAGE")
 }
 
 // @/production_storage
 func FindProductionStorageRootPath() string {
-	return filepath.Join(FindProjectRootPath(), "production_storage")
+	return os.Getenv("PRODUCTION_STORAGE")
 }
 
 // 프로젝트 루트 경로 리턴
 func FindProjectRootPath() string {
+	return os.Getenv("PROJECT_ROOT")
+}
+
+func GetENV() string {
+	return filepath.Join(PWD(), ".env")
+}
+func PWD() string {
 	cwd, _ := os.Getwd()
 	for {
 		if _, err := os.Stat(filepath.Join(cwd, "go.mod")); err == nil {

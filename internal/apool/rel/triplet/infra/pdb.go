@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"sync"
@@ -13,7 +14,9 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	"github.com/shopspring/decimal"
 )
 
@@ -56,7 +59,13 @@ const (
 )
 
 // 기존 호출자와 이름 호환
-func NewBadgerPendingRelationRepo(dbPath string) (*BadgerPendingRelationRepo, error) {
+func NewBadgerPendingRelationRepo(mode mode.ProcessingMode) (*BadgerPendingRelationRepo, error) {
+	var dbPath string
+	if mode.IsTest() {
+		dbPath = filepath.Join(computation.FindTestingStorageRootPath(), "triplet/pendingdb")
+	} else {
+		dbPath = filepath.Join(computation.FindProductionStorageRootPath(), "triplet/pendingdb")
+	}
 	opts := badger.DefaultOptions(dbPath)
 	opts.Logger = nil
 

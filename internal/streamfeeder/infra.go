@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/streamfeeder/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 )
 
 // FileStreamPositionRepository implements StreamPositionRepository using file storage
@@ -17,10 +18,11 @@ type FileStreamPositionRepository struct {
 }
 
 // NewFileStreamPositionRepository creates a new file-based position repository
-func NewFileStreamPositionRepository(dataDir string) *FileStreamPositionRepository {
+func NewFileStreamPositionRepository() *FileStreamPositionRepository {
+	dataDir := computation.FindProductionStorageRootPath() + "/streambus_pos"
 	// Create data directory if not exists
 	os.MkdirAll(dataDir, 0755)
-	
+
 	return &FileStreamPositionRepository{
 		filePath: filepath.Join(dataDir, "streamfeeder_position.json"),
 	}
@@ -30,28 +32,28 @@ func NewFileStreamPositionRepository(dataDir string) *FileStreamPositionReposito
 func (r *FileStreamPositionRepository) SavePosition(position domain.StreamPosition) error {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
-	
+
 	if !position.IsValid() {
 		return fmt.Errorf("invalid stream position: %v", position)
 	}
-	
+
 	data, err := json.MarshalIndent(position, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal position: %w", err)
 	}
-	
+
 	// Write to temporary file first, then rename for atomic operation
 	tempPath := r.filePath + ".tmp"
-	
+
 	if err := os.WriteFile(tempPath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write temp file: %w", err)
 	}
-	
+
 	if err := os.Rename(tempPath, r.filePath); err != nil {
 		os.Remove(tempPath) // cleanup temp file
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -59,25 +61,25 @@ func (r *FileStreamPositionRepository) SavePosition(position domain.StreamPositi
 func (r *FileStreamPositionRepository) LoadPosition() (domain.StreamPosition, error) {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
-	
+
 	if !r.hasPositionUnlocked() {
 		return domain.StreamPosition{}, fmt.Errorf("no position file found")
 	}
-	
+
 	data, err := os.ReadFile(r.filePath)
 	if err != nil {
 		return domain.StreamPosition{}, fmt.Errorf("failed to read position file: %w", err)
 	}
-	
+
 	var position domain.StreamPosition
 	if err := json.Unmarshal(data, &position); err != nil {
 		return domain.StreamPosition{}, fmt.Errorf("failed to unmarshal position: %w", err)
 	}
-	
+
 	if !position.IsValid() {
 		return domain.StreamPosition{}, fmt.Errorf("invalid position in file: %v", position)
 	}
-	
+
 	return position, nil
 }
 
@@ -85,7 +87,7 @@ func (r *FileStreamPositionRepository) LoadPosition() (domain.StreamPosition, er
 func (r *FileStreamPositionRepository) HasPosition() bool {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
-	
+
 	return r.hasPositionUnlocked()
 }
 
@@ -113,10 +115,10 @@ func (r *InMemoryStreamPositionRepository) SavePosition(position domain.StreamPo
 	if !position.IsValid() {
 		return fmt.Errorf("invalid stream position: %v", position)
 	}
-	
+
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
-	
+
 	r.position = &position
 	return nil
 }
@@ -125,11 +127,11 @@ func (r *InMemoryStreamPositionRepository) SavePosition(position domain.StreamPo
 func (r *InMemoryStreamPositionRepository) LoadPosition() (domain.StreamPosition, error) {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
-	
+
 	if r.position == nil {
 		return domain.StreamPosition{}, fmt.Errorf("no position found")
 	}
-	
+
 	return *r.position, nil
 }
 
@@ -137,6 +139,6 @@ func (r *InMemoryStreamPositionRepository) LoadPosition() (domain.StreamPosition
 func (r *InMemoryStreamPositionRepository) HasPosition() bool {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
-	
+
 	return r.position != nil
 }
