@@ -292,7 +292,7 @@ func (s *StreamBus) publishToBus(batch []shareddomain.RawTransaction) error {
 	// EventBus.Publish 가 버퍼가 꽉 차면 블록된다고 가정.
 	// 이 경우 자연스럽게 컨슈머가 빼갈 때까지 대기하면서 “큐를 꽉 채우는” 동작이 된다.
 	for i := range batch {
-		if err := s.bus.Publish(batch[i]); err != nil {
+		if err := s.bus.Enqueue(batch[i]); err != nil {
 			// Publish 가 에러를 반환한다면 중단
 			return err
 		}

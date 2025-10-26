@@ -52,16 +52,16 @@ func DockerRootResolver(name StorageName) string {
 
 // 프로젝트 루트 경로 리턴
 func DockerRoot() string {
-	return os.Getenv("DOCKER_ROOT")
+	return GoModWD()
 }
 func LocalRoot() string {
-	return os.Getenv("LOCAL_ROOT")
+	return GoModWD()
 }
 
 func GetENV() string {
-	return filepath.Join(PWD(), ".env")
+	return filepath.Join(GoModWD(), ".env")
 }
-func PWD() string {
+func GoModWD() string {
 	cwd, _ := os.Getwd()
 	for {
 		if _, err := os.Stat(filepath.Join(cwd, "go.mod")); err == nil {
@@ -73,5 +73,5 @@ func PWD() string {
 		}
 		cwd = parent
 	}
-	return ""
+	panic("go.mod파일을 찾지 못함")
 }

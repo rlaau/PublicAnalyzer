@@ -431,7 +431,7 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 	tid, created := b.ensureLink(v1, v2, ev.Trait, ev.RuleA, ev.RuleB)
 
 	// --- 3) TraitMark Upsert 큐잉(단일 커맨드)
-	traitErr := b.busTrait.Publish(domain.TraitMarkUpsert{
+	traitErr := b.busTrait.Enqueue(domain.TraitMarkUpsert{
 		AuthorCode:  ev.Author,
 		LastTx:      ev.TxID,
 		TraitID:     tid,
@@ -458,7 +458,7 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 		newID := b.nextRopeID()
 		setRopeForTrait(v1, newID, ev.Trait)
 		setRopeForTrait(v2, newID, ev.Trait)
-		ropeErr := b.busRope.Publish(domain.RopeMarkUpsert{
+		ropeErr := b.busRope.Enqueue(domain.RopeMarkUpsert{
 			RopeID:      newID,
 			Trait:       ev.Trait,
 			AddMembers:  []shareddomain.Address{a1, a2},
@@ -474,7 +474,7 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 		// v1 로프에 v2 편입
 		id := r1
 		setRopeForTrait(v2, id, ev.Trait)
-		ropeErr := b.busRope.Publish(domain.RopeMarkUpsert{
+		ropeErr := b.busRope.Enqueue(domain.RopeMarkUpsert{
 			RopeID:      id,
 			Trait:       ev.Trait,
 			AddMembers:  []shareddomain.Address{a2},
@@ -492,7 +492,7 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 		// v2 로프에 v1 편입
 		id := r2
 		setRopeForTrait(v1, id, ev.Trait)
-		ropeErr := b.busRope.Publish(domain.RopeMarkUpsert{
+		ropeErr := b.busRope.Enqueue(domain.RopeMarkUpsert{
 			RopeID:      id,
 			Trait:       ev.Trait,
 			AddMembers:  []shareddomain.Address{a1},
@@ -511,7 +511,7 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 		id1, id2 := r1, r2
 		// 근데 사실 도메인 로직상 이 둘이 절대 같은 로프 ID가 될수 없음
 		if id1 == id2 {
-			ropeErr := b.busRope.Publish(domain.RopeMarkUpsert{
+			ropeErr := b.busRope.Enqueue(domain.RopeMarkUpsert{
 				RopeID:      id1,
 				Trait:       ev.Trait,
 				VolumeDelta: 1,
@@ -551,7 +551,7 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 			}
 
 			// target 로프마크에 source 멤버들 흡수 Upsert
-			ropeErr := b.busRope.Publish(domain.RopeMarkUpsert{
+			ropeErr := b.busRope.Enqueue(domain.RopeMarkUpsert{
 				RopeID:      target,
 				Trait:       ev.Trait,
 				AddMembers:  sourceRopeMark.Members,
@@ -616,7 +616,7 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 		b.setPolyRopeInVertex(v2, newPolyID, polyTraitCode)
 
 		// PolyRopeMark 생성 (현재 Trait로 생성된 Rope만 포함)
-		pErr := b.busPolyRope.Publish(PolyRopeMarkUpsert{
+		pErr := b.busPolyRope.Enqueue(PolyRopeMarkUpsert{
 			PolyRopeID:  newPolyID,
 			PolyTrait:   polyTraitCode,
 			AddRopes:    []domain.RopeID{currentRopeID},
@@ -632,7 +632,7 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 		b.setPolyRopeInVertex(v2, pr1, polyTraitCode)
 
 		// 현재 Rope를 PolyRope에 추가 (중복 제거는 dedupRopes에서 처리)
-		pErr := b.busPolyRope.Publish(PolyRopeMarkUpsert{
+		pErr := b.busPolyRope.Enqueue(PolyRopeMarkUpsert{
 			PolyRopeID:  pr1,
 			PolyTrait:   polyTraitCode,
 			AddRopes:    []domain.RopeID{currentRopeID},
@@ -648,7 +648,7 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 		b.setPolyRopeInVertex(v1, pr2, polyTraitCode)
 
 		// 현재 Rope를 PolyRope에 추가 (중복 제거는 dedupRopes에서 처리)
-		pErr := b.busPolyRope.Publish(PolyRopeMarkUpsert{
+		pErr := b.busPolyRope.Enqueue(PolyRopeMarkUpsert{
 			PolyRopeID:  pr2,
 			PolyTrait:   polyTraitCode,
 			AddRopes:    []domain.RopeID{currentRopeID},
@@ -664,7 +664,7 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 		// 둘 다 PolyRope 있음
 		if pr1 == pr2 {
 			// 같은 PolyRope면 현재 Rope만 추가 (중복 제거는 dedupRopes에서 처리)
-			pErr := b.busPolyRope.Publish(PolyRopeMarkUpsert{
+			pErr := b.busPolyRope.Enqueue(PolyRopeMarkUpsert{
 				PolyRopeID:  pr1,
 				PolyTrait:   polyTraitCode,
 				AddRopes:    []domain.RopeID{currentRopeID},
@@ -699,7 +699,7 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 			srcMark := b.getPolyRopeMark(source)
 			addingRopes := append(srcMark.Ropes, currentRopeID)
 
-			pErr := b.busPolyRope.Publish(PolyRopeMarkUpsert{
+			pErr := b.busPolyRope.Enqueue(PolyRopeMarkUpsert{
 				PolyRopeID:  target,
 				PolyTrait:   polyTraitCode,
 				AddRopes:    addingRopes, // 중복 제거는 dedupRopes에서 처리

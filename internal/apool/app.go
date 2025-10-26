@@ -113,10 +113,10 @@ func (a *AnalyzerPool) GetRelPort() cface.RelPort { return a.ports.rel }
 func (a *AnalyzerPool) GetNodPort() cface.NodPort { return a.ports.nod }
 
 func (a *AnalyzerPool) EnqueueToRel(v cface.RelMsg) error {
-	return a.busRel.Publish(v)
+	return a.busRel.Enqueue(v)
 }
 func (a *AnalyzerPool) EnqueueToNod(v cface.NodMsg) error {
-	return a.busNod.Publish(v)
+	return a.busNod.Enqueue(v)
 }
 
 func (a *AnalyzerPool) DeququeRel() <-chan cface.RelMsg {

@@ -254,7 +254,7 @@ func (b *BadgerRopeDB) PropagateTrap(v *domain.Vertex, trapCodes []domain.TrapCo
 	}
 	//2. 자신이 속한 모든 로프에 트랩 inc전파
 	for _, rref := range v.Ropes {
-		_ = b.busRope.Publish(
+		_ = b.busRope.Enqueue(
 			domain.RopeMarkUpsert{
 				RopeID:       rref.ID,
 				TrapVertexes: trapAndVertexes,

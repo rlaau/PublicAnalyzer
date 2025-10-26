@@ -87,10 +87,10 @@ func (r *RelationPool) GetCreationPort() cface.CreationPort {
 
 // 이벤트 버스 기반 커멘더
 func (r *RelationPool) EnqueueToTriplet(v cface.TripletEventMsg) error {
-	return r.busTriplet.Publish(v)
+	return r.busTriplet.Enqueue(v)
 }
 func (r *RelationPool) EnqueueToCreation(v cface.CreationEventMsg) error {
-	return r.busCreation.Publish(v)
+	return r.busCreation.Enqueue(v)
 }
 
 // 이벤트 버스 기반 소비

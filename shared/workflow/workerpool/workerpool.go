@@ -2,6 +2,7 @@ package workerpool
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync/atomic"
@@ -19,20 +20,50 @@ type Pool struct {
 	JobChan    *eventbus.EventBus[Job]
 	NumWorkers int
 
-	failFast bool // 에러 시 즉시 중단(기본 true)
 	ownsBus  bool // 버스 닫기 책임
+	failFast bool // 에러 시 즉시 중단(기본 true)
 	closed   atomic.Bool
 	running  atomic.Bool
 }
 
-func New(numWorkers int, jobBus *eventbus.EventBus[Job], name gface.ModuleName) *Pool {
+func New(numWorkers int, name gface.ModuleName) *Pool {
+	jobChanName := fmt.Sprintf("WorkerPool%s JobChan", name)
 	return &Pool{
-		JobChan:    jobBus,
+		JobChan:    eventbus.NewInMemory[Job](2000, gface.ModuleName(jobChanName)),
 		NumWorkers: numWorkers,
 		name:       name,
 		failFast:   true,
 		ownsBus:    false,
 	}
+}
+
+var (
+	ErrPoolClosed      = fmt.Errorf("pool closed")
+	ErrPoolNotRunning  = fmt.Errorf("pool not running")
+	ErrNilJob          = fmt.Errorf("nil job")
+	ErrEnqueueCanceled = fmt.Errorf("enqueue canceled")
+)
+
+func (p *Pool) DispatchJob(j Job) error {
+	if j == nil {
+		return ErrNilJob
+	}
+	// 종료/미가동 가드
+	if p.closed.Load() {
+		return ErrPoolClosed
+	}
+	if !p.running.Load() {
+		return ErrPoolNotRunning
+	}
+
+	// EventBus에 컨텍스트 지원 Enqueue가 있다면 권장
+	if err := p.JobChan.Enqueue(j); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return ErrEnqueueCanceled
+		}
+		return err
+	}
+	return nil
 }
 
 func (p *Pool) WithFailFast(b bool) *Pool { p.failFast = b; return p }
@@ -121,4 +152,11 @@ func (p *Pool) Close() error {
 	}
 	log.Printf("[pool %s] closed (ownsBus=%v)", p.name, p.ownsBus)
 	return nil
+}
+
+func (p *Pool) JobsLen() int {
+	return p.JobChan.Len()
+}
+func (p *Pool) JobsCap() int {
+	return p.JobChan.Cap()
 }

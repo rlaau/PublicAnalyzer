@@ -110,7 +110,7 @@ func (f *FanoutInMemory[T]) fanoutMsg(msg T) error {
 
 	var lastError error
 	for _, e := range buses {
-		err := e.bus.Publish(msg)
+		err := e.bus.Enqueue(msg)
 		if err != nil {
 			fmt.Printf("[FanoutInMemory] failed to publish to bus %s: %v\n", e.busName, err)
 			lastError = err
@@ -175,5 +175,5 @@ func (f *FanoutInMemory[T]) switchTarget(name string, wantClose bool) (targetExi
 }
 
 func (f *FanoutInMemory[T]) Publish(msg T) error {
-	return f.inputBus.Publish(msg)
+	return f.inputBus.Enqueue(msg)
 }

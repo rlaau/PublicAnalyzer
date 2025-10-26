@@ -71,8 +71,8 @@ func (b *EventBus[T]) Close() error {
 	return nil
 }
 
-// Publish: 생산자 → pending. capLimit 초과 시 cond wait로 역압.
-func (b *EventBus[T]) Publish(v T) error {
+// Enqueue: 생산자 → pending. capLimit 초과 시 cond wait로 역압.
+func (b *EventBus[T]) Enqueue(v T) error {
 	if b.closed.Load() {
 		return errors.New("eventbus: closed")
 	}
@@ -83,7 +83,7 @@ func (b *EventBus[T]) Publish(v T) error {
 
 }
 
-func (b *EventBus[T]) PublishBatch(vs []T) error {
+func (b *EventBus[T]) EnqueueBatch(vs []T) error {
 	if b.closed.Load() {
 		return errors.New("eventbus: closed")
 	}

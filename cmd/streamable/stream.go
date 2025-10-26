@@ -162,16 +162,9 @@ func ComposeRelPool() *rel.RelationPool {
 	tripletConfig := triplet.TripletConfig{
 		Name:        "Simple-Triplet",
 		Mode:        mode.TestingModeProcess,
-		BusCapLimit: 200_000,
 		WorkerCount: 2,
-		// IsolatedDBPath: filepath.Join(computation.FindTestingStorageRootPath(), ProcessName),
-
-		AutoCleanup:         false, // ←★ 결과 보존 위해 비활성화
-		ResultReporting:     true,
-		StatsInterval:       2_000_000_000, // 2초
-		HealthCheckInterval: 3_000_000_000, // 3초
 	}
-	triplet, err := triplet.NewTriplet(&tripletConfig)
+	triplet, err := triplet.NewTriplet(tripletConfig)
 	if err != nil {
 		panic("트리플렛 생성 중 에러")
 	}

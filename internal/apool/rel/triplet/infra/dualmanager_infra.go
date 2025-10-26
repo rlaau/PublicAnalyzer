@@ -17,11 +17,3 @@ func NewDualManagerInfra(heavyTimeBucketMgr *HeavyTimeBucketManager) *DualManage
 		HeavyTimeBucketManager: heavyTimeBucketMgr,
 	}
 }
-
-// // NewDualManagerInfraLegacy 레거시 방식의 생성자 (기존 호환성 유지)
-// func NewDualManagerInfraLegacy(pendingRelationRepo PendingRelationRepo, timeBuckMgr *TimeBucketManager) *DualManagerInfra {
-// 	return &DualManagerInfra{
-// 		PendingRelationRepo: pendingRelationRepo,
-// 		TimeBucketManager:   timeBuckMgr,
-// 	}
-// }

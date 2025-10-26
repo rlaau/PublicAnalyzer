@@ -16,11 +16,11 @@ import (
 // TODO 최종적으론 CQRS-이벤트소싱DB기반 API핸들링
 // TripletAPIHandler Triplet Analyzer API 핸들러
 type TripletAPIHandler struct {
-	analyzer app.CommonTriplet
+	analyzer app.TripletAnalyzerDesign
 }
 
 // NewTripletAPIHandler Triplet API 핸들러 생성
-func NewTripletAPIHandler(analyzer app.CommonTriplet) *TripletAPIHandler {
+func NewTripletAPIHandler(analyzer app.TripletAnalyzerDesign) *TripletAPIHandler {
 	return &TripletAPIHandler{
 		analyzer: analyzer,
 	}
@@ -38,9 +38,6 @@ func (h *TripletAPIHandler) RegisterRoutes(router *chi.Mux) error {
 		r.Get("/statistics", h.handleGetStatistics)
 		r.Get("/health", h.handleHealthCheck)
 		r.Get("/channel-status", h.handleChannelStatus)
-
-		// DualManager 관련 엔드포인트들
-		r.Get("/dual-manager/window-stats", h.handleWindowStats)
 
 	})
 
@@ -191,24 +188,4 @@ func (h *TripletAPIHandler) handleChannelStatus(w http.ResponseWriter, r *http.R
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
-}
-
-// handleWindowStats DualManager 윈도우 통계 조회
-func (h *TripletAPIHandler) handleWindowStats(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	// ✅ SimpleEOAAnalyzer가 아니거나 DualManager가 nil이면 503 대신 “빈 정상응답”으로
-	if sa, ok := h.analyzer.(*app.SimpleTriplet); ok {
-		if dm := sa.GetDualManager(); dm != nil {
-			ws := dm.GetWindowStats()
-			utils.WriteJSONResponse(w, ws)
-			return
-		}
-	}
-	// 빈 구조를 반환(프론트가 안전하게 처리)
-	utils.WriteJSONResponse(w, map[string]any{
-		"message": "dual manager not initialized", "ok": false,
-	})
 }

@@ -1,22 +1,27 @@
-version: '3.8'
-
 services:
   streamable:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: streamable
+    # 루트 권한으로 실행 (BadgerDB LOCK 파일 권한 문제 해결)
+    user: "1000:1000"
     ports:
       - "8080:8080"
+    #WORKDIR:- /app <- 도커 파일에서 정의했음
     environment:
-      - DOCKER_ROOT=/data
+      - DOCKER_ROOT=/app
 
     volumes:
-      - ./testing_enviroment:/data/testing_enviroment
-      - ./production_storage:/data/production_storage
-      - ./stream_storage:/data/stream_storage
-      - ./web:/data/web
+      - .:/app
+      # 프로덕션 환경에선 /app전체 볼륨 대신, 아래만 볼륨 처리
+      #- ./testing_enviroment:/app/testing_enviroment
+      #- ./production_storage:/app/production_storage
+      #- ./stream_storage:/app/stream_storage
+      #- ./web:/app/web
     restart: "no"
+    # user/local/bin/streamble실행
+    command: streamable
     #restart: unless-stopped
 
 
