@@ -37,7 +37,11 @@ type RelationPool struct {
 }
 
 func NewRelPool(isTest mode.ProcessingMode, txDistributor iface.RelPoolFanout, triplet cface.TripletPort) (*RelationPool, error) {
-	ropeRepo, err := roperepo.NewClusterDB(isTest)
+	//TODO 추후 ropeDB의 수정과 함꼐 반드시 갈아엎을 것
+	//TODO ropeRepo에 이런 식으로 ctx집어넣는게 아니라, ropeRepo.Start(ctx)로 집어넣기
+	//TODO 현재는 그냥 임시로 땜빵한 것임. 반드시 고쳐야 함!
+	ctx := context.Background()
+	ropeRepo, err := roperepo.NewClusterDB(ctx, isTest)
 	if err != nil {
 		return nil, err
 	}
@@ -86,11 +90,11 @@ func (r *RelationPool) GetCreationPort() cface.CreationPort {
 }
 
 // 이벤트 버스 기반 커멘더
-func (r *RelationPool) EnqueueToTriplet(v cface.TripletEventMsg) error {
-	return r.busTriplet.Enqueue(v)
+func (r *RelationPool) EnqueueToTriplet(ctx context.Context, v cface.TripletEventMsg) error {
+	return r.busTriplet.Enqueue(ctx, v)
 }
-func (r *RelationPool) EnqueueToCreation(v cface.CreationEventMsg) error {
-	return r.busCreation.Enqueue(v)
+func (r *RelationPool) EnqueueToCreation(ctx context.Context, v cface.CreationEventMsg) error {
+	return r.busCreation.Enqueue(ctx, v)
 }
 
 // 이벤트 버스 기반 소비
@@ -122,20 +126,24 @@ func (r *RelationPool) Start(parent context.Context) error {
 	if r.ports.triplet == nil {
 		return fmt.Errorf("relation pool의 ports중 일부가 초기화되지 않음")
 	}
+
 	g, ctx := errgroup.WithContext(parent)
+
 	g.Go(func() error { return r.ports.triplet.Start(ctx) })
 	g.Go(func() error { return r.txDistributor.Start(ctx) })
 	g.Go(func() error {
 		upstream := r.Apool.ConsumeRelTxByFanout()
+		defer fmt.Printf("RelPool에서 콘슈밍 종료\n")
 		for {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case v, ok := <-upstream:
 				if !ok {
+					fmt.Printf("RelPool upstream 채널 닫힘\n")
 					return nil
 				}
-				if err := r.txDistributor.Publish(v); err != nil {
+				if err := r.txDistributor.Publish(ctx, v); err != nil {
 					return fmt.Errorf("publish failed: %w", err)
 				}
 			}
@@ -163,7 +171,7 @@ func (r *RelationPool) Close() error {
 	r.busTriplet.Close()
 	//r.busCreation.Close()
 	r.ClusterRepo.Close()
-	fmt.Printf("BUS들 정리 완료\n")
+	fmt.Printf("relPool BUS들 정리 완료\n")
 	return nil
 }
 

@@ -94,7 +94,7 @@ func (n *NodPool) Start(parent context.Context) error {
 				if !ok {
 					return nil
 				}
-				if err := n.txDistributor.Publish(v); err != nil {
+				if err := n.txDistributor.Publish(ctx, v); err != nil {
 					return fmt.Errorf("publish failed: %w", err)
 				}
 			}
@@ -119,6 +119,7 @@ func (n *NodPool) Close() error {
 	if n.busEo != nil {
 		n.busEo.Close()
 	}
+	fmt.Printf("NodPool Closed")
 	return nil
 }
 func (n *NodPool) Closed() bool { return n.closed.Load() }

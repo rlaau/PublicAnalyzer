@@ -72,12 +72,48 @@ func main() {
 	}
 
 	g, ctx := errgroup.WithContext(root)
-	g.Go(func() error { fmt.Printf("   🌐 Starting API server on :8080\n"); return srv.Start() })
-	g.Go(func() error { return apool.Start(ctx) })
-	g.Go(func() error { return LoadAndTranslateToMarkedTransaction(sb, apool, ctx) })
+	//TODO 최종적으론 서버 역시 Start에서 받고, ctx신호 받을 시 Start를  Close와 함께 리턴하기
+	//TODO 보면 알겠지만 아래의 고루틴은 길기도 하지만 그게 문제가 아니라 제어가 더러움
+	//TODO ctx로 깔끔하게 다뤄지는게 아니라, 그냥 고루틴 하나 방치해 둔 후 어떻게든 "탈출"만 가능하도록 만든 형태임
+	//TODO 실제 서버 고루틴은 메인 루프 종료 후 강제 종료되는 형식. 좀비 스레드 될 확률도 있음.
+	//TODO 여튼, 이는 임시방편일 뿐이란 것. 반드시 서버도 모듈화하기
+	g.Go(func() error {
+		fmt.Printf("   🌐 Starting API server on :8080\n")
+
+		// 서버를 별도 고루틴에서 시작
+		serverErrCh := make(chan error, 1)
+		go func() {
+			serverErrCh <- srv.Start()
+		}()
+
+		// ctx 신호 또는 서버 에러 대기
+		select {
+		case <-ctx.Done():
+			fmt.Printf("서버: ctx 신호 수신 → 리턴\n")
+			return nil
+		case err := <-serverErrCh:
+			fmt.Printf("서버 종료 완료\n")
+			return err
+		}
+	})
+	g.Go(func() error {
+		err := apool.Start(ctx)
+		fmt.Printf("apool종료 완료\n")
+		return err
+	})
+	g.Go(func() error {
+		err := LoadAndTranslateToMarkedTransaction(sb, apool, ctx)
+		fmt.Printf("LoadTrans종료 완료")
+		return err
+	})
+
+	//TODO 현재 StreamBus도 컨텍스트 관리 방식에 문제가 있음.
+	//TODO 컨텍스트 전파는 되지만, 이후 컨텍스트 제어 신호의 핸들링이 부재함.
+	//TODO 얘도 걍 Start로 받아서 전파 후, Start가 제어 신호 받을 때 Close호출하게 함으로써 제어하기
 	sb.Start()
 	g.Go(func() error {
-		if err := sb.StreamBetween(
+		defer fmt.Printf("스트림 버스 종료 완료\n")
+		if err := sb.StreamBetween(ctx,
 			startTime.Format("2006-01-02"),
 			endTime.Format("2006-01-02"),
 		); err != nil {
@@ -90,14 +126,27 @@ func main() {
 	//최상위 루트에선 cmd나 ctrl+C로 제어 가능케 함
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	select {
-	case <-sigChan:
-		fmt.Printf("시그널에 수신-> 종료 시작\n")
+
+	// 시그널 대기
+	go func() {
+		<-sigChan
+		fmt.Printf("\n🛑 시그널 수신 → 정리 작업 시작\n")
 		cancle()
-	case <-ctx.Done():
-		fmt.Printf("ctx의해 종료. %s", ctx.Err())
+	}()
+
+	// 모든 고루틴 종료 대기
+	if err := g.Wait(); err != nil {
+		log.Printf("⚠️  종료 중 에러 발생: %v\n", err)
 	}
-	fmt.Printf("종료 완료")
+
+	// 2. Server 종료 (HTTP 연결 정리)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("⚠️  서버 종료 중 에러: %v\n", err)
+	}
+
+	fmt.Printf("✅ 종료 완료\n")
 }
 
 func LoadAndTranslateToMarkedTransaction(
@@ -115,16 +164,18 @@ func LoadAndTranslateToMarkedTransaction(
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("ETL종료 by context candled\n")
+			log.Printf("ETL종료 by context canceled\n")
+			return nil
 		case <-statusTicker.C:
 			log.Printf("📊 [Bus Status] RawInputBus - len: %d, cap: %d |현재 %d개 퍼블리시",
 				len(rawInputBus), cap(rawInputBus), pubCount)
 		case rawTx, ok := <-rawInputBus:
 			if !ok {
-				log.Printf("RawInoutBus가 제대로 제대로 메시지 전달 못함")
+				log.Printf("RawInputBus가 닫힘 - ETL 종료\n")
+				return nil
 			}
 			markedTx := translateTx(apool, rawTx)
-			if err := apool.DispatchMarkedTx(markedTx); err != nil {
+			if err := apool.DispatchMarkedTx(ctx, markedTx); err != nil {
 				log.Printf("apool에 markedTx 퍼블리시 중 에러%s\n", err.Error())
 			}
 			pubCount++

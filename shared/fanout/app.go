@@ -70,6 +70,7 @@ func (f *FanoutInMemory[T]) Name() gface.ModuleName {
 	return gface.ModuleName(f.name)
 }
 func (f *FanoutInMemory[T]) Start(ctx context.Context) error {
+	defer fmt.Printf("%s fanout Start 중단함.\n", f.name)
 	if f.startedFlag.Swap(true) {
 		return fmt.Errorf("fanout %q already started", f.name)
 	}
@@ -89,7 +90,7 @@ func (f *FanoutInMemory[T]) Start(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			if err := f.fanoutMsg(msg); err != nil {
+			if err := f.fanoutMsg(ctx, msg); err != nil {
 				return err
 			}
 		}
@@ -97,7 +98,7 @@ func (f *FanoutInMemory[T]) Start(ctx context.Context) error {
 
 }
 
-func (f *FanoutInMemory[T]) fanoutMsg(msg T) error {
+func (f *FanoutInMemory[T]) fanoutMsg(ctx context.Context, msg T) error {
 	f.mu.RLock()
 	//캡쳐
 	buses := make([]*BusInfo[T], 0, len(f.busList))
@@ -110,7 +111,7 @@ func (f *FanoutInMemory[T]) fanoutMsg(msg T) error {
 
 	var lastError error
 	for _, e := range buses {
-		err := e.bus.Enqueue(msg)
+		err := e.bus.Enqueue(ctx, msg)
 		if err != nil {
 			fmt.Printf("[FanoutInMemory] failed to publish to bus %s: %v\n", e.busName, err)
 			lastError = err
@@ -138,7 +139,7 @@ func (f *FanoutInMemory[T]) Close() error {
 		b.bus.Close()
 	}
 	f.mu.Unlock()
-
+	fmt.Printf("%s fandoutManager Closed\n", f.name)
 	return nil
 }
 
@@ -174,6 +175,6 @@ func (f *FanoutInMemory[T]) switchTarget(name string, wantClose bool) (targetExi
 	return false
 }
 
-func (f *FanoutInMemory[T]) Publish(msg T) error {
-	return f.inputBus.Enqueue(msg)
+func (f *FanoutInMemory[T]) Publish(ctx context.Context, msg T) error {
+	return f.inputBus.Enqueue(ctx, msg)
 }

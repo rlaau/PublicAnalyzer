@@ -40,7 +40,7 @@ const (
 
 const MaxRopeSize = 1000
 
-func NewRopeDB(isTest mode.ProcessingMode, dbName string, traitLegend map[domain.TraitCode]string,
+func NewRopeDB(ctx context.Context, isTest mode.ProcessingMode, dbName string, traitLegend map[domain.TraitCode]string,
 	ruleLegend map[domain.RuleCode]string,
 	polyTraits map[domain.PolyTraitCode]domain.PolyNameAndTraits,
 	trapLegend map[domain.TrapCode]domain.TrapNameAndTraits,
@@ -51,13 +51,15 @@ func NewRopeDB(isTest mode.ProcessingMode, dbName string, traitLegend map[domain
 	} else {
 		root = computation.DockerProductionStorage()
 	}
-	return NewRopeDBWithRoot(isTest, root, dbName, traitLegend, ruleLegend, polyTraits, trapLegend, authorLegned)
+	return NewRopeDBWithRoot(ctx, isTest, root, dbName, traitLegend, ruleLegend, polyTraits, trapLegend, authorLegned)
 }
 
 type RopeDB interface {
+	//TODO 추후 반드시 삭제할 것!
+	// TODO컨텍스트를 가지는 것도 모자라 바꿔 끼우는 함수라니!
+	RegisterContext(parent context.Context)
 	// 이벤트 입력(내부적으로 Vertex 동기 갱신 + Rope/Trait Upsert 큐잉)
 	HandleTraitEvent(ev domain.TraitEvent) error
-
 	// 조회
 	ViewRopeByNode(a shareddomain.Address) (*domain.Rope, error) // 첫 번째 Rope 기준(필요 시 Trait 선택 버전 추가)
 	ViewRope(id domain.RopeID) (*domain.Rope, error)
@@ -96,6 +98,11 @@ type BadgerRopeDB struct {
 	// ropeAggCache *RopeAggCache
 
 	isTest bool
+	//TODO 이거 지우기
+	//TODO 진짜 미친거냐.
+	//TODO 대체 한달 전엔 무슨 생각으로 컨텍스트를 필드에 박은거임
+	//TODO 반드시 리팩토링 할 것!!
+	//TODO ctx필드 지우고, 워커 기반 디스패칭 한 후에 ctx는 워커 스타트 시 전파만 하기!!!!
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -131,6 +138,14 @@ type BadgerRopeDB struct {
 
 	// 로프 병합 계측
 	ropeMergeMetrics *RopeMergeMetrics
+}
+
+// TODO 추후 반드시 지울 것!!!!!
+// TODO 컨텍스트는 ropeDB.Start로만 받게 하고, 이후에도 내부 워커들이 인자로만 받게 하기!!!
+func (b *BadgerRopeDB) RegisterContext(parent context.Context) {
+	ctx, cancle := context.WithCancel(parent)
+	b.ctx = ctx
+	b.cancel = cancle
 }
 
 // ==== PATCH END ====
@@ -184,7 +199,7 @@ type PolyRopeMarkUpsert struct {
 // NewRopeDBWithRoot: 모드(true=test, false=prod)로 루트 분기
 // ==== PATCH BEGIN: NewRopeDBWithRoot (replace entire function) ====
 
-func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, traitLegend map[domain.TraitCode]string,
+func NewRopeDBWithRoot(parent context.Context, isTest mode.ProcessingMode, root string, dbname string, traitLegend map[domain.TraitCode]string,
 	ruleLegend map[domain.RuleCode]string,
 	polyTraits map[domain.PolyTraitCode]domain.PolyNameAndTraits,
 	trapLegend map[domain.TrapCode]domain.TrapNameAndTraits,
@@ -295,8 +310,7 @@ func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, t
 		_ = dbM.Close()
 		return nil, err
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancle := context.WithCancel(parent)
 	b := &BadgerRopeDB{
 		// 호환성: b.db 는 마크 DB를 바라보게 둠
 		dbV:                     dbV,
@@ -304,7 +318,7 @@ func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, t
 		isTest:                  isTest.IsTest(),
 		perfMeter:               rsv.NewFunctionReservoirMeter(10_000),
 		ctx:                     ctx,
-		cancel:                  cancel,
+		cancel:                  cancle,
 		traitLegend:             traitLegend,
 		ruleLegend:              ruleLegend,
 		authorLegend:            authorLegend,
@@ -351,6 +365,7 @@ func NewRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, t
 // ==== PATCH BEGIN: Close (replace entire function) ====
 
 func (b *BadgerRopeDB) Close() error {
+	fmt.Printf("\n🔄 RopeDB 종료 시작...\n")
 	b.cancel()
 	if b.gcTicker != nil {
 		b.gcTicker.Stop()
@@ -358,13 +373,28 @@ func (b *BadgerRopeDB) Close() error {
 
 	// 캐시 모든 데이터를 DB에 플러시
 	if b.vertexCache != nil {
+		fmt.Printf("   - VertexCache 플러시 중...\n")
 		b.vertexCache.FlushAll()
 	}
 
+	fmt.Printf("   - Bus 채널 닫는 중...\n")
 	b.busTrait.Close()
 	b.busRope.Close()
 	b.busPolyRope.Close()
-	b.wg.Wait()
+
+	fmt.Printf("   - 워커 종료 대기 중...\n")
+	done := make(chan struct{})
+	go func() {
+		b.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		fmt.Printf("   - 모든 워커 종료 완료\n")
+	case <-time.After(30 * time.Second):
+		fmt.Printf("⚠️  워커 종료 타임아웃 (30초 초과) - 강제 진행\n")
+	}
 
 	// Sequence release
 	if b.seqTrait != nil {
@@ -431,7 +461,7 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 	tid, created := b.ensureLink(v1, v2, ev.Trait, ev.RuleA, ev.RuleB)
 
 	// --- 3) TraitMark Upsert 큐잉(단일 커맨드)
-	traitErr := b.busTrait.Enqueue(domain.TraitMarkUpsert{
+	traitErr := b.busTrait.Enqueue(b.ctx, domain.TraitMarkUpsert{
 		AuthorCode:  ev.Author,
 		LastTx:      ev.TxID,
 		TraitID:     tid,
@@ -458,7 +488,7 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 		newID := b.nextRopeID()
 		setRopeForTrait(v1, newID, ev.Trait)
 		setRopeForTrait(v2, newID, ev.Trait)
-		ropeErr := b.busRope.Enqueue(domain.RopeMarkUpsert{
+		ropeErr := b.busRope.Enqueue(b.ctx, domain.RopeMarkUpsert{
 			RopeID:      newID,
 			Trait:       ev.Trait,
 			AddMembers:  []shareddomain.Address{a1, a2},
@@ -474,7 +504,7 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 		// v1 로프에 v2 편입
 		id := r1
 		setRopeForTrait(v2, id, ev.Trait)
-		ropeErr := b.busRope.Enqueue(domain.RopeMarkUpsert{
+		ropeErr := b.busRope.Enqueue(b.ctx, domain.RopeMarkUpsert{
 			RopeID:      id,
 			Trait:       ev.Trait,
 			AddMembers:  []shareddomain.Address{a2},
@@ -492,7 +522,7 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 		// v2 로프에 v1 편입
 		id := r2
 		setRopeForTrait(v1, id, ev.Trait)
-		ropeErr := b.busRope.Enqueue(domain.RopeMarkUpsert{
+		ropeErr := b.busRope.Enqueue(b.ctx, domain.RopeMarkUpsert{
 			RopeID:      id,
 			Trait:       ev.Trait,
 			AddMembers:  []shareddomain.Address{a1},
@@ -511,7 +541,7 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 		id1, id2 := r1, r2
 		// 근데 사실 도메인 로직상 이 둘이 절대 같은 로프 ID가 될수 없음
 		if id1 == id2 {
-			ropeErr := b.busRope.Enqueue(domain.RopeMarkUpsert{
+			ropeErr := b.busRope.Enqueue(b.ctx, domain.RopeMarkUpsert{
 				RopeID:      id1,
 				Trait:       ev.Trait,
 				VolumeDelta: 1,
@@ -551,7 +581,7 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 			}
 
 			// target 로프마크에 source 멤버들 흡수 Upsert
-			ropeErr := b.busRope.Enqueue(domain.RopeMarkUpsert{
+			ropeErr := b.busRope.Enqueue(b.ctx, domain.RopeMarkUpsert{
 				RopeID:      target,
 				Trait:       ev.Trait,
 				AddMembers:  sourceRopeMark.Members,
@@ -616,7 +646,7 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 		b.setPolyRopeInVertex(v2, newPolyID, polyTraitCode)
 
 		// PolyRopeMark 생성 (현재 Trait로 생성된 Rope만 포함)
-		pErr := b.busPolyRope.Enqueue(PolyRopeMarkUpsert{
+		pErr := b.busPolyRope.Enqueue(b.ctx, PolyRopeMarkUpsert{
 			PolyRopeID:  newPolyID,
 			PolyTrait:   polyTraitCode,
 			AddRopes:    []domain.RopeID{currentRopeID},
@@ -632,7 +662,7 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 		b.setPolyRopeInVertex(v2, pr1, polyTraitCode)
 
 		// 현재 Rope를 PolyRope에 추가 (중복 제거는 dedupRopes에서 처리)
-		pErr := b.busPolyRope.Enqueue(PolyRopeMarkUpsert{
+		pErr := b.busPolyRope.Enqueue(b.ctx, PolyRopeMarkUpsert{
 			PolyRopeID:  pr1,
 			PolyTrait:   polyTraitCode,
 			AddRopes:    []domain.RopeID{currentRopeID},
@@ -648,7 +678,7 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 		b.setPolyRopeInVertex(v1, pr2, polyTraitCode)
 
 		// 현재 Rope를 PolyRope에 추가 (중복 제거는 dedupRopes에서 처리)
-		pErr := b.busPolyRope.Enqueue(PolyRopeMarkUpsert{
+		pErr := b.busPolyRope.Enqueue(b.ctx, PolyRopeMarkUpsert{
 			PolyRopeID:  pr2,
 			PolyTrait:   polyTraitCode,
 			AddRopes:    []domain.RopeID{currentRopeID},
@@ -664,7 +694,7 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 		// 둘 다 PolyRope 있음
 		if pr1 == pr2 {
 			// 같은 PolyRope면 현재 Rope만 추가 (중복 제거는 dedupRopes에서 처리)
-			pErr := b.busPolyRope.Enqueue(PolyRopeMarkUpsert{
+			pErr := b.busPolyRope.Enqueue(b.ctx, PolyRopeMarkUpsert{
 				PolyRopeID:  pr1,
 				PolyTrait:   polyTraitCode,
 				AddRopes:    []domain.RopeID{currentRopeID},
@@ -699,7 +729,7 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 			srcMark := b.getPolyRopeMark(source)
 			addingRopes := append(srcMark.Ropes, currentRopeID)
 
-			pErr := b.busPolyRope.Enqueue(PolyRopeMarkUpsert{
+			pErr := b.busPolyRope.Enqueue(b.ctx, PolyRopeMarkUpsert{
 				PolyRopeID:  target,
 				PolyTrait:   polyTraitCode,
 				AddRopes:    addingRopes, // 중복 제거는 dedupRopes에서 처리

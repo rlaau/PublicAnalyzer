@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	ldomain "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/domain"
@@ -46,8 +47,9 @@ type HeavyTimeBucketManager struct {
 	rearIndex  int
 	count      int
 
-	mu    sync.RWMutex
-	dirty bool // 변경 플래그
+	mu     sync.RWMutex
+	dirty  bool // 변경 플래그\
+	closed atomic.Bool
 }
 
 func NewHeavyTimeBucketManager(mode mode.ProcessingMode) (*HeavyTimeBucketManager, error) {
@@ -70,17 +72,23 @@ func NewHeavyTimeBucketManager(mode mode.ProcessingMode) (*HeavyTimeBucketManage
 
 // Close: 변경이 있었으면 스냅샷 저장(없으면 no-op)
 func (m *HeavyTimeBucketManager) Close() error {
+	fmt.Println("헤비타임버킷 클로즈 시작")
+	if m.closed.Swap(true) {
+		return nil
+	}
 	if m == nil || m.path == "" {
 		return nil
 	}
+	fmt.Println("헤비 타임버킷 락 블로킹")
 	m.mu.RLock()
 	dirty := m.dirty
 	m.mu.RUnlock()
+
 	fmt.Printf("HeavyTimeBUckManager Close() 호출: 더티마크:%v\n", dirty)
 	if !dirty {
 		return nil
 	}
-	return m.Save()
+	return m.save()
 }
 
 // == 공개 API (단순화됨) ==
@@ -303,7 +311,7 @@ func (m *HeavyTimeBucketManager) stateBinPath() string {
 	return filepath.Join(m.path, "heavy_state.bin")
 }
 
-func (m *HeavyTimeBucketManager) Save() error {
+func (m *HeavyTimeBucketManager) save() error {
 	if m.path == "" {
 		return nil
 	}
@@ -315,10 +323,17 @@ func (m *HeavyTimeBucketManager) Save() error {
 		return nil
 	}
 
+	startTime := time.Now()
+	fmt.Printf("\n🔄 HeavyTimeBucket 저장 시작 → %s\n", m.stateBinPath())
+
 	// 빠른 스냅샷용 얕은 복사 + map deep copy
 	cnt := m.count
 	front := m.frontIndex
 	snap := make([]*HeavyTimeBucket, MaxTimeBuckets)
+
+	// 사전 크기 계산으로 메모리 재할당 최소화
+	totalSize := 7 + 8*cnt // magic(6) + cnt(1) + startUnix(8)*cnt
+	totalToUsers := 0
 	for i := 0; i < MaxTimeBuckets; i++ {
 		if b := m.buckets[i]; b != nil {
 			nb := &HeavyTimeBucket{
@@ -326,20 +341,49 @@ func (m *HeavyTimeBucketManager) Save() error {
 				EndTime:   b.EndTime,
 				ToUsers:   make(map[domain.Address][]ldomain.FromScala, len(b.ToUsers)),
 			}
+			totalToUsers += len(b.ToUsers)
 			for k, v := range b.ToUsers {
 				cp := make([]ldomain.FromScala, len(v))
 				copy(cp, v)
 				nb.ToUsers[k] = cp
+				// 크기 추정: addr(20) + fromScalas 인코딩 크기
+				totalSize += 20 + 4 + len(v)*120 // 대략 120바이트/FromScala
 			}
 			snap[i] = nb
+			totalSize += 4 // toUsersLen
 		}
 	}
 	m.mu.RUnlock()
 
-	var buf bytes.Buffer
+	// 진행 상황 추적
+	var processedUsers int32
+	done := make(chan struct{})
+
+	// 5초마다 진행률 출력
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				current := int(processedUsers)
+				percentage := float64(current) / float64(totalToUsers) * 100
+				elapsed := time.Since(startTime)
+				fmt.Printf("⏱️  저장 중: %d/%d 유저 (%.1f%%) - 경과: %.1f초\n",
+					current, totalToUsers, percentage, elapsed.Seconds())
+			}
+		}
+	}()
+
+	// 사전 할당된 버퍼로 재할당 최소화
+	buf := bytes.NewBuffer(make([]byte, 0, totalSize))
+
 	// header
 	buf.WriteString(heavyTbMagicStr)
 	if err := buf.WriteByte(byte(cnt)); err != nil {
+		close(done)
 		return err
 	}
 
@@ -352,37 +396,68 @@ func (m *HeavyTimeBucketManager) Save() error {
 		}
 		// start_unix(int64)
 		startUnix := time.Time(b.StartTime).UTC().Unix()
-		if err := binary.Write(&buf, binary.LittleEndian, startUnix); err != nil {
+		if err := binary.Write(buf, binary.LittleEndian, startUnix); err != nil {
+			close(done)
 			return err
 		}
 		// to_users_len(uint32)
 		toUsersLen := uint32(len(b.ToUsers))
-		if err := binary.Write(&buf, binary.LittleEndian, toUsersLen); err != nil {
+		if err := binary.Write(buf, binary.LittleEndian, toUsersLen); err != nil {
+			close(done)
 			return err
 		}
 		// to_users: [20]byte + encoded FromScalas
 		for addr, fromScalas := range b.ToUsers {
 			if _, err := buf.Write(addr[:]); err != nil {
+				close(done)
 				return err
 			}
-			if err := writeFromScalas(&buf, fromScalas); err != nil {
+			if err := writeFromScalas(buf, fromScalas); err != nil {
+				close(done)
 				return err
 			}
+			processedUsers++
 		}
 	}
 
+	// 파일 직접 쓰기로 변경 (대용량 버퍼 복사 방지)
 	tmp := m.stateBinPath() + ".tmp"
-	if err := os.WriteFile(tmp, buf.Bytes(), 0o644); err != nil {
+	f, err := os.Create(tmp)
+	if err != nil {
+		close(done)
+		return err
+	}
+	if _, err := buf.WriteTo(f); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		close(done)
+		return err
+	}
+	if err := f.Sync(); err != nil { // 디스크 동기화
+		f.Close()
+		os.Remove(tmp)
+		close(done)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		close(done)
 		return err
 	}
 	if err := os.Rename(tmp, m.stateBinPath()); err != nil {
+		close(done)
 		return err
 	}
+
+	close(done)
 
 	// 저장 성공 → dirty reset
 	m.mu.Lock()
 	m.dirty = false
 	m.mu.Unlock()
+
+	elapsed := time.Since(startTime)
+	fmt.Printf("✅ HeavyTimeBucket 저장 완료: %d 유저 (%.2f초)\n\n", totalToUsers, elapsed.Seconds())
 	return nil
 }
 

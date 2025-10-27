@@ -106,17 +106,17 @@ func (a *AnalyzerPool) Closed() bool {
 	return a.closed.Load()
 }
 
-func (a *AnalyzerPool) DispatchMarkedTx(tx domain.MarkedTransaction) error {
-	return a.fanoutManager.Publish(tx)
+func (a *AnalyzerPool) DispatchMarkedTx(ctx context.Context, tx domain.MarkedTransaction) error {
+	return a.fanoutManager.Publish(ctx, tx)
 }
 func (a *AnalyzerPool) GetRelPort() cface.RelPort { return a.ports.rel }
 func (a *AnalyzerPool) GetNodPort() cface.NodPort { return a.ports.nod }
 
-func (a *AnalyzerPool) EnqueueToRel(v cface.RelMsg) error {
-	return a.busRel.Enqueue(v)
+func (a *AnalyzerPool) EnqueueToRel(ctx context.Context, v cface.RelMsg) error {
+	return a.busRel.Enqueue(ctx, v)
 }
-func (a *AnalyzerPool) EnqueueToNod(v cface.NodMsg) error {
-	return a.busNod.Enqueue(v)
+func (a *AnalyzerPool) EnqueueToNod(ctx context.Context, v cface.NodMsg) error {
+	return a.busNod.Enqueue(ctx, v)
 }
 
 func (a *AnalyzerPool) DeququeRel() <-chan cface.RelMsg {

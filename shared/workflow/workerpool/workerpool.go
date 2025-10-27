@@ -44,7 +44,7 @@ var (
 	ErrEnqueueCanceled = fmt.Errorf("enqueue canceled")
 )
 
-func (p *Pool) DispatchJob(j Job) error {
+func (p *Pool) DispatchJob(ctx context.Context, j Job) error {
 	if j == nil {
 		return ErrNilJob
 	}
@@ -57,7 +57,7 @@ func (p *Pool) DispatchJob(j Job) error {
 	}
 
 	// EventBus에 컨텍스트 지원 Enqueue가 있다면 권장
-	if err := p.JobChan.Enqueue(j); err != nil {
+	if err := p.JobChan.Enqueue(ctx, j); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return ErrEnqueueCanceled
 		}

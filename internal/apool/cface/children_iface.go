@@ -1,6 +1,8 @@
 package cface
 
 import (
+	"context"
+
 	nsface "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/cface"
 	rsface "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/cface"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
@@ -15,8 +17,8 @@ type RelPort interface {
 	GetGraphStats() map[string]any
 	GetTripletPort() rsface.TripletPort
 	GetCreationPort() rsface.CreationPort
-	EnqueueToTriplet(v rsface.TripletEventMsg) error
-	EnqueueToCreation(v rsface.CreationEventMsg) error
+	EnqueueToTriplet(ctx context.Context, v rsface.TripletEventMsg) error
+	EnqueueToCreation(ctx context.Context, v rsface.CreationEventMsg) error
 	DequeueTriplet() <-chan rsface.TripletEventMsg
 	DequeueCreation() <-chan rsface.CreationEventMsg
 	ConsumeTripletTxByFanout() <-chan domain.MarkedTransaction

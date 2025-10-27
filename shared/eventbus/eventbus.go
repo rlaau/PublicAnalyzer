@@ -7,6 +7,7 @@
 package eventbus
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -72,14 +73,18 @@ func (b *EventBus[T]) Close() error {
 }
 
 // Enqueue: 생산자 → pending. capLimit 초과 시 cond wait로 역압.
-func (b *EventBus[T]) Enqueue(v T) error {
+func (b *EventBus[T]) Enqueue(ctx context.Context, v T) error {
 	if b.closed.Load() {
 		return errors.New("eventbus: closed")
 	}
 
 	// ✅ 메모리 전용 모드: 블로킹 send (대기하면서 흘러가게)
-	b.out <- v // 블로킹
-	return nil
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case b.out <- v:
+		return nil
+	}
 
 }
 

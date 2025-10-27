@@ -1,6 +1,8 @@
 package pface
 
 import (
+	"context"
+
 	shared "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/cface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/pface"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
@@ -13,7 +15,7 @@ type RelPort interface {
 	GetGraphStats() map[string]any
 	//형제 모듈에 접근
 	GetCreationPort() shared.CreationPort
-	EnqueueToCreation(v shared.CreationEventMsg) error
+	EnqueueToCreation(ctx context.Context, v shared.CreationEventMsg) error
 	//자신 모듈을 소비
 	DequeueTriplet() <-chan shared.TripletEventMsg
 	ConsumeTripletTxByFanout() <-chan domain.MarkedTransaction

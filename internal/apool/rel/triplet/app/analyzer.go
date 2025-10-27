@@ -76,9 +76,10 @@ func (a *TripletAnalyzer) Start(parent context.Context) error {
 
 	g, ctx := errgroup.WithContext(parent)
 	g.Go(func() error { return a.ComsumeTransaction(ctx) })
-	g.Go(func() error { a.statsReporter(ctx); return nil })
-	g.Go(func() error { a.infra.WorkerPool.Start(ctx); return nil })
+	g.Go(func() error { a.statsReporter(ctx); fmt.Printf("트리플렛 리포터 중단\n"); return nil })
+	g.Go(func() error { a.infra.WorkerPool.Start(ctx); fmt.Printf("트리플렛 워커풀 중단"); return nil })
 	err := g.Wait()
+	fmt.Println("트리플렛 Close 시작")
 	a.Close()
 	return err
 }
@@ -98,6 +99,7 @@ func (a *TripletAnalyzer) Close() error {
 	}
 	a.printFinalReport()
 	a.printStatistics()
+	fmt.Printf("트리플렛 종료 완료\n")
 	return nil
 }
 func (a *TripletAnalyzer) Closed() bool {
@@ -118,10 +120,10 @@ func (a *TripletAnalyzer) RegisterParent(relPool gface.Module) error {
 // ProcessTransaction 트랜잭션 처리 (non-blocking)
 // TODO TxJob의 Do()가 서로 경합 발생. 패닉은 아니지만, 암묵적 성능 저하 발생중
 // TODO 문제에 대한 진단 및 추후 개선 방안은 /debug의 upgrade_solution.md에 자세히 적어놨음.
-func (a *TripletAnalyzer) ProcessTransaction(tx shareddomain.MarkedTransaction) error {
+func (a *TripletAnalyzer) ProcessTransaction(ctx context.Context, tx shareddomain.MarkedTransaction) error {
 	job := NewTransactionJob(tx, a, 0) // workerID는 워커풀에서 자동 관리
 	// 퍼블리시하는 쪽(Analyzer) 직전
-	if err := a.infra.WorkerPool.DispatchJob(job); err != nil { // <- 블로킹
+	if err := a.infra.WorkerPool.DispatchJob(ctx, job); err != nil { // <- 블로킹
 		// 종료(stopping/closed) 중엔 에러가 날 수 있으니 드롭 카운트만 올림
 		//atomic.AddInt64(&a.stats.DroppedTxs, 1)
 
@@ -131,21 +133,20 @@ func (a *TripletAnalyzer) ProcessTransaction(tx shareddomain.MarkedTransaction) 
 }
 
 func (a *TripletAnalyzer) ComsumeTransaction(ctx context.Context) error {
+	defer fmt.Printf("트리플렛 콘슈밍 중단함\n")
 	in := a.GetMyTx()
-	log.Printf("🚀 이벤트버스 시작")
+	log.Printf("🚀 트리플렛 이벤트버스 시작")
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("🛑 Batch consumer worker stopping (context) - starting graceful shutdown")
+			log.Printf("🛑 트리플렛 콘슈밍 중단함")
 			for {
 				select {
-				case msg, ok := <-in:
-					if !ok {
-						log.Printf("🛑 TxBus closed during shutdown")
-						return nil
-					}
-					a.ProcessTransaction(msg) // Ignore errors during shutdown
+				case <-in:
+					log.Printf("🛑 TxBus closed during shutdown")
+					return nil
+
 				default:
 					return nil
 				}
@@ -156,7 +157,7 @@ func (a *TripletAnalyzer) ComsumeTransaction(ctx context.Context) error {
 				log.Printf("🛑 TxBus closed; consumer exit")
 				return nil
 			}
-			if err := a.ProcessTransaction(msg); err != nil {
+			if err := a.ProcessTransaction(ctx, msg); err != nil {
 				return err
 			}
 		}
@@ -176,6 +177,7 @@ func (a *TripletAnalyzer) statsReporter(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			fmt.Printf("트리플렛 Stat Reporter종료\n")
 			return
 
 		case <-ticker.C:

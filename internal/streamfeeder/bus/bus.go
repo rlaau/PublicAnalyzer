@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync/atomic"
@@ -33,6 +34,7 @@ type StreamBus struct {
 	// Configuration
 	saveInterval time.Duration
 	busRelPath   string
+	closed       atomic.Bool
 }
 
 // StreamBusConfig 는 StreamBus 설정값이다.
@@ -101,8 +103,11 @@ func (s *StreamBus) Start() error {
 func (s *StreamBus) Bus() *eventbus.EventBus[shareddomain.RawTransaction] {
 	return s.bus
 }
-func (s *StreamBus) Stop() error {
+func (s *StreamBus) Close() error {
 	if !s.isRunning {
+		return nil
+	}
+	if s.closed.Swap(true) {
 		return nil
 	}
 	log.Printf("Stopping StreamBus...")
@@ -129,16 +134,16 @@ func (s *StreamBus) Stop() error {
 }
 
 // StreamFrom: 특정 포지션에서 시작해 현재 날짜부터 계속 스트림
-func (s *StreamBus) StreamFrom(startDate string, startIndex int64) error {
+func (s *StreamBus) StreamFrom(ctx context.Context, startDate string, startIndex int64) error {
 	if !s.isRunning {
 		return fmt.Errorf("StreamBus is not running")
 	}
 	s.currentPosition = domain.NewStreamPosition(startDate, startIndex)
-	return s.streamFromCurrentPosition()
+	return s.streamFromCurrentPosition(ctx)
 }
 
 // StreamTo: 현재(혹은 설정된) 포지션부터 endDate(포함)까지 스트림
-func (s *StreamBus) StreamTo(endDate string) error {
+func (s *StreamBus) StreamTo(ctx context.Context, endDate string) error {
 	if !s.isRunning {
 		return fmt.Errorf("StreamBus is not running")
 	}
@@ -146,11 +151,11 @@ func (s *StreamBus) StreamTo(endDate string) error {
 		s.currentPosition = domain.NewStreamPosition(endDate, 0)
 	}
 	target := domain.NewStreamTarget(s.currentPosition.Date, endDate)
-	return s.streamWithinTarget(target)
+	return s.streamWithinTarget(ctx, target)
 }
 
 // StreamBetween: [startDate, endDate] 구간 스트림
-func (s *StreamBus) StreamBetween(startDate, endDate string) error {
+func (s *StreamBus) StreamBetween(ctx context.Context, startDate, endDate string) error {
 	if !s.isRunning {
 		return fmt.Errorf("StreamBus is not running")
 	}
@@ -160,10 +165,10 @@ func (s *StreamBus) StreamBetween(startDate, endDate string) error {
 	}
 	s.currentPosition = domain.NewStreamPosition(startDate, 0)
 	log.Printf("Starting to stream (bus) from %s to %s", startDate, endDate)
-	return s.streamWithinTarget(target)
+	return s.streamWithinTarget(ctx, target)
 }
 
-func (s *StreamBus) streamWithinTarget(target domain.StreamTarget) error {
+func (s *StreamBus) streamWithinTarget(ctx context.Context, target domain.StreamTarget) error {
 	dates, err := target.GetDateRange()
 	if err != nil {
 		return fmt.Errorf("failed to get date range: %w", err)
@@ -189,7 +194,7 @@ func (s *StreamBus) streamWithinTarget(target domain.StreamTarget) error {
 		log.Printf("Streaming (bus) for date: %s, start index: %d",
 			s.currentPosition.Date, s.currentPosition.Index)
 
-		if err := s.streamDate(date, positionTicker); err != nil {
+		if err := s.streamDate(ctx, date, positionTicker); err != nil {
 			return fmt.Errorf("failed to stream date %s: %w", date, err)
 		}
 
@@ -207,7 +212,7 @@ func (s *StreamBus) streamWithinTarget(target domain.StreamTarget) error {
 	return nil
 }
 
-func (s *StreamBus) streamFromCurrentPosition() error {
+func (s *StreamBus) streamFromCurrentPosition(ctx context.Context) error {
 	if !s.currentPosition.IsValid() {
 		return fmt.Errorf("invalid current position: %v", s.currentPosition)
 	}
@@ -224,7 +229,7 @@ func (s *StreamBus) streamFromCurrentPosition() error {
 		default:
 		}
 
-		if err := s.streamDate(s.currentPosition.Date, positionTicker); err != nil {
+		if err := s.streamDate(ctx, s.currentPosition.Date, positionTicker); err != nil {
 			log.Printf("Error streaming date %s: %v", s.currentPosition.Date, err)
 			if nextDate, err := s.getNextDate(s.currentPosition.Date); err == nil {
 				s.currentPosition.Date = nextDate
@@ -238,7 +243,7 @@ func (s *StreamBus) streamFromCurrentPosition() error {
 	}
 }
 
-func (s *StreamBus) streamDate(date string, positionTicker *time.Ticker) error {
+func (s *StreamBus) streamDate(ctx context.Context, date string, positionTicker *time.Ticker) error {
 	// 날짜 단위 타이밍/카운터
 	dayStart := time.Now()
 	var publishedThisDate uint64
@@ -253,6 +258,9 @@ func (s *StreamBus) streamDate(date string, positionTicker *time.Ticker) error {
 			}
 			log.Printf("Stream bus: Streaming stopped by user (date=%s) — published %d tx in %s (%.2f tx/s)",
 				date, publishedThisDate, elapsed, rate)
+			return nil
+		case <-ctx.Done():
+			log.Printf("StreamBus: ctx에 의해 종료됨 \n")
 			return nil
 		case <-positionTicker.C:
 			if err := s.saveCurrentPosition(); err != nil {
@@ -278,7 +286,7 @@ func (s *StreamBus) streamDate(date string, positionTicker *time.Ticker) error {
 		}
 
 		// 이벤트버스로 밀어넣기: 버퍼가 찰 때까지 최대한 채움
-		if err := s.publishToBus(transactions); err != nil {
+		if err := s.publishToBus(ctx, transactions); err != nil {
 			atomic.AddUint64(&s.totalErrors, 1)
 			return fmt.Errorf("failed to publish to stream bus: %w", err)
 		}
@@ -288,11 +296,11 @@ func (s *StreamBus) streamDate(date string, positionTicker *time.Ticker) error {
 	}
 }
 
-func (s *StreamBus) publishToBus(batch []shareddomain.RawTransaction) error {
+func (s *StreamBus) publishToBus(ctx context.Context, batch []shareddomain.RawTransaction) error {
 	// EventBus.Publish 가 버퍼가 꽉 차면 블록된다고 가정.
 	// 이 경우 자연스럽게 컨슈머가 빼갈 때까지 대기하면서 “큐를 꽉 채우는” 동작이 된다.
 	for i := range batch {
-		if err := s.bus.Enqueue(batch[i]); err != nil {
+		if err := s.bus.Enqueue(ctx, batch[i]); err != nil {
 			// Publish 가 에러를 반환한다면 중단
 			return err
 		}
