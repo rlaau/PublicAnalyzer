@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/roperepo"
+	ldomain "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/pface"
-
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
@@ -64,8 +64,8 @@ func (dm *DualManager) CheckTransaction(tx domain.MarkedTransaction) (domain.Mar
 	dm.mutex.Lock()
 	defer dm.mutex.Unlock()
 	// Only process EOA-EOA transactions
-	//todo 근데 이거 중복 체킹이긴 함. 프로덕션 후 문제 없으면 충분히 제거 가능
-	//todo ProcessSingle에서 미리 검사함. 애초에 카프카 큐에서 분리 시 신뢰도 가능하고
+	// 근데 이거 중복 체킹이긴 함. 프로덕션 후 문제 없으면 충분히 제거 가능
+	// ProcessSingle에서 미리 검사함. 애초에 카프카 큐에서 분리 시 신뢰도 가능하고
 	if tx.TxSyntax[0] != domain.EOAMark || tx.TxSyntax[1] != domain.EOAMark {
 		return domain.MarkedTransaction{}, fp.ErrorSkipStep
 	}
@@ -83,18 +83,11 @@ func (dm *DualManager) IsDepositAddress(addr domain.Address) bool {
 
 // HandleAddress processes transaction addresses according to their types
 // TODO 함수명 변경 & 함수 끊기. 1) HandleXXX는 "XXX"라는 "이벤트"를 처리해야 함. 2) 그거 바탕으로 함수 끊기
-// TODO 그러므로 HandleAddress는 잘못된 작명임
-// TODO 수정 시 "선언적으로" 바꿔서 처리하기
-// TODO 그러니까, 내가 원하는 것은 (case1->case1 Callback)같은 거잖음.
-// TODO 그럼, 이렇게 처리하삼
-// TODO 1->  TransfromToRelation따라 케이스 분류
-// TODO 2-> PublishRelationEvent이벤트발행
-// TODO 3-> HandleRelationEvent 이벤트 처리
+// TODO HandleAddress는 잘못된 작명임
 func (dm *DualManager) HandleAddress(tx domain.MarkedTransaction) (domain.MarkedTransaction, error) {
 	fromAddr := tx.From
 	toAddr := tx.To
 
-	// 디버깅: 모든 트랜잭션의 케이스 분류 과정 로깅 (처음에는 항상 로깅)
 	debugEnabled := false //성능 이슈로 디버깅 취소//true // 일단 모든 트랜잭션 디버깅
 	allDbg := false
 	if allDbg {
@@ -142,7 +135,7 @@ func (dm *DualManager) HandleAddress(tx domain.MarkedTransaction) (domain.Marked
 		if dm.IsCEXAddress(fromAddr) {
 			dm.relPool.GetApooPort().GetNodPort().GetEoPort().UpdateDepositTxCount(toAddr, 1)
 		}
-		fromScala := infra.FromScala{
+		fromScala := ldomain.FromScala{
 			FromAddress: fromAddr,
 			LastTxId:    tx.TxID,
 			LastTime:    tx.BlockTime,
@@ -159,64 +152,18 @@ func (dm *DualManager) HandleAddress(tx domain.MarkedTransaction) (domain.Marked
 }
 
 func (dm *DualManager) handleTxFromCex(cex domain.Address, other domain.Address, tx domain.MarkedTransaction) error {
-	// author := roperepo.AuthorSystem
-	// trait := roperepo.TraitCexToOther
-
-	// cexAndRule := ropedomain.AddressAndRule{
-	// 	Address: cex,
-	// 	Rule:    roperepo.RuleCex,
-	// }
-	// otherAndRule := ropedomain.AddressAndRule{
-	// 	Address: other,
-	// 	Rule:    roperepo.RuleRecievingFromCex,
-	// }
-	// txScala := ropedomain.TxScala{
-	// 	TxId:        tx.TxID,
-	// 	Time:        tx.BlockTime,
-	// 	ScoreInc:    1,
-	// 	ValueOrNull: tx.ValueOrNull,
-	// }
-	// traitEvent := ropedomain.NewTraitEvent(
-	// 	author,
-	// 	trait,
-	// 	cexAndRule,
-	// 	otherAndRule,
-	// 	txScala,
-	// )
 	return nil
 }
 
 func (dm *DualManager) handleTxFromDepositWithNotCex(deposit domain.Address, other domain.Address, tx domain.MarkedTransaction) error {
-	// author := roperepo.AuthorSystem
-	// trait := roperepo.TraitDepositToOther
-	// depositAndRule := ropedomain.AddressAndRule{
-	// 	Address: deposit,
-	// 	Rule:    roperepo.RuleDeposit,
-	// }
-	// otherAndRule := ropedomain.AddressAndRule{
-	// 	Address: other,
-	// 	Rule:    roperepo.RuleRecievingFromDeposit,
-	// }
-	// txScala := ropedomain.TxScala{
-	// 	TxId:        tx.TxID,
-	// 	Time:        tx.BlockTime,
-	// 	ScoreInc:    1,
-	// 	ValueOrNull: tx.ValueOrNull,
-	// }
-	// te := ropedomain.NewTraitEvent(
-	// 	author,
-	// 	trait,
-	// 	depositAndRule,
-	// 	otherAndRule,
-	// 	txScala,
-	// )
+
 	return nil
 }
 
 // 새 디포짓 주소 발견한 경우
 func (dm *DualManager) DetectNewDepositAddress(dd *domain.DetectedDeposit) error {
 	defer rsv.MeasureTime(dm.perfMeter, "DetectNewDepositAddress")()
-	return dm.relPool.GetApooPort().GetNodPort().GetEoPort().SaveDetectedDeposit(dd)
+	return dm.relPool.GetApooPort().GetNodPort().GetEoPort().SaveDetectedDeposit(*dd)
 }
 
 // handleDepositDetection handles detection of new deposit addresses
@@ -227,10 +174,10 @@ func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Addres
 	debugEnabled := false
 	// 1. 새로운 입금주소를 detectedDepositAddress에 추가
 	dd := &domain.DetectedDeposit{
-		CEXAddress: cexAddr,
-		Address:    depositAddr,
-		TxCount:    1,
-		DetectedAt: time,
+		CEXAddress:     cexAddr,
+		DepositAddress: depositAddr,
+		TxCount:        1,
+		DetectedAt:     time,
 	}
 	if err := dm.DetectNewDepositAddress(dd); err != nil {
 		fmt.Printf("   ❌ DetectNewDepositAddress failed: %v\n", err)
@@ -258,13 +205,13 @@ func (dm *DualManager) handleDepositDetection(cexAddr, depositAddr domain.Addres
 
 	return nil
 }
-func (dm *DualManager) getPendingRelations(deposit domain.Address) ([]infra.FromScala, error) {
+func (dm *DualManager) getPendingRelations(deposit domain.Address) ([]ldomain.FromScala, error) {
 	defer rsv.MeasureTime(dm.perfMeter, "getPendingRelations")()
 	return dm.infra.HeavyTimeBucketManager.GetFromScalas(deposit), nil
 }
 
 // saveDualToGraphDB saves from-to dual relationship to graph database
-func (dm *DualManager) saveDualToGraphDB(fromScala infra.FromScala, toAddr domain.Address) error {
+func (dm *DualManager) saveDualToGraphDB(fromScala ldomain.FromScala, toAddr domain.Address) error {
 	return dm.saveDualRelationToGraphDB(fromScala, toAddr)
 }
 
@@ -297,7 +244,7 @@ func (dm *DualManager) saveCexAndDepositToGraphDB(cex, deposit domain.Address, t
 }
 
 // saveDualRelationToGraphDB saves a connection between two EOAs to the graph database
-func (dm *DualManager) saveDualRelationToGraphDB(fromScala infra.FromScala, toAddr domain.Address) error {
+func (dm *DualManager) saveDualRelationToGraphDB(fromScala ldomain.FromScala, toAddr domain.Address) error {
 	defer rsv.MeasureTime(dm.perfMeter, "saveDualRelationToGraphDB")()
 
 	trait := roperepo.TraitDepositAndUser
@@ -338,7 +285,7 @@ func (dm *DualManager) AddToWindowBuffer(tx domain.MarkedTransaction) (domain.Ma
 	static_counter++
 
 	// 윈도 내 미존재시에만 현재 주 버킷에 추가
-	fromScala := infra.FromScala{
+	fromScala := ldomain.FromScala{
 		FromAddress: fromAddr,
 		LastTxId:    tx.TxID,
 		LastTime:    tx.BlockTime,

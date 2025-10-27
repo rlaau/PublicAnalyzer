@@ -6,6 +6,7 @@ import (
 	"io"
 	"time"
 
+	ldomain "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/shopspring/decimal"
@@ -66,7 +67,7 @@ func readDecimal(r io.Reader) (decimal.Decimal, error) {
 }
 
 // FromScala 슬라이스 쓰기
-func writeFromScalas(w *bytes.Buffer, xs []FromScala) error {
+func writeFromScalas(w *bytes.Buffer, xs []ldomain.FromScala) error {
 	if err := binary.Write(w, binary.LittleEndian, uint32(len(xs))); err != nil {
 		return err
 	}
@@ -98,12 +99,12 @@ func writeFromScalas(w *bytes.Buffer, xs []FromScala) error {
 }
 
 // FromScala 슬라이스 읽기
-func readFromScalas(r io.Reader) ([]FromScala, error) {
+func readFromScalas(r io.Reader) ([]ldomain.FromScala, error) {
 	var n uint32
 	if err := binary.Read(r, binary.LittleEndian, &n); err != nil {
 		return nil, err
 	}
-	out := make([]FromScala, int(n))
+	out := make([]ldomain.FromScala, int(n))
 	for i := 0; i < int(n); i++ {
 		x := &out[i]
 		// FromAddress (20B)

@@ -13,30 +13,20 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
+	ldomain "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
-	"github.com/shopspring/decimal"
 )
 
 type PendingRelationRepo interface {
 	Close() error
-	GetPendingRelations(toAddr domain.Address) ([]FromScala, error)
+	GetPendingRelations(toAddr domain.Address) ([]ldomain.FromScala, error)
 	DeletePendingRelations(toAddr domain.Address) error
 	// 새로 추가: 배치 삭제 (반환값: 실제 삭제된 키 개수)
 	DeletePendingRelationsBatch(addrs []domain.Address) (int, error)
-	AddToPendingRelations(toAddr domain.Address, from FromScala) error
+	AddToPendingRelations(toAddr domain.Address, from ldomain.FromScala) error
 	CountPendingRelations() int
-}
-
-// PendingDB의 key는 toAddress, Val은 []FromScala
-type FromScala struct {
-	FromAddress domain.Address       `json:"from_address"`
-	LastTxId    domain.TxId          `json:"last_tx_id"`
-	LastTime    chaintimer.ChainTime `json:"last_time"`
-	Volume      int32                `json:"volum"`
-	ValueOrNull decimal.Decimal      `json:"value,omitempty"` // ← 0이면 "0"로 저장됨
 }
 
 type BadgerPendingRelationRepo struct {
@@ -162,8 +152,8 @@ func (r *BadgerPendingRelationRepo) waitShardFree(ix uint32) {
 
 // ───────────────────────────────────────────────────────────────────────────────
 
-func (r *BadgerPendingRelationRepo) GetPendingRelations(toAddr domain.Address) ([]FromScala, error) {
-	var list []FromScala
+func (r *BadgerPendingRelationRepo) GetPendingRelations(toAddr domain.Address) ([]ldomain.FromScala, error) {
+	var list []ldomain.FromScala
 
 	// 읽기는 MVCC로 자유롭게. 다만 같은 샤드에 writer 직렬화 중이면 잠깐 대기.
 	ix := r.shardIndexFromAddr(toAddr)
@@ -179,7 +169,7 @@ func (r *BadgerPendingRelationRepo) GetPendingRelations(toAddr domain.Address) (
 		})
 	})
 	if err == badger.ErrKeyNotFound {
-		return []FromScala{}, nil
+		return []ldomain.FromScala{}, nil
 	}
 	return list, err
 }
@@ -319,12 +309,12 @@ func (r *BadgerPendingRelationRepo) DeletePendingRelationsBatch(addrs []domain.A
 // AddToPendingRelations:
 // - FromAddress 없으면 append (Volume<=0 → 1 보정) + metaCountKey++
 // - 있으면 LastTxId/LastTime 덮어쓰기 + Volume++
-func (r *BadgerPendingRelationRepo) AddToPendingRelations(toAddr domain.Address, from FromScala) error {
+func (r *BadgerPendingRelationRepo) AddToPendingRelations(toAddr domain.Address, from ldomain.FromScala) error {
 	key := []byte(toAddr.String())
 	var needGC bool
 
 	fn := func(txn *badger.Txn) error {
-		var list []FromScala
+		var list []ldomain.FromScala
 		itm, err := txn.Get(key)
 		switch err {
 		case nil:
@@ -378,7 +368,7 @@ func (r *BadgerPendingRelationRepo) AddToPendingRelations(toAddr domain.Address,
 				from.Volume = 1
 			}
 
-			list = []FromScala{from}
+			list = []ldomain.FromScala{from}
 			b, e := json.Marshal(list)
 			if e != nil {
 				return e

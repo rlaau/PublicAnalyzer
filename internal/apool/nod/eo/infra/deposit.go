@@ -76,11 +76,9 @@ func (r *DepositRepository) Close() error {
 
 // SaveDetectedDeposit: 신규면 Insert, 기존이면 변경 있을 때만 Update.
 // MVCC 충돌 시 3회까지 재시도, 실패 시 샤드 뮤텍스로 직렬화 후 1회 재시도.
-func (r *DepositRepository) SaveDetectedDeposit(deposit *sharedDomain.DetectedDeposit) error {
-	if deposit == nil {
-		return errors.New("nil deposit")
-	}
-	key := r.makeKey(deposit.Address)
+func (r *DepositRepository) SaveDetectedDeposit(deposit sharedDomain.DetectedDeposit) error {
+
+	key := r.makeKey(deposit.DepositAddress)
 
 	fn := func(txn *badger.Txn) error {
 		// 현재 값 조회(없으면 신규)

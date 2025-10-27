@@ -80,7 +80,7 @@ func (r *DepositRepository) SaveDetectedDeposit(deposit *sharedDomain.DetectedDe
 	if deposit == nil {
 		return errors.New("nil deposit")
 	}
-	key := r.makeKey(deposit.Address)
+	key := r.makeKey(deposit.DepositAddress)
 
 	fn := func(txn *badger.Txn) error {
 		// 현재 값 조회(없으면 신규)

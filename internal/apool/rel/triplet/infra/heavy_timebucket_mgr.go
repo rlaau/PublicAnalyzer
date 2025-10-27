@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	ldomain "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/domain"
+
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
@@ -23,14 +25,14 @@ type HeavyTimeBucket struct {
 	StartTime chaintimer.ChainTime
 	EndTime   chaintimer.ChainTime
 	// 핵심: toAddress -> []FromScala 매핑을 메모리에 저장
-	ToUsers map[domain.Address][]FromScala
+	ToUsers map[domain.Address][]ldomain.FromScala
 }
 
 func newHeavyTimeBucket(start chaintimer.ChainTime) *HeavyTimeBucket {
 	return &HeavyTimeBucket{
 		StartTime: start,
 		EndTime:   start.Add(SlideInterval),
-		ToUsers:   make(map[domain.Address][]FromScala),
+		ToUsers:   make(map[domain.Address][]ldomain.FromScala),
 	}
 }
 
@@ -87,7 +89,7 @@ func (m *HeavyTimeBucketManager) Close() error {
 // 해당 시간의 버킷이 없으면 생성하고, to 주소가 윈도우에 없으면 새로 추가
 // fromAddress가 이미 있으면 업데이트, 없으면 새로 추가
 // 반환: (added, bucketIndex) - added는 새로운 to 주소가 추가되었는지 여부
-func (m *HeavyTimeBucketManager) AddIfAbsent(to domain.Address, fromScala FromScala) (bool, int) {
+func (m *HeavyTimeBucketManager) AddIfAbsent(to domain.Address, fromScala ldomain.FromScala) (bool, int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -107,7 +109,7 @@ func (m *HeavyTimeBucketManager) AddIfAbsent(to domain.Address, fromScala FromSc
 
 	if !exists {
 		// 새로운 to 주소: 빈 슬라이스로 초기화
-		fromScalas = make([]FromScala, 0, 1)
+		fromScalas = make([]ldomain.FromScala, 0, 1)
 	}
 
 	// 4. 동일한 FromAddress가 있는지 찾기
@@ -144,7 +146,7 @@ func (m *HeavyTimeBucketManager) AddIfAbsent(to domain.Address, fromScala FromSc
 }
 
 // GetFromScalas: toAddr에 대한 모든 FromScala 반환
-func (m *HeavyTimeBucketManager) GetFromScalas(toAddr domain.Address) []FromScala {
+func (m *HeavyTimeBucketManager) GetFromScalas(toAddr domain.Address) []ldomain.FromScala {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -157,13 +159,13 @@ func (m *HeavyTimeBucketManager) GetFromScalas(toAddr domain.Address) []FromScal
 		}
 		if fromScalas, exists := b.ToUsers[toAddr]; exists {
 			// 복사본 반환 (동시성 안전)
-			result := make([]FromScala, len(fromScalas))
+			result := make([]ldomain.FromScala, len(fromScalas))
 			copy(result, fromScalas)
 			return result
 		}
 	}
 
-	return []FromScala{}
+	return []ldomain.FromScala{}
 }
 
 // == 통계/모니터링 API ==
@@ -322,10 +324,10 @@ func (m *HeavyTimeBucketManager) Save() error {
 			nb := &HeavyTimeBucket{
 				StartTime: b.StartTime,
 				EndTime:   b.EndTime,
-				ToUsers:   make(map[domain.Address][]FromScala, len(b.ToUsers)),
+				ToUsers:   make(map[domain.Address][]ldomain.FromScala, len(b.ToUsers)),
 			}
 			for k, v := range b.ToUsers {
-				cp := make([]FromScala, len(v))
+				cp := make([]ldomain.FromScala, len(v))
 				copy(cp, v)
 				nb.ToUsers[k] = cp
 			}
@@ -430,7 +432,7 @@ func (m *HeavyTimeBucketManager) Load() error {
 		tb := &HeavyTimeBucket{
 			StartTime: st,
 			EndTime:   st.Add(SlideInterval),
-			ToUsers:   make(map[domain.Address][]FromScala, toUsersLen),
+			ToUsers:   make(map[domain.Address][]ldomain.FromScala, toUsersLen),
 		}
 
 		for j := uint32(0); j < toUsersLen; j++ {

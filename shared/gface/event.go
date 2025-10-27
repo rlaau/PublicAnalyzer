@@ -7,9 +7,28 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 )
 
-type ModuleName string
+type Event interface {
+	OccurredAt() time.Time
+	Message() EventMessage
+}
 
-func ParseModuleName(s string) ModuleName { return ModuleName(s) }
+type Tracable interface {
+	TraceID() (TraceID, error)
+}
+
+type ChainEvent interface {
+	Event
+	OccurredAtChainTime() chaintimer.ChainTime
+}
+type DomainEvent interface {
+	Event
+	ModuleName() ModuleName
+}
+
+type GlobalEvent interface {
+	Event
+	BrokerName() BrokerName
+}
 
 type BrokerName string
 
@@ -28,21 +47,4 @@ type EventMessage string
 
 func ParseEventMessage(eventName string, t time.Time, msg string) EventMessage {
 	return EventMessage(fmt.Sprintf("%s %s %s", eventName, t.Format(time.RFC3339Nano), msg))
-}
-
-type Event interface {
-	TraceID() (TraceID, error)
-	OccurredAt() time.Time
-	OccurredAtChainTime() chaintimer.ChainTime
-	Message() EventMessage
-}
-
-type DomainEvent interface {
-	Event
-	ModuleName() ModuleName
-}
-
-type GlobalEvent interface {
-	Event
-	BrokerName() BrokerName
 }

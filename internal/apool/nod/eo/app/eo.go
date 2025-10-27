@@ -107,7 +107,7 @@ func (eo *Eo) RegisterParent(nod gface.Module) error {
 	return nil
 }
 
-func (eo *Eo) SaveDetectedDeposit(deposit *domain.DetectedDeposit) error {
+func (eo *Eo) SaveDetectedDeposit(deposit domain.DetectedDeposit) error {
 	return eo.depositDB.SaveDetectedDeposit(deposit)
 }
 
