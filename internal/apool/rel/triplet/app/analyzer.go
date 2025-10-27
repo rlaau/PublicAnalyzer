@@ -26,27 +26,28 @@ type TripletAnalyzerDesign interface {
 	GetStatistics() map[string]any
 	IsHealthy() bool
 	GetChannelStatus() (usage int, capacity int)
-	//그래, 맞다. 인터페이스는 이따구로 쓰면 안되지/
-	//근데 이거 고치려면 또 리팩토링 해야함. 또!!!
-	//그건 나중에 하자고.
+
 	GetRopeDBStats() map[string]any
 	GetMyTx() <-chan domain.MarkedTransaction
 }
 
 type TripletAnalyzer struct {
-	// Core domain components
-	dualManager *DualManager
-	mode        mode.ProcessingMode
-	name        gface.ModuleName
-	//TODO stats와 관련한 주석은 프로메테우스로 처리
-	// stats SimpleAnalyzerStats
+	mode mode.ProcessingMode
+	name gface.ModuleName
 
-	infra   *infra.TripletAndDualManagerInfra
+	infra   *infra.TripletInfra
 	relPool pface.RelPort
 	closed  atomic.Bool
 }
 
-// SimpleAnalyzerStats 간단한 분석기 통계
+type TripletConfig struct {
+	// 기본 설정
+	Name string              // 분석기 이름
+	Mode mode.ProcessingMode // 동작 모드 (production/testing)
+
+	// 성능 설정
+	WorkerCount int // 워커 고루틴 수
+}
 
 // NewTriplet 설정에 따라 적절한 분석기 생성
 func NewTriplet(config TripletConfig) (TripletAnalyzerDesign, error) {
@@ -70,7 +71,7 @@ func NewTestingEOAAnalyzer(config TripletConfig) (TripletAnalyzerDesign, error) 
 }
 
 // newTripletAnalyzer 공통 분석기 생성 로직
-func newTripletAnalyzer(config TripletConfig, infraStructure *infra.TripletAndDualManagerInfra) (*TripletAnalyzer, error) {
+func newTripletAnalyzer(config TripletConfig, infraStructure *infra.TripletInfra) (*TripletAnalyzer, error) {
 	//전체 EOA인프라에서 꺼내 쓰는 형식
 
 	analyzer := &TripletAnalyzer{
@@ -95,20 +96,12 @@ func (a *TripletAnalyzer) Start(parent context.Context) error {
 	if a.relPool == nil {
 		return fmt.Errorf("트리플렛의 relpool존재하지 않음")
 	}
-	dmi := infra.NewDualManagerInfra(a.infra.HeavyTimeBucketManager)
-	dm, err := NewDualManager(dmi, a.relPool)
-	if err != nil {
-		return err
-	}
-	a.dualManager = dm
-	fmt.Printf("듀얼 매니져 초기화 완료\n")
-	log.Printf("듀얼 매니져 초기화. 현재 cex주소 개수: %d", len(a.dualManager.relPool.GetApooPort().GetNodPort().GetEoPort().CEXAddresses()))
 
 	g, ctx := errgroup.WithContext(parent)
 	g.Go(func() error { return a.ComsumeTransaction(ctx) })
 	g.Go(func() error { a.statsReporter(ctx); return nil })
 	g.Go(func() error { a.infra.WorkerPool.Start(ctx); return nil })
-	err = g.Wait()
+	err := g.Wait()
 	a.Close()
 	return err
 }
@@ -122,8 +115,9 @@ func (a *TripletAnalyzer) Close() error {
 	if a.infra.WorkerPool != nil {
 		a.infra.WorkerPool.Close()
 	}
-	if a.dualManager != nil {
-		a.dualManager.Close()
+
+	if a.infra.HeavyTimeBucketManager != nil {
+		a.infra.HeavyTimeBucketManager.Close()
 	}
 	a.printFinalReport()
 	a.printStatistics()
@@ -225,12 +219,6 @@ func (a *TripletAnalyzer) printStatistics() {
 	log.Printf("   Triplet-TxJobChannel: %d/%d (%.1f%%)", channelUsage, channelCapacity, usagePercent)
 	log.Printf("   Triplet-MyTxBus: %d/%d", len(a.GetMyTx()), cap(a.GetMyTx()))
 
-	// DualManager 통계
-	if windowStats := a.dualManager.GetWindowStats(); windowStats != nil {
-		log.Printf("   Buckets: %v | Pending: %v",
-			windowStats["active_buckets"], windowStats["pending_relations"])
-	}
-
 	graphStats := a.relPool.GetGraphStats()
 	log.Printf("   Graph: %v nodes | %v edges",
 		graphStats["total_nodes"], graphStats["total_edges"])
@@ -268,14 +256,6 @@ func (a *TripletAnalyzer) printFinalReport() {
 	log.Printf(strings.Repeat("=", 80))
 
 	log.Printf("📊 Performance Summary:")
-
-	// DualManager 최종 통계
-	if windowStats := a.dualManager.GetWindowStats(); windowStats != nil {
-		log.Printf("\n🪟 Window Manager State:")
-		for key, value := range windowStats {
-			log.Printf("   %s: %v", key, value)
-		}
-	}
 
 	graphStats := a.relPool.GetGraphStats()
 	log.Printf("\n🗂️  Graph Database State:")

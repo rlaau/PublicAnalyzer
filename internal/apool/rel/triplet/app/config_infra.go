@@ -8,8 +8,7 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/workerpool"
 )
 
-func NewInfraByConfig(config TripletConfig) *infra.TripletAndDualManagerInfra {
-
+func NewInfraByConfig(config TripletConfig) *infra.TripletInfra {
 	log.Printf("EOA Analyzer의 Infra 세팅 중: %s (Mode: %s)", config.Name, config.Mode)
 	workerPool := workerpool.New(config.WorkerCount, "TripletWorkerPool")
 	log.Printf("🔧 WorkerPool initialized with %d workers", config.WorkerCount)

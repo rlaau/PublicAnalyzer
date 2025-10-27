@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/cface"
@@ -12,6 +13,34 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
+
+type TransactionJob struct {
+	tx              shareddomain.MarkedTransaction
+	tripletAnalyzer *TripletAnalyzer
+	workerID        int
+}
+
+// NewTransactionJob creates a new transaction processing job
+func NewTransactionJob(tx shareddomain.MarkedTransaction, analyzer *TripletAnalyzer, workerID int) *TransactionJob {
+	return &TransactionJob{
+		tx:              tx,
+		tripletAnalyzer: analyzer,
+		workerID:        workerID,
+	}
+}
+
+// Do implements workerpool.Job interface
+func (j *TransactionJob) Do(ctx context.Context) error {
+	tx := j.tx
+	tripletAnalyzer := j.tripletAnalyzer
+	if isValidTx := checkTransactionSyntax(tx); !isValidTx {
+		return nil
+	}
+	tripletEvent := decideTripletEvent(tx, tripletAnalyzer.relPool.GetApooPort().GetNodPort().GetEoPort())
+	errOrNil := handleTripletEvent(tripletEvent, tripletAnalyzer.relPool, tripletAnalyzer.infra.HeavyTimeBucketManager)
+
+	return errOrNil
+}
 
 func checkTransactionSyntax(tx shareddomain.MarkedTransaction) (isValidSyntax bool) {
 	if tx.TxSyntax[0] != domain.EOAMark || tx.TxSyntax[1] != domain.EOAMark {
@@ -56,7 +85,7 @@ func decideTripletEvent(tx shareddomain.MarkedTransaction, eo cface.EoPort) trip
 }
 
 // handleAddrss의 파생2
-func handleTripletEvent(tev tripletEvent, eo cface.EoPort, rel pface.RelPort, timeBuckerManager *infra.HeavyTimeBucketManager) error {
+func handleTripletEvent(tev tripletEvent, rel pface.RelPort, timeBuckerManager *infra.HeavyTimeBucketManager) error {
 	switch tev.kind {
 	case TxFromCEX:
 		return nil
@@ -71,7 +100,7 @@ func handleTripletEvent(tev tripletEvent, eo cface.EoPort, rel pface.RelPort, ti
 			DetectedAt:     tev.tx.BlockTime,
 		}
 		// 우선 eo에다가 deposit발견 정보 전파
-		if err := eo.SaveDetectedDeposit(dd); err != nil {
+		if err := rel.GetApooPort().GetNodPort().GetEoPort().SaveDetectedDeposit(dd); err != nil {
 			return fmt.Errorf("handleTripeltEvent: TxToCEX에서 디포짓 저장 도중 에러 %w", err)
 		}
 		//이후 클러스터에 cex와 deposit의 연결을 전달해서 cex-deposit의 연결 저장

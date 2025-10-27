@@ -4,7 +4,7 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/workerpool"
 )
 
-type TripletAndDualManagerInfra struct {
+type TripletInfra struct {
 	HeavyTimeBucketManager *HeavyTimeBucketManager
 	WorkerPool             *workerpool.Pool
 }
@@ -12,8 +12,8 @@ type TripletAndDualManagerInfra struct {
 func NewTripletInfra(
 	workerPool *workerpool.Pool,
 	hvtm *HeavyTimeBucketManager,
-) *TripletAndDualManagerInfra {
-	return &TripletAndDualManagerInfra{
+) *TripletInfra {
+	return &TripletInfra{
 		WorkerPool:             workerPool,
 		HeavyTimeBucketManager: hvtm,
 	}
