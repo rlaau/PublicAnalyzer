@@ -23,6 +23,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	triplet "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/app"
+	tinf "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/streamfeeder/bus"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
@@ -160,11 +161,15 @@ func changeBoolToContractMark(isContract bool) domain.ContractBoolMark {
 }
 func ComposeRelPool() *rel.RelationPool {
 	tripletConfig := triplet.TripletConfig{
-		Name:        "Simple-Triplet",
+		Name: "Simple-Triplet",
+		Mode: mode.TestingModeProcess,
+	}
+	tripletInfraConfig := tinf.TripletInfraConfig{
 		Mode:        mode.TestingModeProcess,
 		WorkerCount: 2,
 	}
-	triplet, err := triplet.NewTriplet(tripletConfig)
+	tripletInfra := tinf.NewTripletInfraByConfig(tripletInfraConfig)
+	triplet, err := triplet.NewTripletAnalyzer(tripletConfig, tripletInfra)
 	if err != nil {
 		panic("트리플렛 생성 중 에러")
 	}

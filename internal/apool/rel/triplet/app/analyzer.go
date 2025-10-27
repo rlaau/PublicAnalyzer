@@ -45,33 +45,10 @@ type TripletConfig struct {
 	Name string              // 분석기 이름
 	Mode mode.ProcessingMode // 동작 모드 (production/testing)
 
-	// 성능 설정
-	WorkerCount int // 워커 고루틴 수
 }
 
-// NewTriplet 설정에 따라 적절한 분석기 생성
-func NewTriplet(config TripletConfig) (TripletAnalyzerDesign, error) {
-	if config.Mode.IsTest() {
-		return NewTestingEOAAnalyzer(config)
-	} else {
-		return NewProductionEOAAnalyzer(config)
-	}
-}
-
-// NewProductionEOAAnalyzer 프로덕션용 분석기 생성
-func NewProductionEOAAnalyzer(config TripletConfig) (TripletAnalyzerDesign, error) {
-	infraStructure := NewInfraByConfig(config)
-	return newTripletAnalyzer(config, infraStructure)
-}
-
-// NewTestingEOAAnalyzer 테스트용 분석기 생성
-func NewTestingEOAAnalyzer(config TripletConfig) (TripletAnalyzerDesign, error) {
-	infraStructure := NewInfraByConfig(config)
-	return newTripletAnalyzer(config, infraStructure)
-}
-
-// newTripletAnalyzer 공통 분석기 생성 로직
-func newTripletAnalyzer(config TripletConfig, infraStructure *infra.TripletInfra) (*TripletAnalyzer, error) {
+// NewTripletAnalyzer 공통 분석기 생성 로직
+func NewTripletAnalyzer(config TripletConfig, infraStructure *infra.TripletInfra) (*TripletAnalyzer, error) {
 	//전체 EOA인프라에서 꺼내 쓰는 형식
 
 	analyzer := &TripletAnalyzer{
