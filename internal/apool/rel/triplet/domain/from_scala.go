@@ -12,72 +12,11 @@ import (
 
 // From 주소 입장에서 본 To주소와의 거래 강도
 type FromScala struct {
-	FromAddress domain.Address       `json:"from_address"`
-	LastTxId    domain.TxId          `json:"last_tx_id"`
-	LastTime    chaintimer.ChainTime `json:"last_time"`
-	Volume      int32                `json:"volum"`
-	ValueOrNull decimal.Decimal      `json:"value,omitempty"` // ← 0이면 "0"로 저장됨
-}
-
-// NewFromScala creates a FromScala with initial values
-func NewFromScala(from domain.Address, txId domain.TxId, txTime chaintimer.ChainTime, value decimal.Decimal) FromScala {
-	volume := int32(1)
-	return FromScala{
-		FromAddress: from,
-		LastTxId:    txId,
-		LastTime:    txTime,
-		Volume:      volume,
-		ValueOrNull: value,
-	}
-}
-
-// Update updates the FromScala with new transaction data
-func (fs *FromScala) Update(txId domain.TxId, txTime chaintimer.ChainTime, value decimal.Decimal) {
-	fs.LastTxId = txId
-	fs.LastTime = txTime
-	if fs.Volume < 2147483647 { // math.MaxInt32
-		fs.Volume++
-	}
-	if !value.IsZero() {
-		fs.ValueOrNull = fs.ValueOrNull.Add(value)
-	}
-}
-
-// Matches checks if this FromScala is for the given address
-func (fs *FromScala) Matches(addr domain.Address) bool {
-	return fs.FromAddress == addr
-}
-
-type FromScalas []FromScala
-
-// FindByAddress finds the FromScala for the given address
-func (fss FromScalas) FindByAddress(addr domain.Address) (int, bool) {
-	for i := range fss {
-		if fss[i].Matches(addr) {
-			return i, true
-		}
-	}
-	return -1, false
-}
-
-// AddOrUpdate adds a new FromScala or updates an existing one
-func (fss FromScalas) AddOrUpdate(from domain.Address, txId domain.TxId, txTime chaintimer.ChainTime, value decimal.Decimal) FromScalas {
-	idx, found := fss.FindByAddress(from)
-	if found {
-		fss[idx].Update(txId, txTime, value)
-		return fss
-	}
-	return append(fss, NewFromScala(from, txId, txTime, value))
-}
-
-// Copy creates a deep copy of the FromScalas
-func (fss FromScalas) Copy() FromScalas {
-	if len(fss) == 0 {
-		return FromScalas{}
-	}
-	result := make(FromScalas, len(fss))
-	copy(result, fss)
-	return result
+	FromAddress domain.Address
+	LastTxId    domain.TxId
+	LastTime    chaintimer.ChainTime
+	Volume      int32
+	ValueOrNull decimal.Decimal
 }
 
 // === Marshaling/Unmarshaling ===
@@ -134,6 +73,37 @@ func (fs *FromScala) Unmarshal(r io.Reader) error {
 	return nil
 }
 
+// NewFromScala creates a FromScala with initial values
+func NewFromScala(from domain.Address, txId domain.TxId, txTime chaintimer.ChainTime, value decimal.Decimal) FromScala {
+	volume := int32(1)
+	return FromScala{
+		FromAddress: from,
+		LastTxId:    txId,
+		LastTime:    txTime,
+		Volume:      volume,
+		ValueOrNull: value,
+	}
+}
+
+// Update updates the FromScala with new transaction data
+func (fs *FromScala) Update(txId domain.TxId, txTime chaintimer.ChainTime, value decimal.Decimal) {
+	fs.LastTxId = txId
+	fs.LastTime = txTime
+	if fs.Volume < 2147483647 { // math.MaxInt32
+		fs.Volume++
+	}
+	if !value.IsZero() {
+		fs.ValueOrNull = fs.ValueOrNull.Add(value)
+	}
+}
+
+// Matches checks if this FromScala is for the given address
+func (fs *FromScala) Matches(addr domain.Address) bool {
+	return fs.FromAddress == addr
+}
+
+type FromScalas []FromScala
+
 // Marshal serializes FromScalas slice to binary format
 func (fss FromScalas) Marshal(w io.Writer) error {
 	if err := binary.Write(w, binary.LittleEndian, uint32(len(fss))); err != nil {
@@ -160,6 +130,36 @@ func UnmarshalFromScalas(r io.Reader) (FromScalas, error) {
 		}
 	}
 	return out, nil
+}
+
+// FindByAddress finds the FromScala for the given address
+func (fss FromScalas) FindByAddress(addr domain.Address) (int, bool) {
+	for i := range fss {
+		if fss[i].Matches(addr) {
+			return i, true
+		}
+	}
+	return -1, false
+}
+
+// AddOrUpdate adds a new FromScala or updates an existing one
+func (fss FromScalas) AddOrUpdate(from domain.Address, txId domain.TxId, txTime chaintimer.ChainTime, value decimal.Decimal) FromScalas {
+	idx, found := fss.FindByAddress(from)
+	if found {
+		fss[idx].Update(txId, txTime, value)
+		return fss
+	}
+	return append(fss, NewFromScala(from, txId, txTime, value))
+}
+
+// Copy creates a deep copy of the FromScalas
+func (fss FromScalas) Copy() FromScalas {
+	if len(fss) == 0 {
+		return FromScalas{}
+	}
+	result := make(FromScalas, len(fss))
+	copy(result, fss)
+	return result
 }
 
 // === Helper functions for binary serialization ===
