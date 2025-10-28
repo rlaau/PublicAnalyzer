@@ -128,11 +128,13 @@ func handleTripletEvent(tev tripletEvent, rel pface.RelPort, timeBuckerManager i
 	case TxNotSpecial:
 		toAddr := tev.tx.To
 		fromAddr := tev.tx.From
-		fromScala := ldomain.FromScala{
-			FromAddress: fromAddr,
-			LastTxId:    tev.tx.TxID,
-			LastTime:    tev.tx.BlockTime,
-		}
+		// 도메인 로직 위임: NewFromScala 사용
+		fromScala := ldomain.NewFromScala(
+			fromAddr,
+			tev.tx.TxID,
+			tev.tx.BlockTime,
+			tev.tx.ValueOrNull,
+		)
 		timeBuckerManager.AddIfAbsent(toAddr, fromScala)
 		return nil
 	default:

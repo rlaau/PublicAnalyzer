@@ -29,19 +29,19 @@ const (
 	MaxTimeBuckets  = 5 //21 일단 5개만 들고 있기.
 )
 
-// HeavyTimeBucket - 메모리 기반으로 toAddress -> []FromScala 매핑을 포함
+// HeavyTimeBucket - 메모리 기반으로 toAddress -> FromScalas 매핑을 포함
 type HeavyTimeBucket struct {
 	StartTime chaintimer.ChainTime
 	EndTime   chaintimer.ChainTime
-	// 핵심: toAddress -> []FromScala 매핑을 메모리에 저장
-	ToUsers map[domain.Address][]ldomain.FromScala
+	// 핵심: toAddress -> FromScalas 매핑을 메모리에 저장
+	ToUsers map[domain.Address]ldomain.FromScalas
 }
 
 func newHeavyTimeBucket(start chaintimer.ChainTime) *HeavyTimeBucket {
 	return &HeavyTimeBucket{
 		StartTime: start,
 		EndTime:   start.Add(SlideInterval),
-		ToUsers:   make(map[domain.Address][]ldomain.FromScala),
+		ToUsers:   make(map[domain.Address]ldomain.FromScalas),
 	}
 }
 
@@ -119,50 +119,23 @@ func (m *HeavyTimeBucketManager) AddIfAbsent(to domain.Address, fromScala ldomai
 		m.buckets[idx] = bucket
 	}
 
-	// 3. to 주소가 이미 존재하는지 확인
-	fromScalas, exists := bucket.ToUsers[to]
-	newToUser := !exists
+	// 3. 도메인 로직 위임: FromScalas의 AddOrUpdate 사용
+	fromScalas := bucket.ToUsers[to]
+	newToUser := len(fromScalas) == 0
 
-	if !exists {
-		// 새로운 to 주소: 빈 슬라이스로 초기화
-		fromScalas = make([]ldomain.FromScala, 0, 1)
-	}
-
-	// 4. 동일한 FromAddress가 있는지 찾기
-	found := false
-	for i := range fromScalas {
-		if fromScalas[i].FromAddress == fromScala.FromAddress {
-			// 업데이트: LastTxId, LastTime 갱신, Volume 증가
-			fromScalas[i].LastTxId = fromScala.LastTxId
-			fromScalas[i].LastTime = fromScala.LastTime
-			if fromScalas[i].Volume < 2147483647 { // math.MaxInt32
-				fromScalas[i].Volume++
-			}
-			if !fromScala.ValueOrNull.IsZero() {
-				fromScalas[i].ValueOrNull = fromScalas[i].ValueOrNull.Add(fromScala.ValueOrNull)
-			}
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		// 새로운 FromAddress 추가
-		if fromScala.Volume <= 0 {
-			fromScala.Volume = 1
-		}
-		fromScalas = append(fromScalas, fromScala)
-	}
-
-	// 5. 변경 사항 저장
-	bucket.ToUsers[to] = fromScalas
+	bucket.ToUsers[to] = fromScalas.AddOrUpdate(
+		fromScala.FromAddress,
+		fromScala.LastTxId,
+		fromScala.LastTime,
+		fromScala.ValueOrNull,
+	)
 	m.dirty = true
 
 	return newToUser, idx
 }
 
 // GetFromScalas: toAddr에 대한 모든 FromScala 반환
-func (m *HeavyTimeBucketManager) GetFromScalas(toAddr domain.Address) []ldomain.FromScala {
+func (m *HeavyTimeBucketManager) GetFromScalas(toAddr domain.Address) ldomain.FromScalas {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -173,15 +146,13 @@ func (m *HeavyTimeBucketManager) GetFromScalas(toAddr domain.Address) []ldomain.
 		if b == nil {
 			continue
 		}
-		if fromScalas, exists := b.ToUsers[toAddr]; exists {
-			// 복사본 반환 (동시성 안전)
-			result := make([]ldomain.FromScala, len(fromScalas))
-			copy(result, fromScalas)
-			return result
+		if fromScalas := b.ToUsers[toAddr]; len(fromScalas) > 0 {
+			// 도메인 로직 위임: Copy 사용 (동시성 안전)
+			return fromScalas.Copy()
 		}
 	}
 
-	return []ldomain.FromScala{}
+	return ldomain.FromScalas{}
 }
 
 // == 내부 로직 ==
@@ -288,13 +259,12 @@ func (m *HeavyTimeBucketManager) save() error {
 			nb := &HeavyTimeBucket{
 				StartTime: b.StartTime,
 				EndTime:   b.EndTime,
-				ToUsers:   make(map[domain.Address][]ldomain.FromScala, len(b.ToUsers)),
+				ToUsers:   make(map[domain.Address]ldomain.FromScalas, len(b.ToUsers)),
 			}
 			totalToUsers += len(b.ToUsers)
 			for k, v := range b.ToUsers {
-				cp := make([]ldomain.FromScala, len(v))
-				copy(cp, v)
-				nb.ToUsers[k] = cp
+				// 도메인 로직 위임: Copy 사용
+				nb.ToUsers[k] = v.Copy()
 				// 크기 추정: addr(20) + fromScalas 인코딩 크기
 				totalSize += 20 + 4 + len(v)*120 // 대략 120바이트/FromScala
 			}
@@ -361,7 +331,8 @@ func (m *HeavyTimeBucketManager) save() error {
 				close(done)
 				return err
 			}
-			if err := writeFromScalas(buf, fromScalas); err != nil {
+			// 도메인 로직 위임: FromScalas.Marshal 사용
+			if err := fromScalas.Marshal(buf); err != nil {
 				close(done)
 				return err
 			}
@@ -456,7 +427,7 @@ func (m *HeavyTimeBucketManager) Load() error {
 		tb := &HeavyTimeBucket{
 			StartTime: st,
 			EndTime:   st.Add(SlideInterval),
-			ToUsers:   make(map[domain.Address][]ldomain.FromScala, toUsersLen),
+			ToUsers:   make(map[domain.Address]ldomain.FromScalas, toUsersLen),
 		}
 
 		for j := uint32(0); j < toUsersLen; j++ {
@@ -464,7 +435,8 @@ func (m *HeavyTimeBucketManager) Load() error {
 			if _, err := io.ReadFull(r, a[:]); err != nil {
 				return fmt.Errorf("read address: %w", err)
 			}
-			fromScalas, err := readFromScalas(r)
+			// 도메인 로직 위임: UnmarshalFromScalas 사용
+			fromScalas, err := ldomain.UnmarshalFromScalas(r)
 			if err != nil {
 				return fmt.Errorf("decode fromScalas: %w", err)
 			}

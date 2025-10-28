@@ -14,6 +14,5 @@ type TimeBuckerManager interface {
 	Load() error
 	Close() error
 	AddIfAbsent(to domain.Address, fromScala ldomain.FromScala) (bool, int)
-	GetFromScalas(toAddr domain.Address) []ldomain.FromScala
-
+	GetFromScalas(toAddr domain.Address) ldomain.FromScalas
 }
