@@ -4,11 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/pface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
@@ -25,7 +24,7 @@ type TripletAnalyzerDesign interface {
 	// 상태 조회
 	GetStatistics() map[string]any
 	IsHealthy() bool
-	GetChannelStatus() (usage int, capacity int)
+	GetJobChannelStatus() (usage int, capacity int)
 
 	GetRopeDBStats() map[string]any
 	GetMyTx() <-chan domain.MarkedTransaction
@@ -35,9 +34,9 @@ type TripletAnalyzer struct {
 	mode mode.ProcessingMode
 	name gface.ModuleName
 
-	infra   *infra.TripletInfra
-	relPool pface.RelPort
-	closed  atomic.Bool
+	infraPort iface.TripletInfraPort
+	relPool   pface.RelPort
+	closed    atomic.Bool
 }
 
 type TripletConfig struct {
@@ -48,13 +47,13 @@ type TripletConfig struct {
 }
 
 // NewTripletAnalyzer 공통 분석기 생성 로직
-func NewTripletAnalyzer(config TripletConfig, infraStructure *infra.TripletInfra) (*TripletAnalyzer, error) {
+func NewTripletAnalyzer(config TripletConfig, infraStructure iface.TripletInfraPort) (*TripletAnalyzer, error) {
 	//전체 EOA인프라에서 꺼내 쓰는 형식
 
 	analyzer := &TripletAnalyzer{
-		name:  gface.ModuleName(config.Name),
-		mode:  config.Mode,
-		infra: infraStructure,
+		name:      gface.ModuleName(config.Name),
+		mode:      config.Mode,
+		infraPort: infraStructure,
 	}
 
 	log.Printf("✅ Simple EOA Analyzer created: %s", config.Name)
@@ -67,7 +66,7 @@ func (a *TripletAnalyzer) Name() gface.ModuleName {
 }
 func (a *TripletAnalyzer) Start(parent context.Context) error {
 	log.Printf("Starting Triplet: %s", a.name)
-	if a.infra.WorkerPool == nil {
+	if a.infraPort.GetWorkerPool() == nil {
 		return fmt.Errorf("트리플렛의 워커풀 초기화되지 못함")
 	}
 	if a.relPool == nil {
@@ -77,7 +76,11 @@ func (a *TripletAnalyzer) Start(parent context.Context) error {
 	g, ctx := errgroup.WithContext(parent)
 	g.Go(func() error { return a.ComsumeTransaction(ctx) })
 	g.Go(func() error { a.statsReporter(ctx); fmt.Printf("트리플렛 리포터 중단\n"); return nil })
-	g.Go(func() error { a.infra.WorkerPool.Start(ctx); fmt.Printf("트리플렛 워커풀 중단"); return nil })
+	g.Go(func() error {
+		a.infraPort.GetWorkerPool().Start(ctx)
+		fmt.Printf("트리플렛 워커풀 중단")
+		return nil
+	})
 	err := g.Wait()
 	fmt.Println("트리플렛 Close 시작")
 	a.Close()
@@ -90,14 +93,14 @@ func (a *TripletAnalyzer) Close() error {
 		return nil
 	}
 
-	if a.infra.WorkerPool != nil {
-		a.infra.WorkerPool.Close()
+	if a.infraPort.GetWorkerPool() != nil {
+		a.infraPort.GetWorkerPool().Close()
 	}
 
-	if a.infra.HeavyTimeBucketManager != nil {
-		a.infra.HeavyTimeBucketManager.Close()
+	if a.infraPort.GetTimeBucketManager() != nil {
+		a.infraPort.GetTimeBucketManager().Close()
 	}
-	a.printFinalReport()
+
 	a.printStatistics()
 	fmt.Printf("트리플렛 종료 완료\n")
 	return nil
@@ -117,16 +120,10 @@ func (a *TripletAnalyzer) RegisterParent(relPool gface.Module) error {
 	return nil
 }
 
-// ProcessTransaction 트랜잭션 처리 (non-blocking)
-// TODO TxJob의 Do()가 서로 경합 발생. 패닉은 아니지만, 암묵적 성능 저하 발생중
-// TODO 문제에 대한 진단 및 추후 개선 방안은 /debug의 upgrade_solution.md에 자세히 적어놨음.
 func (a *TripletAnalyzer) ProcessTransaction(ctx context.Context, tx shareddomain.MarkedTransaction) error {
 	job := NewTransactionJob(tx, a, 0) // workerID는 워커풀에서 자동 관리
 	// 퍼블리시하는 쪽(Analyzer) 직전
-	if err := a.infra.WorkerPool.DispatchJob(ctx, job); err != nil { // <- 블로킹
-		// 종료(stopping/closed) 중엔 에러가 날 수 있으니 드롭 카운트만 올림
-		//atomic.AddInt64(&a.stats.DroppedTxs, 1)
-
+	if err := a.infraPort.GetWorkerPool().DispatchJob(ctx, job); err != nil { // <- 블로킹
 		return fmt.Errorf("ProcessTransaction: enqueue failed: %v", err)
 	}
 	return nil
@@ -189,8 +186,8 @@ func (a *TripletAnalyzer) statsReporter(ctx context.Context) {
 // printStatistics 통계 출력
 func (a *TripletAnalyzer) printStatistics() {
 
-	channelUsage := a.infra.WorkerPool.JobsLen()
-	channelCapacity := a.infra.WorkerPool.JobsCap()
+	channelUsage := a.infraPort.GetWorkerPool().JobsLen()
+	channelCapacity := a.infraPort.GetWorkerPool().JobsCap()
 	usagePercent := float64(channelUsage) / float64(channelCapacity) * 100
 
 	log.Printf("📊 [%s] %s Statistics:", a.mode, a.name)
@@ -209,8 +206,8 @@ func (a *TripletAnalyzer) GetStatistics() map[string]any {
 	return map[string]any{
 		"mode":             a.mode.String(),
 		"name":             a.name,
-		"channel_usage":    a.infra.WorkerPool.JobsLen(),
-		"channel_capacity": a.infra.WorkerPool.JobsCap(),
+		"channel_usage":    a.infraPort.GetWorkerPool().JobsLen(),
+		"channel_capacity": a.infraPort.GetWorkerPool().JobsCap(),
 	}
 }
 
@@ -224,23 +221,6 @@ func (a *TripletAnalyzer) IsHealthy() bool {
 }
 
 // GetChannelStatus 채널 상태 반환
-func (a *TripletAnalyzer) GetChannelStatus() (int, int) {
-	return a.infra.WorkerPool.JobsLen(), a.infra.WorkerPool.JobsCap()
-}
-
-// printFinalReport 최종 리포트 출력 (테스트 모드용)
-func (a *TripletAnalyzer) printFinalReport() {
-	log.Printf("\n" + strings.Repeat("=", 80))
-	log.Printf("🎯 FINAL REPORT: %s", a.name)
-	log.Printf(strings.Repeat("=", 80))
-
-	log.Printf("📊 Performance Summary:")
-
-	graphStats := a.relPool.GetGraphStats()
-	log.Printf("\n🗂️  Graph Database State:")
-	for key, value := range graphStats {
-		log.Printf("   %s: %v", key, value)
-	}
-
-	log.Printf(strings.Repeat("=", 80) + "\n")
+func (a *TripletAnalyzer) GetJobChannelStatus() (int, int) {
+	return a.infraPort.GetWorkerPool().JobsLen(), a.infraPort.GetWorkerPool().JobsCap()
 }

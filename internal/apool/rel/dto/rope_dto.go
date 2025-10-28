@@ -1,4 +1,4 @@
-package roperepo
+package dto
 
 import (
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"

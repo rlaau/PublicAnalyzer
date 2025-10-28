@@ -225,7 +225,16 @@ func ComposeRelPool() *rel.RelationPool {
 		panic("트리플렛 생성 중 에러")
 	}
 	relDistributor := rinf.NewRelFanoutManager("Testing_rel", 2000, 2000)
-	relPool, _ := rel.NewRelPool(mode.TestingModeProcess, relDistributor, triplet)
+	//TODO 이 코드 추후 수정하기.
+	//TODO 로프DB의 구조 자체를 워커풀 & 스타트 기반으로 바꿀 것.
+	//TODO 지금 콘텍스트 주는건 그냥 끼워맞추기 용이고, 실제 수정본에선 New시엔 컨텍스트 x였다가
+	//TODO Start에서 ctx전파 받기
+	clusterDB, err := rinf.NewClusterDB(context.Background(), mode.TestingModeProcess)
+	if err != nil {
+		fmt.Printf("ComposeRelPool서 clusterDB생성 중 에러 발생. %s\n", err.Error())
+		return nil
+	}
+	relPool, _ := rel.NewRelPool(mode.TestingModeProcess, relDistributor, clusterDB, triplet)
 	return relPool
 }
 

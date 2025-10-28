@@ -1,12 +1,21 @@
 package infra
 
 import (
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/workerpool"
 )
 
 type TripletInfra struct {
 	HeavyTimeBucketManager *HeavyTimeBucketManager
 	WorkerPool             *workerpool.Pool
+}
+
+func (t *TripletInfra) GetTimeBucketManager() iface.TimeBuckerManager {
+	return t.HeavyTimeBucketManager
+}
+
+func (t TripletInfra) GetWorkerPool() *workerpool.Pool {
+	return t.WorkerPool
 }
 
 func NewTripletInfra(

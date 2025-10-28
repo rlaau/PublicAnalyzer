@@ -21,6 +21,14 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
 
+// === 파라미터 ===
+const (
+	WindowSize      = 4 * 30 * 24 * chaintimer.Hour // 4개월
+	SlideInterval   = 7 * 24 * chaintimer.Hour      // 1주
+	TriggerInterval = 7 * 24 * chaintimer.Hour
+	MaxTimeBuckets  = 5 //21 일단 5개만 들고 있기.
+)
+
 // HeavyTimeBucket - 메모리 기반으로 toAddress -> []FromScala 매핑을 포함
 type HeavyTimeBucket struct {
 	StartTime chaintimer.ChainTime
@@ -174,65 +182,6 @@ func (m *HeavyTimeBucketManager) GetFromScalas(toAddr domain.Address) []ldomain.
 	}
 
 	return []ldomain.FromScala{}
-}
-
-// == 통계/모니터링 API ==
-
-// ActiveCount: 활성 버킷 수
-func (m *HeavyTimeBucketManager) ActiveCount() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.count
-}
-
-// TotalToUsers: 전체 to 사용자 수
-func (m *HeavyTimeBucketManager) TotalToUsers() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	sum := 0
-	for i := 0; i < MaxTimeBuckets; i++ {
-		if b := m.buckets[i]; b != nil {
-			sum += len(b.ToUsers)
-		}
-	}
-	return sum
-}
-
-// CountPendingRelations: 전체 pending relation 개수 (모든 FromScala 개수의 합)
-func (m *HeavyTimeBucketManager) CountPendingRelations() int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	sum := 0
-	for i := 0; i < MaxTimeBuckets; i++ {
-		if b := m.buckets[i]; b != nil {
-			for _, fromScalas := range b.ToUsers {
-				sum += len(fromScalas)
-			}
-		}
-	}
-	return sum
-}
-
-// DeleteToUser: 특정 to 주소의 모든 pending relations 제거 (내부 사용용)
-func (m *HeavyTimeBucketManager) DeleteToUser(to domain.Address) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.count == 0 {
-		return false
-	}
-	for i := 0; i < m.count; i++ {
-		idx := (m.rearIndex - i + MaxTimeBuckets) % MaxTimeBuckets
-		b := m.buckets[idx]
-		if b == nil {
-			continue
-		}
-		if _, ok := b.ToUsers[to]; ok {
-			delete(b.ToUsers, to)
-			m.dirty = true
-			return true
-		}
-	}
-	return false
 }
 
 // == 내부 로직 ==

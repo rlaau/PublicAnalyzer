@@ -19,7 +19,7 @@ type TripletPort interface {
 	// 상태 조회
 	GetStatistics() map[string]any
 	IsHealthy() bool
-	GetChannelStatus() (usage int, capacity int)
+	GetJobChannelStatus() (usage int, capacity int)
 
 	GetRopeDBStats() map[string]any
 }

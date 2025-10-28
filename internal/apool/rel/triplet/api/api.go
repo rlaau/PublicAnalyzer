@@ -177,7 +177,7 @@ func (h *TripletAPIHandler) handleChannelStatus(w http.ResponseWriter, r *http.R
 			utils.WriteJSONResponse(w, map[string]any{"usage": 0, "capacity": 1, "usage_percent": 0.0})
 		}
 	}()
-	usage, capacity := h.analyzer.GetChannelStatus()
+	usage, capacity := h.analyzer.GetJobChannelStatus()
 	usagePercent := float64(usage) / float64(capacity) * 100
 
 	response := map[string]interface{}{

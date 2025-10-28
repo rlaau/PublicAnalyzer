@@ -8,7 +8,6 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/cface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/pface"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/roperepo"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
@@ -36,20 +35,13 @@ type RelationPool struct {
 	ClusterRepo   iface.ClusterDB
 }
 
-func NewRelPool(isTest mode.ProcessingMode, txDistributor iface.RelPoolFanout, triplet cface.TripletPort) (*RelationPool, error) {
-	//TODO 추후 ropeDB의 수정과 함꼐 반드시 갈아엎을 것
-	//TODO ropeRepo에 이런 식으로 ctx집어넣는게 아니라, ropeRepo.Start(ctx)로 집어넣기
-	//TODO 현재는 그냥 임시로 땜빵한 것임. 반드시 고쳐야 함!
-	ctx := context.Background()
-	ropeRepo, err := roperepo.NewClusterDB(ctx, isTest)
-	if err != nil {
-		return nil, err
-	}
+func NewRelPool(isTest mode.ProcessingMode, txDistributor iface.RelPoolFanout, clusterDB iface.ClusterDB, triplet cface.TripletPort) (*RelationPool, error) {
+
 	busTriplet := eventbus.NewInMemory[cface.TripletEventMsg](128, "TripletEventBus")
 	r := &RelationPool{
 		isTest:      isTest,
 		busTriplet:  busTriplet,
-		ClusterRepo: ropeRepo,
+		ClusterRepo: clusterDB,
 		ports: struct{ triplet cface.TripletPort }{
 			triplet: triplet,
 		},
