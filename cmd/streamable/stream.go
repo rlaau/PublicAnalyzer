@@ -10,21 +10,21 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	ap "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool"
-	ainf "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/infra"
-	np "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/app"
-	co "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/co/app"
-	eo "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/eo/app"
-	ninf "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/nod/infra"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel"
-	relapi "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/api"
-	rinf "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/infra"
+	ap "github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan"
+	ainf "github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/infra"
+	np "github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/nod/app"
+	co "github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/nod/co/app"
+	eo "github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/nod/eo/app"
+	ninf "github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/nod/infra"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/rel"
+	relapi "github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/rel/api"
+	rinf "github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/rel/infra"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server"
 	"golang.org/x/sync/errgroup"
 
-	triplet "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/app"
-	tinf "github.com/rlaaudgjs5638/chainAnalyzer/internal/apool/rel/triplet/infra"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/streamfeeder/bus"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dexfeeder"
+	triplet "github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/rel/triplet/app"
+	tinf "github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/rel/triplet/infra"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
@@ -48,7 +48,7 @@ func main() {
 
 	endTime, _ := time.Parse("2006-01-02", "2024-12-31")
 
-	sb, err := bus.NewStreamBus(bus.StreamBusConfig{
+	sb, err := dexfeeder.NewDexStreamBus(dexfeeder.DexStreamBusConfig{
 		BufferSize:   100_000, // 버퍼(큐) 크기
 		SaveInterval: time.Second,
 	})
@@ -58,9 +58,9 @@ func main() {
 
 	relPool := ComposeRelPool()
 	nodPool := ComposeNodPool()
-	apoolFanout := ainf.NewApoolFanoutManager("Testing_apool", 2000, 2000)
+	apoolFanout := ainf.NewDxanFanoutManager("Testing_apool", 2000, 2000)
 
-	apool := ap.NewAnalyzerPool(mode.TestingModeProcess, apoolFanout, nodPool, relPool)
+	apool := ap.NewDexAnalyzerPool(mode.TestingModeProcess, apoolFanout, nodPool, relPool)
 
 	fmt.Println("apool 성공적으로 초기화됨")
 
@@ -150,8 +150,8 @@ func main() {
 }
 
 func LoadAndTranslateToMarkedTransaction(
-	sb *bus.StreamBus,
-	apool *ap.AnalyzerPool,
+	sb *dexfeeder.DexStreamBus,
+	apool *ap.DexAnalyzerPool,
 	ctx context.Context,
 ) error {
 	pubCount := 0
@@ -184,7 +184,7 @@ func LoadAndTranslateToMarkedTransaction(
 
 }
 
-func translateTx(apool *ap.AnalyzerPool, tx domain.RawTransaction) domain.MarkedTransaction {
+func translateTx(apool *ap.DexAnalyzerPool, tx domain.RawTransaction) domain.MarkedTransaction {
 	co := apool.GetNodPort().GetCoPort()
 	from, _ := domain.ParseAddressFromString(tx.From)
 	to, _ := domain.ParseAddressFromString(tx.To)
