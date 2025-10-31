@@ -1,4 +1,3 @@
-## 기술적 방향성
 ## 아키텍쳐 배경
 
 ### 아키텍쳐 레퍼런스
@@ -6,19 +5,26 @@
 1. 시스템 전체 구성 1:
 모듈러-모노리식 아키텍쳐
 https://ijung.github.io/categories/modular-monolith/
+[프로젝트에선 폴더 별 모듈 분리로 관리]
 2. 시스템 전체 구성 2:
 스트리밍 데이터 파이프라인 아키텍쳐
 https://product.kyobobook.co.kr/detail/S000200716128
-3. 모듈 내부 구성:
+[프로젝트에선 모듈별 gface.Module 강제를 통해서 스트리밍의 시작, 끝, 에러 처리를 제어함]
+3. 시스템 전체 구성 3:
+반응형 아키텍쳐
+https://kooku0.github.io/docs/books/grokking-simplicity/18/
+(함께 서술된 어니언 아키텍쳐는 쓰지 않음. 도메인 주도 설계와 겹치고, 도메인 주도 설계가 어니언 아키텍쳐보다 더 깔끔하다 생각함.)
+[시스템에선, <모듈 간 이벤트 브로킹= 카프카>, <모듈 내 이벤트브로킹= 인메모리 자체 이벤트 자료형>으로 처리할 예정]
+(모듈 내에선 되도록 자체 자료형 쓰는게 테스트에 훨씬 유리하며, 성능 오버헤드도 적다고 판단함.)
+4. 모듈 내부 구성:
 도메인 주도 설계
 [https://ijung.github.io/categories/도메인-주도-설계-첫걸음-done/](https://ijung.github.io/categories/%EB%8F%84%EB%A9%94%EC%9D%B8-%EC%A3%BC%EB%8F%84-%EC%84%A4%EA%B3%84-%EC%B2%AB%EA%B1%B8%EC%9D%8C-done/)
-4. 모듈 외피 구성:
+[프로젝트에선 모듈 내 폴더 분리로 관리함]
+5. 모듈 외피 구성:
 헥사고날 아키텍쳐
 [https://ijung.github.io/categories/헥사고날-아키텍처/](https://ijung.github.io/categories/%ED%97%A5%EC%82%AC%EA%B3%A0%EB%82%A0-%EC%95%84%ED%82%A4%ED%85%8D%EC%B2%98/)
 (단, Go의 철학 상 모듈마다 명시적인 포트를 달지는 않았음. 소비하는 측에서 그때그때 xface만들어서 소비하는 양태임)
-5. 모듈 연결 구성:
-이벤트 주도 아키텍쳐
-[https://ijung.github.io/categories/이벤트-드리븐-아키텍처/](https://ijung.github.io/categories/%EC%9D%B4%EB%B2%A4%ED%8A%B8-%EB%93%9C%EB%A6%AC%EB%B8%90-%EC%95%84%ED%82%A4%ED%85%8D%EC%B2%98/)
+[프로젝트에선 xface로 관리함]
 
 ### Why MMA
 
@@ -102,6 +108,29 @@ raw cex 지표를 유의미한 cex metric으로 변환
         3. 런타임도 잘 설계 필요함.
         4. 개인적으론 ai모델 자체를 일급 대상으로 두는 것도 생각 중.
         (ex: m = NewModel(”buy and pray”); m.Start() 등)
+        5. 또한, 
+        내부적으론 TSDB를 둬서 시계열을 관리하고, 
+        이로부터 “시계열 기반 구조”를 “일급 구조”로 만들고 싶음.
+        6. ex: type Delta struct 
+        {timeWindow time.Second, 
+        metricKind      MetricKind, 
+        ptr                   *[]MetricData}
+        를 go의 slice처럼 원시 타입으로 두고,
+        %%로 생성 가능하게 한다 치면,
+        valanceDelta :=  %(valanceMetric)%로 정의 시, 
+        print(valanceDelta)를 하면, 프린트 할 때마다 1초간 변화량 나오는 등, 시계열 분석을 자동으로 해주게 하기. 
+        혹은 미분 연산을 추가해도 좋고.
+        7. 개인적으론 시계열이나 미분에 대해서, 언어가 다루는 모든 primitive value 타입들 (valnce, token 등등)이 특정 ‘미분 가능한’ 인터페이스를 충족하게 해서, 언어의 “일급 연산”만으로 이들을 쉽게 구해내게 하고싶음.
+        ex) 위의 Delta 타입이 
+        type Delatable interface {
+        epsilon() time.Microsecond
+        Divive() int
+        Window () []int
+        }
+        등을 충족하게 해서
+        ~~등이 window연산에 대응된다고 하면
+        for ~~valanceDelta range := valanceDelta 등으로 매번 델타값의 윈도우 순회 가능케 하기 등 가능하게.
+        
 6. Actor(미구현):
 (interpreter)→ {actor}→(api call)
     1. 인터프리터가 제공한 “선언적 명령어”를 절차적으로 수행함.
@@ -125,6 +154,3 @@ cell의 작동 방식 모방.
 각종 재사용 가능한, 혹은 기초가 되는 DB 구현함.
 6. kafka/ eventub:
 이벤트 통신 수단.
-
-## 컴포지션 루트
-1. cmd/streamable.go
