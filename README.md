@@ -14,11 +14,13 @@ https://product.kyobobook.co.kr/detail/S000200716128
 반응형 아키텍쳐
 https://kooku0.github.io/docs/books/grokking-simplicity/18/
 (함께 서술된 어니언 아키텍쳐는 쓰지 않음. 도메인 주도 설계와 겹치고, 도메인 주도 설계가 어니언 아키텍쳐보다 더 깔끔하다 생각함.)
-[시스템에선, <모듈 간 이벤트 브로킹= 카프카>, <모듈 내 이벤트브로킹= 인메모리 자체 이벤트 자료형>으로 처리할 예정]
+[시스템에선, <모듈 간 이벤트 브로킹= 카프카 혹은 RabbitMQ>, <모듈 내 이벤트브로킹= 인메모리 자체 이벤트 자료형>으로 처리할 예정]
 (모듈 내에선 되도록 자체 자료형 쓰는게 테스트에 훨씬 유리하며, 성능 오버헤드도 적다고 판단함.)
 4. 모듈 내부 구성:
 도메인 주도 설계
 [https://ijung.github.io/categories/도메인-주도-설계-첫걸음-done/](https://ijung.github.io/categories/%EB%8F%84%EB%A9%94%EC%9D%B8-%EC%A3%BC%EB%8F%84-%EC%84%A4%EA%B3%84-%EC%B2%AB%EA%B1%B8%EC%9D%8C-done/)
+도메인을 잘 모델링하는 법
+https://www.youtube.com/watch?v=PLFl95c-IiU
 [프로젝트에선 모듈 내 폴더 분리로 관리함]
 5. 모듈 외피 구성:
 헥사고날 아키텍쳐

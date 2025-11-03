@@ -6,7 +6,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/rel/dto"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/rel/protocol"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server/utils"
 	ropedbapp "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/app"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
@@ -276,7 +276,7 @@ func (h *RelAPIPoolHandler) handleAuthorLegend(w http.ResponseWriter, r *http.Re
 	}
 
 	// AuthorLegend를 직접 반환
-	legend := dto.AuthorLegend
+	legend := protocol.AuthorLegend
 	utils.WriteJSONResponse(w, legend)
 }
 

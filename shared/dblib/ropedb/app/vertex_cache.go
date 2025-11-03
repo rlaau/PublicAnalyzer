@@ -2,13 +2,13 @@ package app
 
 import (
 	"container/list"
+	"encoding/json"
 	"sync"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"google.golang.org/protobuf/proto"
 )
 
 // VertexCache - 단순한 LRU 캐시 + 주기적 BatchWrite
@@ -157,11 +157,9 @@ func (c *VertexCache) batchWriteVertices(vertices []*domain.Vertex) {
 		for _, v := range vertices {
 			key := vKey(v.Address)
 
-			// Proto 직렬화
-			protoV := VertexToProto(*v)
-			data, err := proto.Marshal(protoV)
+			// JSON 직렬화
+			data, err := json.Marshal(v)
 			if err != nil {
-				// Proto 실패시 JSON 폴백 (기존 방식)
 				continue
 			}
 

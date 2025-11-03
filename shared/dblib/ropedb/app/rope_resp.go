@@ -8,9 +8,7 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
-	ropeproto "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/proto"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"google.golang.org/protobuf/proto"
 )
 
 // ===== 형식 =====
@@ -569,13 +567,6 @@ func (b *BadgerRopeDB) topRopeByVolume() (ropedomain.RopeID, ropedomain.RopeMark
 			item := it.Item()
 			var rm ropedomain.RopeMark
 			_ = item.Value(func(val []byte) error {
-				// Proto 형식 먼저 시도
-				protoRM := &ropeproto.RopeMarkProto{}
-				if proto.Unmarshal(val, protoRM) == nil {
-					rm = ProtoToRopeMark(protoRM)
-					return nil
-				}
-				// JSON 폴백 (하위 호환성)
 				return json.Unmarshal(val, &rm)
 			})
 			if rm.ID == 0 {
@@ -603,13 +594,6 @@ func (b *BadgerRopeDB) topRopeFromRandomSample(sampleSize int) (ropedomain.RopeI
 			item := it.Item()
 			var rm ropedomain.RopeMark
 			_ = item.Value(func(val []byte) error {
-				// Proto 형식 먼저 시도
-				protoRM := &ropeproto.RopeMarkProto{}
-				if proto.Unmarshal(val, protoRM) == nil {
-					rm = ProtoToRopeMark(protoRM)
-					return nil
-				}
-				// JSON 폴백 (하위 호환성)
 				return json.Unmarshal(val, &rm)
 			})
 			if rm.ID == 0 || len(rm.Members) == 0 {

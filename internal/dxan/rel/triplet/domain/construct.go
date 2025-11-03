@@ -1,15 +1,11 @@
 package domain
 
 import (
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/rel/dto"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/rel/protocol"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
-
-type CEX domain.Address
-type Deposit domain.Address
-type User domain.Address
 
 func BuildDepositDetection(cex CEX, deposit Deposit, t chaintimer.ChainTime) domain.DetectedDeposit {
 	return domain.DetectedDeposit{
@@ -20,23 +16,23 @@ func BuildDepositDetection(cex CEX, deposit Deposit, t chaintimer.ChainTime) dom
 	}
 }
 func BuildCexAndDepositEvent(cex CEX, deposit Deposit, tx domain.MarkedTransaction) ropedomain.TraitEvent {
-	trait := dto.TraitCexAndDeposit
+	trait := protocol.TraitCexAndDeposit
 	cexAndRule := ropedomain.AddressAndRule{
 		Address: domain.Address(cex),
-		Rule:    dto.RuleCex,
+		Rule:    protocol.RuleCex,
 	}
 	depositAndRule := ropedomain.AddressAndRule{
 		Address: domain.Address(deposit),
-		Rule:    dto.RuleDeposit,
+		Rule:    protocol.RuleDeposit,
 	}
 	txScala := ropedomain.TxScala{
 		TxId:        tx.TxID,
 		Time:        tx.BlockTime,
 		ScoreInc:    1,
-		ValueOrNull: tx.ValueOrNull,
+		ValueOrNull: ropedomain.ParseValue(tx.ValueOrNull),
 	}
 	return ropedomain.NewTraitEvent(
-		dto.AuthorSystem,
+		protocol.AuthorSystem,
 		trait,
 		cexAndRule,
 		depositAndRule,
@@ -45,14 +41,14 @@ func BuildCexAndDepositEvent(cex CEX, deposit Deposit, tx domain.MarkedTransacti
 }
 
 func BuildDualEventWithFromScala(deposit Deposit, user User, fromScala FromScala) ropedomain.TraitEvent {
-	trait := dto.TraitDepositAndUser
+	trait := protocol.TraitDepositAndUser
 	depositAndRule := ropedomain.AddressAndRule{
 		Address: domain.Address(deposit),
-		Rule:    dto.RuleDeposit,
+		Rule:    protocol.RuleDeposit,
 	}
 	userAndRule := ropedomain.AddressAndRule{
 		Address: domain.Address(user),
-		Rule:    dto.RuleUser,
+		Rule:    protocol.RuleUser,
 	}
 	txScala := ropedomain.TxScala{
 		TxId:        fromScala.LastTxId,
@@ -61,7 +57,7 @@ func BuildDualEventWithFromScala(deposit Deposit, user User, fromScala FromScala
 		ValueOrNull: fromScala.ValueOrNull,
 	}
 	return ropedomain.NewTraitEvent(
-		dto.AuthorSystem,
+		protocol.AuthorSystem,
 		trait,
 		depositAndRule,
 		userAndRule,
@@ -70,23 +66,23 @@ func BuildDualEventWithFromScala(deposit Deposit, user User, fromScala FromScala
 }
 
 func BuildDualEventWithTx(deposit Deposit, user User, tx domain.MarkedTransaction) ropedomain.TraitEvent {
-	trait := dto.TraitDepositAndUser
+	trait := protocol.TraitDepositAndUser
 	depositRule := ropedomain.AddressAndRule{
 		Address: domain.Address(deposit),
-		Rule:    dto.RuleDeposit,
+		Rule:    protocol.RuleDeposit,
 	}
 	userAndRule := ropedomain.AddressAndRule{
 		Address: domain.Address(user),
-		Rule:    dto.RuleUser,
+		Rule:    protocol.RuleUser,
 	}
 	txScala := ropedomain.TxScala{
 		TxId:        tx.TxID,
 		Time:        tx.BlockTime,
 		ScoreInc:    1,
-		ValueOrNull: tx.ValueOrNull,
+		ValueOrNull: ropedomain.ParseValue(tx.ValueOrNull),
 	}
 	return ropedomain.NewTraitEvent(
-		dto.AuthorSystem,
+		protocol.AuthorSystem,
 		trait,
 		depositRule,
 		userAndRule,

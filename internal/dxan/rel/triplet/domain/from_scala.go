@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
+	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/shopspring/decimal"
 )
@@ -16,7 +17,7 @@ type FromScala struct {
 	LastTxId    domain.TxId
 	LastTime    chaintimer.ChainTime
 	Volume      int32
-	ValueOrNull decimal.Decimal
+	ValueOrNull ropedomain.Value
 }
 
 // === Marshaling/Unmarshaling ===
@@ -41,7 +42,7 @@ func (fs *FromScala) Marshal(w io.Writer) error {
 		return err
 	}
 	// ValueOrNull (var-bytes, ascii decimal)
-	return writeDecimal(w, fs.ValueOrNull)
+	return fs.ValueOrNull.Marshal(w)
 }
 
 // Unmarshal deserializes a single FromScala from binary format
@@ -69,12 +70,12 @@ func (fs *FromScala) Unmarshal(r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	fs.ValueOrNull = d
+	fs.ValueOrNull = ropedomain.ParseValue(d)
 	return nil
 }
 
 // NewFromScala creates a FromScala with initial values
-func NewFromScala(from domain.Address, txId domain.TxId, txTime chaintimer.ChainTime, value decimal.Decimal) FromScala {
+func NewFromScala(from domain.Address, txId domain.TxId, txTime chaintimer.ChainTime, value ropedomain.Value) FromScala {
 	volume := int32(1)
 	return FromScala{
 		FromAddress: from,
@@ -86,7 +87,7 @@ func NewFromScala(from domain.Address, txId domain.TxId, txTime chaintimer.Chain
 }
 
 // Update updates the FromScala with new transaction data
-func (fs *FromScala) Update(txId domain.TxId, txTime chaintimer.ChainTime, value decimal.Decimal) {
+func (fs *FromScala) Update(txId domain.TxId, txTime chaintimer.ChainTime, value ropedomain.Value) {
 	fs.LastTxId = txId
 	fs.LastTime = txTime
 	if fs.Volume < 2147483647 { // math.MaxInt32
@@ -143,7 +144,7 @@ func (fss FromScalas) FindByAddress(addr domain.Address) (int, bool) {
 }
 
 // AddOrUpdate adds a new FromScala or updates an existing one
-func (fss FromScalas) AddOrUpdate(from domain.Address, txId domain.TxId, txTime chaintimer.ChainTime, value decimal.Decimal) FromScalas {
+func (fss FromScalas) AddOrUpdate(from domain.Address, txId domain.TxId, txTime chaintimer.ChainTime, value ropedomain.Value) FromScalas {
 	idx, found := fss.FindByAddress(from)
 	if found {
 		fss[idx].Update(txId, txTime, value)
@@ -162,16 +163,6 @@ func (fss FromScalas) Copy() FromScalas {
 	return result
 }
 
-// === Helper functions for binary serialization ===
-
-func writeVarBytes(w io.Writer, b []byte) error {
-	if err := binary.Write(w, binary.LittleEndian, uint32(len(b))); err != nil {
-		return err
-	}
-	_, err := w.Write(b)
-	return err
-}
-
 func readVarBytes(r io.Reader) ([]byte, error) {
 	var n uint32
 	if err := binary.Read(r, binary.LittleEndian, &n); err != nil {
@@ -184,12 +175,6 @@ func readVarBytes(r io.Reader) ([]byte, error) {
 	_, err := io.ReadFull(r, buf)
 	return buf, err
 }
-
-func writeDecimal(w io.Writer, d decimal.Decimal) error {
-	txt := d.String()
-	return writeVarBytes(w, []byte(txt))
-}
-
 func readDecimal(r io.Reader) (decimal.Decimal, error) {
 	b, err := readVarBytes(r)
 	if err != nil {

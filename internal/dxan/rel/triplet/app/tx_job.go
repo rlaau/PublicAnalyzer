@@ -8,6 +8,7 @@ import (
 	ldomain "github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/rel/triplet/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/rel/triplet/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/rel/triplet/pface"
+	rdomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
@@ -133,7 +134,7 @@ func handleTripletEvent(tev tripletEvent, rel pface.RelPort, timeBuckerManager i
 			fromAddr,
 			tev.tx.TxID,
 			tev.tx.BlockTime,
-			tev.tx.ValueOrNull,
+			rdomain.ParseValue(tev.tx.ValueOrNull),
 		)
 		timeBuckerManager.AddIfAbsent(toAddr, fromScala)
 		return nil

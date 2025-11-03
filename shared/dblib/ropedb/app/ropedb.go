@@ -15,13 +15,11 @@ import (
 	chaintimer "github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
-	ropeproto "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/proto"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring/meter/rsv"
 	"github.com/shopspring/decimal"
-	"google.golang.org/protobuf/proto"
 )
 
 // ------------------------------------------------------------
@@ -813,9 +811,8 @@ func (b *BadgerRopeDB) traitWorker() {
 			for id, a := range agg {
 				key := []byte(fmt.Sprintf("%s%d", kT, uint64(id)))
 
-				// Proto Marshal
-				protoTM := TraitMarkToProto(a.tm)
-				data, err := proto.Marshal(protoTM)
+				// JSON Marshal
+				data, err := json.Marshal(a.tm)
 				if err != nil {
 					return err
 				}
@@ -880,7 +877,7 @@ func (b *BadgerRopeDB) traitWorker() {
 						RuleB:       op.RuleB,
 						Score:       0,
 						Volume:      0,
-						ValueOrNull: decimal.Zero,
+						ValueOrNull: domain.ParseValue(decimal.Zero),
 						LastSeen:    op.LastSeen,
 					}
 				}
@@ -949,13 +946,6 @@ func (b *BadgerRopeDB) ropeWorker() {
 				var rm domain.RopeMark
 				if itm, err := txn.Get(key); err == nil {
 					_ = itm.Value(func(val []byte) error {
-						// Proto 형식 먼저 시도
-						protoRM := &ropeproto.RopeMarkProto{}
-						if proto.Unmarshal(val, protoRM) == nil {
-							rm = ProtoToRopeMark(protoRM)
-							return nil
-						}
-						// JSON 폴백
 						return json.Unmarshal(val, &rm)
 					})
 				}
@@ -967,7 +957,7 @@ func (b *BadgerRopeDB) ropeWorker() {
 						Members:     nil,
 						Volume:      0,
 						LastSeen:    op.LastSeen,
-						ValueOrNull: decimal.Zero,
+						ValueOrNull: domain.ParseValue(decimal.Zero),
 					}
 				}
 
@@ -1001,9 +991,8 @@ func (b *BadgerRopeDB) ropeWorker() {
 					rm.TrapVertexes = MergeTrapVerticesUniquePairs(rm.TrapVertexes, op.TrapVertexes)
 				}
 
-				// Proto Marshal로 저장
-				protoRM := RopeMarkToProto(rm)
-				data, err := proto.Marshal(protoRM)
+				// JSON Marshal로 저장
+				data, err := json.Marshal(rm)
 				if err != nil {
 					return err
 				}
@@ -1079,9 +1068,8 @@ func (b *BadgerRopeDB) polyRopeWorker() {
 			for id, a := range agg {
 				key := []byte(fmt.Sprintf("%s%d", kPR, uint64(id)))
 
-				// Proto Marshal
-				protoPRM := PolyRopeMarkToProto(a.prm)
-				data, err := proto.Marshal(protoPRM)
+				// JSON Marshal
+				data, err := json.Marshal(a.prm)
 				if err != nil {
 					return err
 				}
@@ -1192,7 +1180,7 @@ func (b *BadgerRopeDB) applyTraitUpsert(op domain.TraitMarkUpsert) {
 				RuleB:       op.RuleB,
 				Score:       0,
 				Volume:      0,
-				ValueOrNull: decimal.Zero, // ✅ 새로 추가: 기본 0으로
+				ValueOrNull: domain.ParseValue(decimal.Zero), // ✅ 새로 추가: 기본 0으로
 				LastSeen:    op.LastSeen,
 			}
 		}
@@ -1241,7 +1229,7 @@ func (b *BadgerRopeDB) applyRopeUpsert(op domain.RopeMarkUpsert) {
 				Members:     nil,
 				Volume:      0,
 				LastSeen:    op.LastSeen,
-				ValueOrNull: decimal.Zero,
+				ValueOrNull: domain.ParseValue(decimal.Zero),
 			}
 		}
 		// if len(rm.Members) >= maxRopeSize {
@@ -1369,17 +1357,7 @@ func (b *BadgerRopeDB) getOrCreateVertexNoLock(a shareddomain.Address) *domain.V
 			return err
 		}
 		return itm.Value(func(val []byte) error {
-			// Proto 형식 먼저 시도
-			protoV := &ropeproto.VertexProto{}
-			if proto.Unmarshal(val, protoV) == nil {
-				v = ProtoToVertex(protoV)
-				return nil
-			}
-
-			// JSON 폴백 (하위 호환성)
-			err := json.Unmarshal(val, &v)
-
-			return err
+			return json.Unmarshal(val, &v)
 		})
 	})
 	if err == nil && !shareddomain.IsNullAddress(v.Address) {
@@ -1403,13 +1381,9 @@ func vKey(a shareddomain.Address) []byte {
 func (b *BadgerRopeDB) putVertexNoLock(v *domain.Vertex) {
 	key := vKey(v.Address)
 	err := b.dbV.Update(func(txn *badger.Txn) error {
-		// Proto 형식으로 저장
-		protoV := VertexToProto(*v)
-		data, err := proto.Marshal(protoV)
+		data, err := json.Marshal(v)
 		if err != nil {
-			// 에러 시 JSON 폴백
-			fmt.Printf("🔸 Proto marshal failed for vertex %v: %v, using JSON fallback\n", v.Address, err)
-			data, _ = json.Marshal(v)
+			return err
 		}
 		return txn.Set(key, data)
 	})
@@ -1494,14 +1468,6 @@ func (b *BadgerRopeDB) getRopeMark(id domain.RopeID) domain.RopeMark {
 			return err
 		}
 		return itm.Value(func(val []byte) error {
-			// Proto 형식 먼저 시도
-			protoRM := &ropeproto.RopeMarkProto{}
-			if proto.Unmarshal(val, protoRM) == nil {
-				rm = ProtoToRopeMark(protoRM)
-				return nil
-			}
-
-			// JSON 폴백 (하위 호환성)
 			return json.Unmarshal(val, &rm)
 		})
 	})
@@ -1517,14 +1483,6 @@ func (b *BadgerRopeDB) getPolyRopeMark(id domain.PolyRopeID) domain.PolyRopeMark
 			return err
 		}
 		return itm.Value(func(val []byte) error {
-			// Proto 형식 먼저 시도
-			protoPRM := &ropeproto.PolyRopeMarkProto{}
-			if proto.Unmarshal(val, protoPRM) == nil {
-				prm = ProtoToPolyRopeMark(protoPRM)
-				return nil
-			}
-
-			// JSON 폴백 (하위 호환성)
 			return json.Unmarshal(val, &prm)
 		})
 	})
@@ -1656,14 +1614,6 @@ func (b *BadgerRopeDB) ViewAllTraitMarkByCode(t domain.TraitCode) ([]domain.Trai
 			item := it.Item()
 			var tm domain.TraitMark
 			err := item.Value(func(val []byte) error {
-				// Proto 형식 먼저 시도
-				protoTM := &ropeproto.TraitMarkProto{}
-				if proto.Unmarshal(val, protoTM) == nil {
-					tm = ProtoToTraitMark(protoTM)
-					return nil
-				}
-
-				// JSON 폴백 (하위 호환성)
 				return json.Unmarshal(val, &tm)
 			})
 			if err != nil {
@@ -1678,7 +1628,7 @@ func (b *BadgerRopeDB) ViewAllTraitMarkByCode(t domain.TraitCode) ([]domain.Trai
 	return result, err
 }
 
-// getTraitMark - TraitMark 로드 (Proto 우선, JSON 폴백)
+// getTraitMark - TraitMark 로드
 func (b *BadgerRopeDB) getTraitMark(id domain.TraitID) domain.TraitMark {
 	key := []byte(fmt.Sprintf("%s%d", kT, uint64(id)))
 	var tm domain.TraitMark
@@ -1690,14 +1640,6 @@ func (b *BadgerRopeDB) getTraitMark(id domain.TraitID) domain.TraitMark {
 		}
 
 		return item.Value(func(val []byte) error {
-			// Proto 형식 먼저 시도
-			protoTM := &ropeproto.TraitMarkProto{}
-			if proto.Unmarshal(val, protoTM) == nil {
-				tm = ProtoToTraitMark(protoTM)
-				return nil
-			}
-
-			// JSON 폴백 (하위 호환성)
 			return json.Unmarshal(val, &tm)
 		})
 	})

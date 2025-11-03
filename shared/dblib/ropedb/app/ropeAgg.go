@@ -26,7 +26,7 @@ type ropeAggEntry struct {
 
 	// delta: 이번 배치 동안의 누적
 	addMembers  []shareddomain.Address
-	valueDelta  decimal.Decimal
+	valueDelta  domain.Value
 	volumeDelta uint32
 	lastSeenMax chaintimer.ChainTime
 	trapDelta   []domain.TrapVertex
@@ -235,7 +235,7 @@ func (c *RopeAggCache) CommitFlushSnaps(snaps map[domain.RopeID]domain.RopeMark)
 			if len(e.addMembers) > 0 {
 				e.addMembers = e.addMembers[:0]
 			}
-			e.valueDelta = decimal.Zero
+			e.valueDelta = domain.ParseValue(decimal.Zero)
 			e.volumeDelta = 0
 			if len(e.trapDelta) > 0 {
 				e.trapDelta = nil

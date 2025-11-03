@@ -6,11 +6,14 @@ import (
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
+	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+var Zero ropedomain.Value = ropedomain.ParseValue(decimal.Zero)
 
 // === Test Helpers ===
 
@@ -41,7 +44,7 @@ func TestNewFromScala(t *testing.T) {
 		from := createTestAddress(0xAA)
 		txId := createTestTxId(0xBB)
 		txTime := createTestTime()
-		value := decimal.NewFromFloat(1.5)
+		value := ropedomain.ParseValue(decimal.NewFromFloat(1.5))
 
 		fs := NewFromScala(from, txId, txTime, value)
 
@@ -58,7 +61,7 @@ func TestNewFromScala(t *testing.T) {
 		txTime := createTestTime()
 		value := decimal.Zero
 
-		fs := NewFromScala(from, txId, txTime, value)
+		fs := NewFromScala(from, txId, txTime, ropedomain.ParseValue(value))
 
 		assert.Equal(t, int32(1), fs.Volume)
 		assert.True(t, fs.ValueOrNull.IsZero())
@@ -72,28 +75,28 @@ func TestFromScala_Update(t *testing.T) {
 		from := createTestAddress(0xAA)
 		txId1 := createTestTxId(0xBB)
 		txTime1 := createTestTime()
-		value1 := decimal.NewFromFloat(1.0)
+		value1 := ropedomain.ParseValue(decimal.NewFromFloat(1.0))
 
 		fs := NewFromScala(from, txId1, txTime1, value1)
 
 		// Update with new transaction
 		txId2 := createTestTxId(0xCC)
 		txTime2 := txTime1.Add(chaintimer.Hour)
-		value2 := decimal.NewFromFloat(2.0)
+		value2 := ropedomain.ParseValue(decimal.NewFromFloat(2.0))
 
 		fs.Update(txId2, txTime2, value2)
 
 		assert.Equal(t, txId2, fs.LastTxId)
 		assert.Equal(t, txTime2, fs.LastTime)
 		assert.Equal(t, int32(2), fs.Volume)
-		assert.True(t, decimal.NewFromFloat(3.0).Equal(fs.ValueOrNull))
+		assert.True(t, ropedomain.ParseValue(decimal.NewFromFloat(3.0)).Equal(fs.ValueOrNull))
 	})
 
 	t.Run("updates volume without changing value when zero", func(t *testing.T) {
 		from := createTestAddress(0xAA)
 		txId := createTestTxId(0xBB)
 		txTime := createTestTime()
-		value := decimal.NewFromFloat(5.0)
+		value := ropedomain.ParseValue(decimal.NewFromFloat(5.0))
 
 		fs := NewFromScala(from, txId, txTime, value)
 
@@ -101,7 +104,7 @@ func TestFromScala_Update(t *testing.T) {
 		newTxId := createTestTxId(0xCC)
 		newTime := txTime.Add(chaintimer.Hour)
 
-		fs.Update(newTxId, newTime, decimal.Zero)
+		fs.Update(newTxId, newTime, ropedomain.ParseValue(decimal.Zero))
 
 		assert.Equal(t, int32(2), fs.Volume)
 		assert.True(t, value.Equal(fs.ValueOrNull)) // Value unchanged
@@ -112,10 +115,10 @@ func TestFromScala_Update(t *testing.T) {
 		txId := createTestTxId(0xBB)
 		txTime := createTestTime()
 
-		fs := NewFromScala(from, txId, txTime, decimal.Zero)
+		fs := NewFromScala(from, txId, txTime, ropedomain.ParseValue(decimal.Zero))
 		fs.Volume = 2147483647 // MaxInt32
 
-		fs.Update(txId, txTime, decimal.Zero)
+		fs.Update(txId, txTime, ropedomain.ParseValue(decimal.Zero))
 
 		assert.Equal(t, int32(2147483647), fs.Volume) // Should not overflow
 	})
@@ -126,7 +129,7 @@ func TestFromScala_Update(t *testing.T) {
 func TestFromScala_Matches(t *testing.T) {
 	t.Run("returns true for matching address", func(t *testing.T) {
 		addr := createTestAddress(0xAA)
-		fs := NewFromScala(addr, createTestTxId(0xBB), createTestTime(), decimal.Zero)
+		fs := NewFromScala(addr, createTestTxId(0xBB), createTestTime(), ropedomain.ParseValue(decimal.Zero))
 
 		assert.True(t, fs.Matches(addr))
 	})
@@ -134,7 +137,7 @@ func TestFromScala_Matches(t *testing.T) {
 	t.Run("returns false for different address", func(t *testing.T) {
 		addr1 := createTestAddress(0xAA)
 		addr2 := createTestAddress(0xBB)
-		fs := NewFromScala(addr1, createTestTxId(0xCC), createTestTime(), decimal.Zero)
+		fs := NewFromScala(addr1, createTestTxId(0xCC), createTestTime(), ropedomain.ParseValue(decimal.Zero))
 
 		assert.False(t, fs.Matches(addr2))
 	})
@@ -147,11 +150,10 @@ func TestFromScalas_FindByAddress(t *testing.T) {
 		addr1 := createTestAddress(0xAA)
 		addr2 := createTestAddress(0xBB)
 		addr3 := createTestAddress(0xCC)
-
 		fss := FromScalas{
-			NewFromScala(addr1, createTestTxId(0x11), createTestTime(), decimal.Zero),
-			NewFromScala(addr2, createTestTxId(0x22), createTestTime(), decimal.Zero),
-			NewFromScala(addr3, createTestTxId(0x33), createTestTime(), decimal.Zero),
+			NewFromScala(addr1, createTestTxId(0x11), createTestTime(), Zero),
+			NewFromScala(addr2, createTestTxId(0x22), createTestTime(), Zero),
+			NewFromScala(addr3, createTestTxId(0x33), createTestTime(), Zero),
 		}
 
 		idx, found := fss.FindByAddress(addr2)
@@ -166,7 +168,7 @@ func TestFromScalas_FindByAddress(t *testing.T) {
 		addr2 := createTestAddress(0xBB)
 
 		fss := FromScalas{
-			NewFromScala(addr1, createTestTxId(0x11), createTestTime(), decimal.Zero),
+			NewFromScala(addr1, createTestTxId(0x11), createTestTime(), Zero),
 		}
 
 		idx, found := fss.FindByAddress(addr2)
@@ -194,7 +196,7 @@ func TestFromScalas_AddOrUpdate(t *testing.T) {
 		addr := createTestAddress(0xAA)
 		txId := createTestTxId(0xBB)
 		txTime := createTestTime()
-		value := decimal.NewFromFloat(1.5)
+		value := ropedomain.ParseValue(decimal.NewFromFloat(1.5))
 
 		result := fss.AddOrUpdate(addr, txId, txTime, value)
 
@@ -209,7 +211,7 @@ func TestFromScalas_AddOrUpdate(t *testing.T) {
 		addr := createTestAddress(0xAA)
 		txId1 := createTestTxId(0xBB)
 		txTime1 := createTestTime()
-		value1 := decimal.NewFromFloat(1.0)
+		value1 := ropedomain.ParseValue(decimal.NewFromFloat(1.0))
 
 		fss := FromScalas{
 			NewFromScala(addr, txId1, txTime1, value1),
@@ -217,7 +219,7 @@ func TestFromScalas_AddOrUpdate(t *testing.T) {
 
 		txId2 := createTestTxId(0xCC)
 		txTime2 := txTime1.Add(chaintimer.Hour)
-		value2 := decimal.NewFromFloat(2.0)
+		value2 := ropedomain.ParseValue(decimal.NewFromFloat(2.0))
 
 		result := fss.AddOrUpdate(addr, txId2, txTime2, value2)
 
@@ -225,7 +227,7 @@ func TestFromScalas_AddOrUpdate(t *testing.T) {
 		assert.Equal(t, txId2, result[0].LastTxId)
 		assert.Equal(t, txTime2, result[0].LastTime)
 		assert.Equal(t, int32(2), result[0].Volume)
-		assert.True(t, decimal.NewFromFloat(3.0).Equal(result[0].ValueOrNull))
+		assert.True(t, ropedomain.ParseValue(decimal.NewFromFloat(3.0)).Equal(result[0].ValueOrNull))
 	})
 
 	t.Run("adds to existing slice", func(t *testing.T) {
@@ -233,10 +235,10 @@ func TestFromScalas_AddOrUpdate(t *testing.T) {
 		addr2 := createTestAddress(0xBB)
 
 		fss := FromScalas{
-			NewFromScala(addr1, createTestTxId(0x11), createTestTime(), decimal.NewFromFloat(1.0)),
+			NewFromScala(addr1, createTestTxId(0x11), createTestTime(), ropedomain.ParseValue(decimal.NewFromFloat(1.0))),
 		}
 
-		result := fss.AddOrUpdate(addr2, createTestTxId(0x22), createTestTime(), decimal.NewFromFloat(2.0))
+		result := fss.AddOrUpdate(addr2, createTestTxId(0x22), createTestTime(), ropedomain.ParseValue(decimal.NewFromFloat(2.0)))
 
 		require.Len(t, result, 2)
 		assert.Equal(t, addr1, result[0].FromAddress)
@@ -251,8 +253,7 @@ func TestFromScalas_Copy(t *testing.T) {
 		addr := createTestAddress(0xAA)
 		txId := createTestTxId(0xBB)
 		txTime := createTestTime()
-		value := decimal.NewFromFloat(1.0)
-
+		value := ropedomain.ParseValue(decimal.NewFromFloat(1.0))
 		original := FromScalas{
 			NewFromScala(addr, txId, txTime, value),
 		}
@@ -277,9 +278,9 @@ func TestFromScalas_Copy(t *testing.T) {
 
 	t.Run("copies multiple elements", func(t *testing.T) {
 		fss := FromScalas{
-			NewFromScala(createTestAddress(0xAA), createTestTxId(0x11), createTestTime(), decimal.NewFromFloat(1.0)),
-			NewFromScala(createTestAddress(0xBB), createTestTxId(0x22), createTestTime(), decimal.NewFromFloat(2.0)),
-			NewFromScala(createTestAddress(0xCC), createTestTxId(0x33), createTestTime(), decimal.NewFromFloat(3.0)),
+			NewFromScala(createTestAddress(0xAA), createTestTxId(0x11), createTestTime(), ropedomain.ParseValue(decimal.NewFromFloat(1.0))),
+			NewFromScala(createTestAddress(0xBB), createTestTxId(0x22), createTestTime(), ropedomain.ParseValue(decimal.NewFromFloat(2.0))),
+			NewFromScala(createTestAddress(0xCC), createTestTxId(0x33), createTestTime(), ropedomain.ParseValue(decimal.NewFromFloat(3.0))),
 		}
 
 		copied := fss.Copy()
@@ -301,7 +302,7 @@ func TestFromScala_Marshal_Unmarshal(t *testing.T) {
 			createTestAddress(0xAA),
 			createTestTxId(0xBB),
 			createTestTime(),
-			decimal.NewFromFloat(123.456),
+			ropedomain.ParseValue(decimal.NewFromFloat(123.456)),
 		)
 		original.Volume = 42
 
@@ -325,7 +326,7 @@ func TestFromScala_Marshal_Unmarshal(t *testing.T) {
 			createTestAddress(0xAA),
 			createTestTxId(0xBB),
 			createTestTime(),
-			decimal.Zero,
+			Zero,
 		)
 
 		var buf bytes.Buffer
@@ -340,7 +341,7 @@ func TestFromScala_Marshal_Unmarshal(t *testing.T) {
 	})
 
 	t.Run("handles large decimal value", func(t *testing.T) {
-		largeValue := decimal.RequireFromString("999999999999999999.123456789012345678")
+		largeValue := ropedomain.ParseValue(decimal.RequireFromString("999999999999999999.123456789012345678"))
 		original := NewFromScala(
 			createTestAddress(0xAA),
 			createTestTxId(0xBB),
@@ -363,9 +364,9 @@ func TestFromScala_Marshal_Unmarshal(t *testing.T) {
 func TestFromScalas_Marshal_Unmarshal(t *testing.T) {
 	t.Run("round trip preserves multiple elements", func(t *testing.T) {
 		original := FromScalas{
-			NewFromScala(createTestAddress(0xAA), createTestTxId(0x11), createTestTime(), decimal.NewFromFloat(1.1)),
-			NewFromScala(createTestAddress(0xBB), createTestTxId(0x22), createTestTime(), decimal.NewFromFloat(2.2)),
-			NewFromScala(createTestAddress(0xCC), createTestTxId(0x33), createTestTime(), decimal.NewFromFloat(3.3)),
+			NewFromScala(createTestAddress(0xAA), createTestTxId(0x11), createTestTime(), ropedomain.ParseValue(decimal.NewFromFloat(1.1))),
+			NewFromScala(createTestAddress(0xBB), createTestTxId(0x22), createTestTime(), ropedomain.ParseValue(decimal.NewFromFloat(2.2))),
+			NewFromScala(createTestAddress(0xCC), createTestTxId(0x33), createTestTime(), ropedomain.ParseValue(decimal.NewFromFloat(3.3))),
 		}
 
 		var buf bytes.Buffer
@@ -404,7 +405,7 @@ func TestFromScalas_Marshal_Unmarshal(t *testing.T) {
 				createTestAddress(byte(i)),
 				createTestTxId(byte(i)),
 				createTestTime(),
-				decimal.NewFromInt(int64(i)),
+				ropedomain.ParseValue(decimal.NewFromInt(int64(i))),
 			)
 		}
 
@@ -432,7 +433,7 @@ func TestBinaryFormatStability(t *testing.T) {
 			createTestAddress(0xAA),
 			createTestTxId(0xBB),
 			chaintimer.ChainTime(time.Unix(1700000000, 0).UTC()),
-			decimal.NewFromFloat(100.5),
+			ropedomain.ParseValue(decimal.NewFromFloat(100.5)),
 		)
 
 		var buf bytes.Buffer
