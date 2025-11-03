@@ -7,6 +7,17 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
 
+// NewFromScala creates a FromScala with initial values
+func NewFromScala(from domain.Address, txId domain.TxId, txTime chaintimer.ChainTime, value ropedomain.ValueOrNull) FromScala {
+	volume := int32(1)
+	return FromScala{
+		FromAddress: from,
+		LastTxId:    txId,
+		LastTime:    txTime,
+		Volume:      volume,
+		ValueOrNull: value,
+	}
+}
 func BuildDepositDetection(cex CEX, deposit Deposit, t chaintimer.ChainTime) domain.DetectedDeposit {
 	return domain.DetectedDeposit{
 		CEXAddress:     domain.Address(cex),

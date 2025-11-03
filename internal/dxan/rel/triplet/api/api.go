@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/rel/triplet/app"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/rel/cface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/server/utils"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 )
@@ -16,11 +16,11 @@ import (
 // TODO 최종적으론 CQRS-이벤트소싱DB기반 API핸들링
 // TripletAPIHandler Triplet Analyzer API 핸들러
 type TripletAPIHandler struct {
-	analyzer app.TripletAnalyzerDesign
+	analyzer cface.TripletPort
 }
 
 // NewTripletAPIHandler Triplet API 핸들러 생성
-func NewTripletAPIHandler(analyzer app.TripletAnalyzerDesign) *TripletAPIHandler {
+func NewTripletAPIHandler(analyzer cface.TripletPort) *TripletAPIHandler {
 	return &TripletAPIHandler{
 		analyzer: analyzer,
 	}

@@ -35,8 +35,8 @@ func (j *TransactionJob) Do(ctx context.Context) error {
 	if isValidTx := checkTransactionSyntax(tx); !isValidTx {
 		return nil
 	}
-	tripletEvent := decideTripletEvent(tx, tripletAnalyzer.relPool.GetDxanPort().GetNodPort().GetEoPort())
-	errOrNil := handleTripletEvent(tripletEvent, tripletAnalyzer.relPool, tripletAnalyzer.infraPort.GetTimeBucketManager())
+	tripletEvent := decideTripletCommand(tx, tripletAnalyzer.relPool.GetDxanPort().GetNodPort().GetEoPort())
+	errOrNil := handleTripletCommand(tripletEvent, tripletAnalyzer.relPool, tripletAnalyzer.infraPort.GetTimeBucketManager())
 
 	return errOrNil
 }
@@ -50,7 +50,7 @@ func checkTransactionSyntax(tx shareddomain.MarkedTransaction) (isValidSyntax bo
 	return true
 }
 
-type tripletEvent struct {
+type tripletCommand struct {
 	kind tripletKind
 	tx   domain.MarkedTransaction
 }
@@ -64,27 +64,25 @@ const (
 	TxNotSpecial
 )
 
-// handleAddrss의 파생1
-func decideTripletEvent(tx shareddomain.MarkedTransaction, eo cface.EoPort) tripletEvent {
+func decideTripletCommand(tx shareddomain.MarkedTransaction, eo cface.EoPort) tripletCommand {
 	fromAddr := tx.From
 	toAddr := tx.To
 	if eo.IsCex(fromAddr) {
-		return tripletEvent{kind: TxFromCEX, tx: tx}
+		return tripletCommand{kind: TxFromCEX, tx: tx}
 	}
 	if eo.IsCex(toAddr) {
-		return tripletEvent{kind: TxToCEX, tx: tx}
+		return tripletCommand{kind: TxToCEX, tx: tx}
 	}
 	if isDeposit, _ := eo.IsDepositAddress(fromAddr); isDeposit {
-		return tripletEvent{kind: TxFromDeposit, tx: tx}
+		return tripletCommand{kind: TxFromDeposit, tx: tx}
 	}
 	if isDeposit, _ := eo.IsDepositAddress(toAddr); isDeposit {
-		return tripletEvent{kind: TxToDepostFromUser, tx: tx}
+		return tripletCommand{kind: TxToDepostFromUser, tx: tx}
 	}
-	return tripletEvent{kind: TxNotSpecial}
+	return tripletCommand{kind: TxNotSpecial}
 }
 
-// handleAddrss의 파생2
-func handleTripletEvent(tev tripletEvent, rel pface.RelPort, timeBuckerManager iface.TimeBuckerManager) error {
+func handleTripletCommand(tev tripletCommand, rel pface.RelPort, timeBuckerManager iface.TimeBuckerManager) error {
 	switch tev.kind {
 	case TxFromCEX:
 		return nil

@@ -16,16 +16,17 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// 내부 디자인용
 type TripletAnalyzerDesign interface {
-	// 분석기 생명주기 관리
+	// 제어용
 	gface.Module
 	gface.Child
-
-	// 상태 조회
+	//앱의 도메인 모델
+	TripletModel
+	//쿼리용
 	GetStatistics() map[string]any
 	IsHealthy() bool
 	GetJobChannelStatus() (usage int, capacity int)
-
 	GetRopeDBStats() map[string]any
 	GetMyTx() <-chan domain.MarkedTransaction
 }
