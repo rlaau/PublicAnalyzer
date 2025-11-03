@@ -584,7 +584,7 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 				Trait:       ev.Trait,
 				AddMembers:  sourceRopeMark.Members,
 				SizeDelta:   int32(sourceRopeMark.Size),
-				ValueOrNull: sourceRopeMark.ValueOrNull.Add(ev.ValueOrNull),
+				ValueOrNull: domain.ParseValue(sourceRopeMark.ValueOrNull.V.Add(ev.ValueOrNull.V)),
 				VolumeDelta: sourceRopeMark.Volume + 1, // source 볼륨 + 이번 거래
 				LastSeen:    ev.Time,
 				MergeFrom:   []domain.RopeID{source},
@@ -877,7 +877,7 @@ func (b *BadgerRopeDB) traitWorker() {
 						RuleB:       op.RuleB,
 						Score:       0,
 						Volume:      0,
-						ValueOrNull: domain.ParseValueOrNull(decimal.Zero),
+						ValueOrNull: domain.ParseValue(decimal.Zero),
 						LastSeen:    op.LastSeen,
 					}
 				}
@@ -885,8 +885,8 @@ func (b *BadgerRopeDB) traitWorker() {
 			}
 
 			// 누적 규칙
-			if !op.ValueOrNull.IsZero() {
-				a.tm.ValueOrNull = a.tm.ValueOrNull.Add(op.ValueOrNull)
+			if !op.ValueOrNull.V.IsZero() {
+				a.tm.ValueOrNull = domain.ParseValue(a.tm.ValueOrNull.V.Add(op.ValueOrNull.V))
 			}
 			a.tm.Score += op.ScoreDelta
 			a.tm.Volume += op.VolumeDelta
@@ -957,13 +957,13 @@ func (b *BadgerRopeDB) ropeWorker() {
 						Members:     nil,
 						Volume:      0,
 						LastSeen:    op.LastSeen,
-						ValueOrNull: domain.ParseValueOrNull(decimal.Zero),
+						ValueOrNull: domain.ParseValue(decimal.Zero),
 					}
 				}
 
 				// 값 누적
-				if !op.ValueOrNull.IsZero() {
-					rm.ValueOrNull = rm.ValueOrNull.Add(op.ValueOrNull)
+				if !op.ValueOrNull.V.IsZero() {
+					rm.ValueOrNull = domain.ParseValue(rm.ValueOrNull.V.Add(op.ValueOrNull.V))
 				}
 				if len(op.AddMembers) > 0 {
 					rm.Members = computation.DedupAppend(rm.Members, op.AddMembers)
@@ -1180,13 +1180,13 @@ func (b *BadgerRopeDB) applyTraitUpsert(op domain.TraitMarkUpsert) {
 				RuleB:       op.RuleB,
 				Score:       0,
 				Volume:      0,
-				ValueOrNull: domain.ParseValueOrNull(decimal.Zero), // ✅ 새로 추가: 기본 0으로
+				ValueOrNull: domain.ParseValue(decimal.Zero), // ✅ 새로 추가: 기본 0으로
 				LastSeen:    op.LastSeen,
 			}
 		}
 		// 값 누적 (null이면 Zero가 와서 변화 없음)
-		if !op.ValueOrNull.IsZero() {
-			tm.ValueOrNull = tm.ValueOrNull.Add(op.ValueOrNull) // ✅ 누적
+		if !op.ValueOrNull.V.IsZero() {
+			tm.ValueOrNull = domain.ParseValue(tm.ValueOrNull.V.Add(op.ValueOrNull.V)) // ✅ 누적
 		}
 		tm.Score += op.ScoreDelta
 		tm.Volume += op.VolumeDelta
@@ -1229,7 +1229,7 @@ func (b *BadgerRopeDB) applyRopeUpsert(op domain.RopeMarkUpsert) {
 				Members:     nil,
 				Volume:      0,
 				LastSeen:    op.LastSeen,
-				ValueOrNull: domain.ParseValueOrNull(decimal.Zero),
+				ValueOrNull: domain.ParseValue(decimal.Zero),
 			}
 		}
 		// if len(rm.Members) >= maxRopeSize {
@@ -1237,8 +1237,8 @@ func (b *BadgerRopeDB) applyRopeUpsert(op domain.RopeMarkUpsert) {
 		// 	return nil
 		// }
 		// 값 누적 (null이면 Zero가 와서 변화 없음)
-		if !op.ValueOrNull.IsZero() {
-			rm.ValueOrNull = rm.ValueOrNull.Add(op.ValueOrNull) // ✅ 누적
+		if !op.ValueOrNull.V.IsZero() {
+			rm.ValueOrNull = domain.ParseValue(rm.ValueOrNull.V.Add(op.ValueOrNull.V)) // ✅ 누적
 		}
 		if len(op.AddMembers) > 0 {
 			rm.Members = computation.DedupAppend(rm.Members, op.AddMembers)

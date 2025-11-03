@@ -72,6 +72,7 @@ func (fs *FromScala) Unmarshal(r io.Reader) error {
 	if err != nil {
 		return err
 	}
+
 	v, _ = v.Unmarshal(b)
 
 	fs.ValueOrNull = v
@@ -97,8 +98,8 @@ func (fs *FromScala) Update(txId domain.TxId, txTime chaintimer.ChainTime, value
 	if fs.Volume < 2147483647 { // math.MaxInt32
 		fs.Volume++
 	}
-	if !value.IsZero() {
-		fs.ValueOrNull = fs.ValueOrNull.Add(value)
+	if !value.V.IsZero() {
+		fs.ValueOrNull = ropedomain.ParseValue(fs.ValueOrNull.V.Add(value.V))
 	}
 }
 

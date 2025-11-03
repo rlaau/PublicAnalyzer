@@ -5,6 +5,7 @@ import (
 
 	chaintimer "github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/fp"
 	"github.com/shopspring/decimal"
 )
 
@@ -240,34 +241,26 @@ type TxScala struct {
 	ScoreInc    int32
 }
 
-type ValueOrNull decimal.Decimal
+type ValueOrNull fp.Option[Value]
+type Value = decimal.Decimal
 
-func ParseValueOrNull(d decimal.Decimal) ValueOrNull {
-	return ValueOrNull(d)
+func ParseValue(d decimal.Decimal) ValueOrNull {
+	return ValueOrNull(fp.Some(d))
 }
 
+func (v ValueOrNull) Option() fp.Option[Value] { return fp.Option[Value](v) }
 func (v ValueOrNull) Marshal() ([]byte, error) {
-	txt := decimal.Decimal(v).String()
+	txt := v.V.String()
 	return []byte(txt), nil
 
 }
 
 func (v *ValueOrNull) Unmarshal(b []byte) (ValueOrNull, error) {
 	if len(b) == 0 {
-		return ParseValueOrNull(decimal.Zero), nil
+		return ParseValue(decimal.Zero), nil
 	}
 	d, err := decimal.NewFromString(string(b))
-	return ParseValueOrNull(d), err
-}
-
-func (v ValueOrNull) Add(adder ValueOrNull) ValueOrNull {
-	return ValueOrNull(decimal.Decimal(v).Add(decimal.Decimal(adder)))
-}
-func (v ValueOrNull) Equal(c ValueOrNull) bool {
-	return decimal.Decimal(v).Equal(decimal.Decimal(c))
-}
-func (v ValueOrNull) IsZero() bool {
-	return decimal.Decimal(v).IsZero()
+	return ParseValue(d), err
 }
 
 // 내부 비동기 큐용: TraitMark Upsert

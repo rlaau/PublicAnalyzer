@@ -29,7 +29,7 @@ func BuildCexAndDepositEvent(cex CEX, deposit Deposit, tx domain.MarkedTransacti
 		TxId:        tx.TxID,
 		Time:        tx.BlockTime,
 		ScoreInc:    1,
-		ValueOrNull: ropedomain.ParseValueOrNull(tx.ValueOrNull),
+		ValueOrNull: ropedomain.ParseValue(tx.ValueOrNull),
 	}
 	return ropedomain.NewTraitEvent(
 		protocol.AuthorSystem,
@@ -79,7 +79,7 @@ func BuildDualEventWithTx(deposit Deposit, user User, tx domain.MarkedTransactio
 		TxId:        tx.TxID,
 		Time:        tx.BlockTime,
 		ScoreInc:    1,
-		ValueOrNull: ropedomain.ParseValueOrNull(tx.ValueOrNull),
+		ValueOrNull: ropedomain.ParseValue(tx.ValueOrNull),
 	}
 	return ropedomain.NewTraitEvent(
 		protocol.AuthorSystem,

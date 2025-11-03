@@ -134,7 +134,7 @@ func handleTripletEvent(tev tripletEvent, rel pface.RelPort, timeBuckerManager i
 			fromAddr,
 			tev.tx.TxID,
 			tev.tx.BlockTime,
-			rdomain.ParseValueOrNull(tev.tx.ValueOrNull),
+			rdomain.ParseValue(tev.tx.ValueOrNull),
 		)
 		timeBuckerManager.AddIfAbsent(toAddr, fromScala)
 		return nil
