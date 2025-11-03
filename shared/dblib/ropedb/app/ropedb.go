@@ -877,7 +877,7 @@ func (b *BadgerRopeDB) traitWorker() {
 						RuleB:       op.RuleB,
 						Score:       0,
 						Volume:      0,
-						ValueOrNull: domain.ParseValue(decimal.Zero),
+						ValueOrNull: domain.ParseValueOrNull(decimal.Zero),
 						LastSeen:    op.LastSeen,
 					}
 				}
@@ -957,7 +957,7 @@ func (b *BadgerRopeDB) ropeWorker() {
 						Members:     nil,
 						Volume:      0,
 						LastSeen:    op.LastSeen,
-						ValueOrNull: domain.ParseValue(decimal.Zero),
+						ValueOrNull: domain.ParseValueOrNull(decimal.Zero),
 					}
 				}
 
@@ -1180,7 +1180,7 @@ func (b *BadgerRopeDB) applyTraitUpsert(op domain.TraitMarkUpsert) {
 				RuleB:       op.RuleB,
 				Score:       0,
 				Volume:      0,
-				ValueOrNull: domain.ParseValue(decimal.Zero), // ✅ 새로 추가: 기본 0으로
+				ValueOrNull: domain.ParseValueOrNull(decimal.Zero), // ✅ 새로 추가: 기본 0으로
 				LastSeen:    op.LastSeen,
 			}
 		}
@@ -1229,7 +1229,7 @@ func (b *BadgerRopeDB) applyRopeUpsert(op domain.RopeMarkUpsert) {
 				Members:     nil,
 				Volume:      0,
 				LastSeen:    op.LastSeen,
-				ValueOrNull: domain.ParseValue(decimal.Zero),
+				ValueOrNull: domain.ParseValueOrNull(decimal.Zero),
 			}
 		}
 		// if len(rm.Members) >= maxRopeSize {

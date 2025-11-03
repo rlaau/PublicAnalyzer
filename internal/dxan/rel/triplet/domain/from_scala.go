@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/shopspring/decimal"
 )
 
 // From 주소 입장에서 본 To주소와의 거래 강도
@@ -16,8 +16,8 @@ type FromScala struct {
 	FromAddress domain.Address
 	LastTxId    domain.TxId
 	LastTime    chaintimer.ChainTime
-	Volume      int32
-	ValueOrNull ropedomain.Value
+	Volume      int32 //Volume==거래회수
+	ValueOrNull ropedomain.ValueOrNull
 }
 
 // === Marshaling/Unmarshaling ===
@@ -42,7 +42,8 @@ func (fs *FromScala) Marshal(w io.Writer) error {
 		return err
 	}
 	// ValueOrNull (var-bytes, ascii decimal)
-	return fs.ValueOrNull.Marshal(w)
+	v, _ := fs.ValueOrNull.Marshal()
+	return computation.WriteVarBytes(w, v)
 }
 
 // Unmarshal deserializes a single FromScala from binary format
@@ -66,16 +67,19 @@ func (fs *FromScala) Unmarshal(r io.Reader) error {
 		return err
 	}
 	// ValueOrNull
-	d, err := readDecimal(r)
+	b, err := computation.ReadVarBytes(r)
+	var v ropedomain.ValueOrNull
 	if err != nil {
 		return err
 	}
-	fs.ValueOrNull = ropedomain.ParseValue(d)
+	v, _ = v.Unmarshal(b)
+
+	fs.ValueOrNull = v
 	return nil
 }
 
 // NewFromScala creates a FromScala with initial values
-func NewFromScala(from domain.Address, txId domain.TxId, txTime chaintimer.ChainTime, value ropedomain.Value) FromScala {
+func NewFromScala(from domain.Address, txId domain.TxId, txTime chaintimer.ChainTime, value ropedomain.ValueOrNull) FromScala {
 	volume := int32(1)
 	return FromScala{
 		FromAddress: from,
@@ -87,7 +91,7 @@ func NewFromScala(from domain.Address, txId domain.TxId, txTime chaintimer.Chain
 }
 
 // Update updates the FromScala with new transaction data
-func (fs *FromScala) Update(txId domain.TxId, txTime chaintimer.ChainTime, value ropedomain.Value) {
+func (fs *FromScala) Update(txId domain.TxId, txTime chaintimer.ChainTime, value ropedomain.ValueOrNull) {
 	fs.LastTxId = txId
 	fs.LastTime = txTime
 	if fs.Volume < 2147483647 { // math.MaxInt32
@@ -144,7 +148,7 @@ func (fss FromScalas) FindByAddress(addr domain.Address) (int, bool) {
 }
 
 // AddOrUpdate adds a new FromScala or updates an existing one
-func (fss FromScalas) AddOrUpdate(from domain.Address, txId domain.TxId, txTime chaintimer.ChainTime, value ropedomain.Value) FromScalas {
+func (fss FromScalas) AddOrUpdate(from domain.Address, txId domain.TxId, txTime chaintimer.ChainTime, value ropedomain.ValueOrNull) FromScalas {
 	idx, found := fss.FindByAddress(from)
 	if found {
 		fss[idx].Update(txId, txTime, value)
@@ -163,25 +167,13 @@ func (fss FromScalas) Copy() FromScalas {
 	return result
 }
 
-func readVarBytes(r io.Reader) ([]byte, error) {
-	var n uint32
-	if err := binary.Read(r, binary.LittleEndian, &n); err != nil {
-		return nil, err
-	}
-	if n == 0 {
-		return nil, nil
-	}
-	buf := make([]byte, n)
-	_, err := io.ReadFull(r, buf)
-	return buf, err
-}
-func readDecimal(r io.Reader) (decimal.Decimal, error) {
-	b, err := readVarBytes(r)
-	if err != nil {
-		return decimal.Zero, err
-	}
-	if len(b) == 0 {
-		return decimal.Zero, nil
-	}
-	return decimal.NewFromString(string(b))
-}
+// func readDecimal(r io.Reader) (decimal.Decimal, error) {
+// 	b, err := computation.ReadVarBytes(r)
+// 	if err != nil {
+// 		return decimal.Zero, err
+// 	}
+// 	if len(b) == 0 {
+// 		return decimal.Zero, nil
+// 	}
+// 	return decimal.NewFromString(string(b))
+// }

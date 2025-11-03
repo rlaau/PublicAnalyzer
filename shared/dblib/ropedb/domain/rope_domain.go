@@ -1,11 +1,9 @@
 package domain
 
 import (
-	"io"
 	"slices"
 
 	chaintimer "github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/shopspring/decimal"
 )
@@ -149,7 +147,7 @@ type RopeMark struct {
 	Size         uint32 // Members 길이(정합성 위해 함께 유지)
 	Members      []shareddomain.Address
 	Volume       uint32
-	ValueOrNull  Value
+	ValueOrNull  ValueOrNull
 	LastSeen     chaintimer.ChainTime
 	TrapVertexes []TrapVertex
 }
@@ -169,7 +167,7 @@ type TraitMark struct {
 	RuleB       RuleCode
 	Score       int32
 	Volume      uint32
-	ValueOrNull Value
+	ValueOrNull ValueOrNull
 	LastSeen    chaintimer.ChainTime
 }
 
@@ -190,7 +188,7 @@ type Rope struct {
 type TraitEvent struct {
 	Author      AuthorCode
 	TxID        shareddomain.TxId
-	ValueOrNull Value
+	ValueOrNull ValueOrNull
 	Trait       TraitCode
 	AddressA    shareddomain.Address
 	RuleA       RuleCode
@@ -238,28 +236,37 @@ type AddressAndRule struct {
 type TxScala struct {
 	TxId        shareddomain.TxId
 	Time        chaintimer.ChainTime
-	ValueOrNull Value
+	ValueOrNull ValueOrNull
 	ScoreInc    int32
 }
 
-type Value decimal.Decimal
+type ValueOrNull decimal.Decimal
 
-func ParseValue(d decimal.Decimal) Value {
-	return Value(d)
+func ParseValueOrNull(d decimal.Decimal) ValueOrNull {
+	return ValueOrNull(d)
 }
 
-func (v Value) Marshal(w io.Writer) error {
+func (v ValueOrNull) Marshal() ([]byte, error) {
 	txt := decimal.Decimal(v).String()
-	return computation.WriteVarBytes(w, []byte(txt))
+	return []byte(txt), nil
+
 }
 
-func (v Value) Add(adder Value) Value {
-	return Value(decimal.Decimal(v).Add(decimal.Decimal(adder)))
+func (v *ValueOrNull) Unmarshal(b []byte) (ValueOrNull, error) {
+	if len(b) == 0 {
+		return ParseValueOrNull(decimal.Zero), nil
+	}
+	d, err := decimal.NewFromString(string(b))
+	return ParseValueOrNull(d), err
 }
-func (v Value) Equal(c Value) bool {
+
+func (v ValueOrNull) Add(adder ValueOrNull) ValueOrNull {
+	return ValueOrNull(decimal.Decimal(v).Add(decimal.Decimal(adder)))
+}
+func (v ValueOrNull) Equal(c ValueOrNull) bool {
 	return decimal.Decimal(v).Equal(decimal.Decimal(c))
 }
-func (v Value) IsZero() bool {
+func (v ValueOrNull) IsZero() bool {
 	return decimal.Decimal(v).IsZero()
 }
 
@@ -275,7 +282,7 @@ type TraitMarkUpsert struct {
 	RuleB       RuleCode
 	ScoreDelta  int32
 	VolumeDelta uint32
-	ValueOrNull Value
+	ValueOrNull ValueOrNull
 	LastSeen    chaintimer.ChainTime
 }
 
@@ -288,7 +295,7 @@ type RopeMarkUpsert struct {
 	SizeDelta    int32                  // 보통 len(AddMembers)와 동일하게 씀
 	VolumeDelta  uint32                 // 트랜잭션 볼륨 증분
 	LastSeen     chaintimer.ChainTime
-	ValueOrNull  Value
+	ValueOrNull  ValueOrNull
 	// (옵션) 병합: 나열된 Source Rope들을 대상 RopeID로 흡수
 	MergeFrom []RopeID
 }
