@@ -2,11 +2,9 @@ package app
 
 import (
 	"container/list"
-	"encoding/json"
 	"sync"
 	"time"
 
-	"github.com/dgraph-io/badger/v4"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
@@ -149,26 +147,8 @@ func (c *VertexCache) evictLRU() {
 
 // batchWriteVertices - 배치로 버텍스들을 DB에 저장
 func (c *VertexCache) batchWriteVertices(vertices []*domain.Vertex) {
-	if len(vertices) == 0 {
-		return
-	}
 
-	err := c.db.dbV.Update(func(txn *badger.Txn) error {
-		for _, v := range vertices {
-			key := vKey(v.Address)
-
-			// JSON 직렬화
-			data, err := json.Marshal(v)
-			if err != nil {
-				continue
-			}
-
-			if err := txn.Set(key, data); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	err := c.db.writeVertices(vertices)
 
 	if err != nil {
 		// 배치 실패시 개별 저장으로 폴백

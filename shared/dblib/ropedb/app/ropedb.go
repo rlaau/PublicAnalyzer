@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -21,22 +20,6 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring/meter/rsv"
 	"github.com/shopspring/decimal"
 )
-
-// ------------------------------------------------------------
-// 1) 키-스키마 & 상수
-// ------------------------------------------------------------
-
-const (
-	kV         = "v:"       // v:<address>
-	kR         = "r:"       // r:<ropeID>
-	kT         = "t:"       // t:<traitID>
-	kPR        = "pr:"      // pr:<polyRopeID> - PolyRopeMark 저장
-	kCRope     = "ctr:rope" // BigEndian uint64
-	kCTrait    = "ctr:trait"
-	kCPolyRope = "ctr:polyrope" // BigEndian uint64 - PolyRope counter
-)
-
-const MaxRopeSize = 1000
 
 func NewRopeDB(ctx context.Context, isTest mode.ProcessingMode, dbName string, traitLegend map[domain.TraitCode]string,
 	ruleLegend map[domain.RuleCode]string,
@@ -584,7 +567,7 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 				Trait:       ev.Trait,
 				AddMembers:  sourceRopeMark.Members,
 				SizeDelta:   int32(sourceRopeMark.Size),
-				ValueOrNull: domain.ParseValue(sourceRopeMark.ValueOrNull.V.Add(ev.ValueOrNull.V)),
+				ValueOrNull: domain.ParseValueOption(sourceRopeMark.ValueOrNull.V.Add(ev.ValueOrNull.V)),
 				VolumeDelta: sourceRopeMark.Volume + 1, // source 볼륨 + 이번 거래
 				LastSeen:    ev.Time,
 				MergeFrom:   []domain.RopeID{source},
@@ -807,21 +790,7 @@ func (b *BadgerRopeDB) traitWorker() {
 		if totalItems == 0 {
 			return
 		}
-		err := b.dbM.Update(func(txn *badger.Txn) error {
-			for id, a := range agg {
-				key := []byte(fmt.Sprintf("%s%d", kT, uint64(id)))
-
-				// JSON Marshal
-				data, err := json.Marshal(a.tm)
-				if err != nil {
-					return err
-				}
-				if err := txn.Set(key, data); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
+		err := b.updateTraitAgg(agg)
 		if err != nil {
 			fmt.Printf("trait flush err: %v\n", err)
 		}
@@ -877,7 +846,7 @@ func (b *BadgerRopeDB) traitWorker() {
 						RuleB:       op.RuleB,
 						Score:       0,
 						Volume:      0,
-						ValueOrNull: domain.ParseValue(decimal.Zero),
+						ValueOrNull: domain.ParseValueOption(decimal.Zero),
 						LastSeen:    op.LastSeen,
 					}
 				}
@@ -886,7 +855,7 @@ func (b *BadgerRopeDB) traitWorker() {
 
 			// 누적 규칙
 			if !op.ValueOrNull.V.IsZero() {
-				a.tm.ValueOrNull = domain.ParseValue(a.tm.ValueOrNull.V.Add(op.ValueOrNull.V))
+				a.tm.ValueOrNull = domain.ParseValueOption(a.tm.ValueOrNull.V.Add(op.ValueOrNull.V))
 			}
 			a.tm.Score += op.ScoreDelta
 			a.tm.Volume += op.VolumeDelta
@@ -935,76 +904,7 @@ func (b *BadgerRopeDB) ropeWorker() {
 				return
 			}
 
-			// MaxRopeSize 체크
-			if b.ropeSizeCache.Get(op.RopeID) >= MaxRopeSize {
-				continue
-			}
-
-			// 직접 DB에 업서트 (applyRopeUpsert 방식)
-			key := []byte(fmt.Sprintf("%s%d", kR, uint64(op.RopeID)))
-			err := b.dbM.Update(func(txn *badger.Txn) error {
-				var rm domain.RopeMark
-				if itm, err := txn.Get(key); err == nil {
-					_ = itm.Value(func(val []byte) error {
-						return json.Unmarshal(val, &rm)
-					})
-				}
-				if rm.ID == 0 {
-					rm = domain.RopeMark{
-						ID:          op.RopeID,
-						Trait:       op.Trait,
-						Size:        0,
-						Members:     nil,
-						Volume:      0,
-						LastSeen:    op.LastSeen,
-						ValueOrNull: domain.ParseValue(decimal.Zero),
-					}
-				}
-
-				// 값 누적
-				if !op.ValueOrNull.V.IsZero() {
-					rm.ValueOrNull = domain.ParseValue(rm.ValueOrNull.V.Add(op.ValueOrNull.V))
-				}
-				if len(op.AddMembers) > 0 {
-					rm.Members = computation.DedupAppend(rm.Members, op.AddMembers)
-				}
-				if op.SizeDelta != 0 {
-					rm.Size = uint32(len(rm.Members))
-				}
-				if op.VolumeDelta > 0 {
-					rm.Volume += op.VolumeDelta
-				}
-				if op.LastSeen.After(rm.LastSeen) {
-					rm.LastSeen = op.LastSeen
-				}
-				for _, sid := range op.MergeFrom {
-					if sid == rm.ID {
-						continue
-					}
-					skey := []byte(fmt.Sprintf("%s%d", kR, uint64(sid)))
-					_ = txn.Delete(skey)
-				}
-				if int(rm.Size) != len(rm.Members) {
-					rm.Size = uint32(len(rm.Members))
-				}
-				if len(op.TrapVertexes) > 0 {
-					rm.TrapVertexes = MergeTrapVerticesUniquePairs(rm.TrapVertexes, op.TrapVertexes)
-				}
-
-				// JSON Marshal로 저장
-				data, err := json.Marshal(rm)
-				if err != nil {
-					return err
-				}
-
-				// 사이즈 캐시 갱신
-				if b.ropeSizeCache != nil {
-					b.ropeSizeCache.Put(op.RopeID, rm.Size)
-				}
-
-				return txn.Set(key, data)
-			})
-
+			err := b.updateRopeMark(op)
 			if err != nil {
 				fmt.Printf("로프 업서트 중 에러발생 %s\n", err.Error())
 				continue
@@ -1063,32 +963,7 @@ func (b *BadgerRopeDB) polyRopeWorker() {
 		if totalItems == 0 {
 			return
 		}
-		err := b.dbM.Update(func(txn *badger.Txn) error {
-			// Set
-			for id, a := range agg {
-				key := []byte(fmt.Sprintf("%s%d", kPR, uint64(id)))
-
-				// JSON Marshal
-				data, err := json.Marshal(a.prm)
-				if err != nil {
-					return err
-				}
-				if err := txn.Set(key, data); err != nil {
-					return err
-				}
-			}
-			// Delete (mergeFrom)
-			for _, a := range agg {
-				for _, sid := range a.toDelete {
-					if sid == a.prm.ID {
-						continue
-					}
-					sKey := []byte(fmt.Sprintf("%s%d", kPR, uint64(sid)))
-					_ = txn.Delete(sKey)
-				}
-			}
-			return nil
-		})
+		err := b.updatePolymarkAgg(agg)
 		if err != nil {
 			fmt.Printf("polyRope flush err: %v\n", err)
 		}
@@ -1161,121 +1036,11 @@ func (b *BadgerRopeDB) polyRopeWorker() {
 	}
 }
 
-func (b *BadgerRopeDB) applyTraitUpsert(op domain.TraitMarkUpsert) {
-	key := []byte(fmt.Sprintf("%s%d", kT, uint64(op.TraitID)))
-	err := b.dbM.Update(func(txn *badger.Txn) error {
-		var tm domain.TraitMark
-		if itm, err := txn.Get(key); err == nil {
-			_ = itm.Value(func(val []byte) error { return json.Unmarshal(val, &tm) })
-		}
-		if tm.ID == 0 {
-			tm = domain.TraitMark{
-				AuthorCodes: []domain.AuthorCode{op.AuthorCode},
-				LastTx:      op.LastTx,
-				ID:          op.TraitID,
-				Trait:       op.Trait,
-				AddressA:    op.AddressA,
-				RuleA:       op.RuleA,
-				AddressB:    op.AddressB,
-				RuleB:       op.RuleB,
-				Score:       0,
-				Volume:      0,
-				ValueOrNull: domain.ParseValue(decimal.Zero), // ✅ 새로 추가: 기본 0으로
-				LastSeen:    op.LastSeen,
-			}
-		}
-		// 값 누적 (null이면 Zero가 와서 변화 없음)
-		if !op.ValueOrNull.V.IsZero() {
-			tm.ValueOrNull = domain.ParseValue(tm.ValueOrNull.V.Add(op.ValueOrNull.V)) // ✅ 누적
-		}
-		tm.Score += op.ScoreDelta
-		tm.Volume += op.VolumeDelta
-		if op.LastSeen.After(tm.LastSeen) {
-			tm.LastTx = op.LastTx
-			tm.LastSeen = op.LastSeen
-		}
-		tm.AuthorCodes = mergeAuthor(tm.AuthorCodes, op.AuthorCode)
-		data, _ := json.Marshal(tm)
-		return txn.Set(key, data)
-	})
-	if err != nil {
-		fmt.Printf("트레이트 업서트 apply 중 에러 발생 %s", err.Error())
-		return
-	}
-	if b.publishCounter%100 == 0 {
-		fmt.Printf("100번 주기의 트레이트 업서팅 성공. 현재 traitMark queue부하: %d: %d\n", b.busTrait.Len(), b.busTrait.Cap())
-	}
-}
-
 func mergeAuthor(authors []domain.AuthorCode, target domain.AuthorCode) []domain.AuthorCode {
 	if slices.Contains(authors, target) {
 		return authors
 	}
 	return append(authors, target)
-}
-
-func (b *BadgerRopeDB) applyRopeUpsert(op domain.RopeMarkUpsert) {
-	key := []byte(fmt.Sprintf("%s%d", kR, uint64(op.RopeID)))
-	err := b.dbM.Update(func(txn *badger.Txn) error {
-		var rm domain.RopeMark
-		if itm, err := txn.Get(key); err == nil {
-			_ = itm.Value(func(val []byte) error { return json.Unmarshal(val, &rm) })
-		}
-		if rm.ID == 0 {
-			rm = domain.RopeMark{
-				ID:          op.RopeID,
-				Trait:       op.Trait,
-				Size:        0,
-				Members:     nil,
-				Volume:      0,
-				LastSeen:    op.LastSeen,
-				ValueOrNull: domain.ParseValue(decimal.Zero),
-			}
-		}
-		// if len(rm.Members) >= maxRopeSize {
-		// 	fmt.Printf("도메인 특수 감지: %d번 로프의 멤버가 %d개를 초과하려 함.\nDB로 1000개 이상의 증폭은 막음", rm.ID, maxRopeSize)
-		// 	return nil
-		// }
-		// 값 누적 (null이면 Zero가 와서 변화 없음)
-		if !op.ValueOrNull.V.IsZero() {
-			rm.ValueOrNull = domain.ParseValue(rm.ValueOrNull.V.Add(op.ValueOrNull.V)) // ✅ 누적
-		}
-		if len(op.AddMembers) > 0 {
-			rm.Members = computation.DedupAppend(rm.Members, op.AddMembers)
-		}
-		if op.SizeDelta != 0 {
-			rm.Size = uint32(len(rm.Members))
-		}
-		if op.VolumeDelta > 0 {
-			rm.Volume += op.VolumeDelta
-		}
-		if op.LastSeen.After(rm.LastSeen) {
-			rm.LastSeen = op.LastSeen
-		}
-		for _, sid := range op.MergeFrom {
-			if sid == rm.ID {
-				continue
-			}
-			skey := []byte(fmt.Sprintf("%s%d", kR, uint64(sid)))
-			_ = txn.Delete(skey)
-		}
-		if int(rm.Size) != len(rm.Members) {
-			rm.Size = uint32(len(rm.Members))
-		}
-		if len(op.TrapVertexes) > 0 {
-			rm.TrapVertexes = MergeTrapVerticesUniquePairs(rm.TrapVertexes, op.TrapVertexes)
-		}
-
-		data, _ := json.Marshal(rm)
-		return txn.Set(key, data)
-	})
-	if err != nil {
-		fmt.Printf("로프 업서트 중 에러발생 %s\n", err.Error())
-		return
-	}
-	if b.publishCounter%100 == 0 {
-		fmt.Printf("100번 주기의 로프 업서팅 성공. 현재 ropeMark queue 부하 %d:%d\n", b.busRope.Len(), b.busRope.Cap())
-	}
 }
 
 // 주소·트랩 "쌍" 기준으로 유니크하게 합치기 (첫 등장 순서 유지)
@@ -1305,91 +1070,6 @@ func MergeTrapVerticesUniquePairs(slices ...[]domain.TrapVertex) []domain.TrapVe
 		}
 	}
 	return out
-}
-
-func (b *BadgerRopeDB) applyPolyRopeUpsert(op PolyRopeMarkUpsert) {
-	key := []byte(fmt.Sprintf("%s%d", kPR, uint64(op.PolyRopeID)))
-	err := b.dbM.Update(func(txn *badger.Txn) error {
-		var prm domain.PolyRopeMark
-		if itm, err := txn.Get(key); err == nil {
-			_ = itm.Value(func(val []byte) error { return json.Unmarshal(val, &prm) })
-		}
-		if prm.ID == 0 {
-			prm = domain.PolyRopeMark{
-				ID:        op.PolyRopeID,
-				PolyTrait: op.PolyTrait,
-				Ropes:     nil,
-			}
-		}
-		if len(op.AddRopes) > 0 {
-			prm.Ropes = computation.DedupAppend(prm.Ropes, op.AddRopes)
-		}
-		for _, sid := range op.MergeFrom {
-			if sid == prm.ID {
-				continue
-			}
-			skey := []byte(fmt.Sprintf("%s%d", kPR, uint64(sid)))
-			_ = txn.Delete(skey)
-		}
-		data, _ := json.Marshal(prm)
-		return txn.Set(key, data)
-	})
-	if err != nil {
-		fmt.Printf("폴리마크 업서트 중 에러 발생 %s", err.Error())
-		return
-	}
-	if b.publishCounter%100 == 0 {
-		fmt.Printf("100번 주기의 폴리마크 업서팅 성공. 현재 polyRopeMark queue의 부하: %d:%d\n", b.busPolyRope.Len(), b.busRope.Cap())
-	}
-}
-
-// ------------------------------------------------------------
-// 8) VertexDB 동기 I/O & 유틸
-// ------------------------------------------------------------
-
-// ----- NoLock 버전: Push 경로에서 muV 이미 보유함 -----
-func (b *BadgerRopeDB) getOrCreateVertexNoLock(a shareddomain.Address) *domain.Vertex {
-	key := vKey(a)
-	var v domain.Vertex
-	err := b.dbV.View(func(txn *badger.Txn) error {
-		itm, err := txn.Get(key)
-		if err != nil {
-			return err
-		}
-		return itm.Value(func(val []byte) error {
-			return json.Unmarshal(val, &v)
-		})
-	})
-	if err == nil && !shareddomain.IsNullAddress(v.Address) {
-		return &v
-	}
-	return &domain.Vertex{Address: a, Ropes: nil, Traits: nil, PolyRopes: nil}
-}
-
-// 키 유틸: 주소는 항상 lower-case로 정규화
-// 키 유틸: 주소는 항상 lower-case로 정규화
-func vKey(a shareddomain.Address) []byte {
-	// "v:" + 0x + 40 hex = 44 bytes
-	prefix := []byte(kV) // "v:"
-	addrBytes := a.LowerBytes()
-	out := make([]byte, len(prefix)+len(addrBytes))
-	copy(out, prefix)
-	copy(out[len(prefix):], addrBytes)
-	return out
-}
-
-func (b *BadgerRopeDB) putVertexNoLock(v *domain.Vertex) {
-	key := vKey(v.Address)
-	err := b.dbV.Update(func(txn *badger.Txn) error {
-		data, err := json.Marshal(v)
-		if err != nil {
-			return err
-		}
-		return txn.Set(key, data)
-	})
-	if err != nil {
-		fmt.Printf("putVertexNoLock failed: key=%s err=%v\n", key, err)
-	}
 }
 
 // ----- 캐시 기반 버전: 인메모리 캐시 우선 사용 -----
@@ -1459,36 +1139,6 @@ func inSamePolyRopeByPolyTrait(v1, v2 *domain.Vertex, polyTrait domain.PolyTrait
 	return found1 && found2 && polyRopeID1 == polyRopeID2
 }
 
-func (b *BadgerRopeDB) getRopeMark(id domain.RopeID) domain.RopeMark {
-	key := []byte(fmt.Sprintf("%s%d", kR, uint64(id)))
-	var rm domain.RopeMark
-	_ = b.dbM.View(func(txn *badger.Txn) error {
-		itm, err := txn.Get(key)
-		if err != nil {
-			return err
-		}
-		return itm.Value(func(val []byte) error {
-			return json.Unmarshal(val, &rm)
-		})
-	})
-	return rm
-}
-
-func (b *BadgerRopeDB) getPolyRopeMark(id domain.PolyRopeID) domain.PolyRopeMark {
-	key := []byte(fmt.Sprintf("%s%d", kPR, uint64(id)))
-	var prm domain.PolyRopeMark
-	_ = b.dbM.View(func(txn *badger.Txn) error {
-		itm, err := txn.Get(key)
-		if err != nil {
-			return err
-		}
-		return itm.Value(func(val []byte) error {
-			return json.Unmarshal(val, &prm)
-		})
-	})
-	return prm
-}
-
 func (b *BadgerRopeDB) nextTraitID() domain.TraitID {
 	for {
 		n, _ := b.seqTrait.Next()
@@ -1556,95 +1206,6 @@ func (b *BadgerRopeDB) ensureLink(v1, v2 *domain.Vertex, t domain.TraitCode, rul
 		})
 		return id, true
 	}
-}
-
-// GetGraphStats: v:는 V-DB에서, r:/t:/pr:는 M-DB에서 집계 (락 없이 - 약간의 오차 허용)
-func (b *BadgerRopeDB) GetGraphStats() map[string]any {
-	var nodes, ropes, traits, polyRopes uint64
-
-	// V-DB 조회 (락 없이 - 성능 우선, 약간의 오차 허용)
-	_ = b.dbV.View(func(txn *badger.Txn) error {
-		itOpts := badger.DefaultIteratorOptions
-		itOpts.PrefetchValues = false
-		it := txn.NewIterator(itOpts)
-		defer it.Close()
-		pfx := []byte(kV)
-		for it.Seek(pfx); it.ValidForPrefix(pfx); it.Next() {
-			nodes++
-		}
-		return nil
-	})
-
-	// M-DB 조회 (원래부터 락 불필요)
-	_ = b.dbM.View(func(txn *badger.Txn) error {
-		countPrefix := func(pfx []byte) uint64 {
-			var c uint64
-			itOpts := badger.DefaultIteratorOptions
-			itOpts.PrefetchValues = false
-			it := txn.NewIterator(itOpts)
-			defer it.Close()
-			for it.Seek(pfx); it.ValidForPrefix(pfx); it.Next() {
-				c++
-			}
-			return c
-		}
-		ropes = countPrefix([]byte(kR))
-		traits = countPrefix([]byte(kT))
-		polyRopes = countPrefix([]byte(kPR))
-		return nil
-	})
-
-	return map[string]any{
-		"nodes":     nodes,
-		"ropes":     ropes,
-		"traits":    traits,
-		"polyRopes": polyRopes,
-	}
-}
-
-func (b *BadgerRopeDB) ViewAllTraitMarkByCode(t domain.TraitCode) ([]domain.TraitMark, error) {
-	var result []domain.TraitMark
-	err := b.dbM.View(func(txn *badger.Txn) error {
-		itOpts := badger.DefaultIteratorOptions
-		it := txn.NewIterator(itOpts)
-		defer it.Close()
-
-		pfx := []byte(kT)
-		for it.Seek(pfx); it.ValidForPrefix(pfx); it.Next() {
-			item := it.Item()
-			var tm domain.TraitMark
-			err := item.Value(func(val []byte) error {
-				return json.Unmarshal(val, &tm)
-			})
-			if err != nil {
-				continue
-			}
-			if tm.Trait == t {
-				result = append(result, tm)
-			}
-		}
-		return nil
-	})
-	return result, err
-}
-
-// getTraitMark - TraitMark 로드
-func (b *BadgerRopeDB) getTraitMark(id domain.TraitID) domain.TraitMark {
-	key := []byte(fmt.Sprintf("%s%d", kT, uint64(id)))
-	var tm domain.TraitMark
-
-	_ = b.dbM.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(key)
-		if err != nil {
-			return err
-		}
-
-		return item.Value(func(val []byte) error {
-			return json.Unmarshal(val, &tm)
-		})
-	})
-
-	return tm
 }
 
 // GetRopeSize 로프 사이즈를 캐시에서 조회 (캐시에 없으면 DB에서 로드)

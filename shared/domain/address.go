@@ -12,6 +12,10 @@ type Address [20]byte
 
 var zeroAddress = Address{}
 
+func (a Address) ToHex() string {
+	return "0x" + hex.EncodeToString(a[:])
+}
+
 // IsNullAddress checks if the address is zero, or originated from "" or "0x".
 func IsNullAddress(a Address) bool {
 	// 단순 비교 (컴파일러가 최적화해서 memcmp 수준으로 처리)

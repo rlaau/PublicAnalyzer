@@ -11,6 +11,7 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/fp"
 )
 
 // ---- Badger용 키 생성(원하면 나중에 BE u64 고정키로 교체) ----
@@ -26,7 +27,7 @@ type ropeAggEntry struct {
 
 	// delta: 이번 배치 동안의 누적
 	addMembers  []shareddomain.Address
-	valueDelta  domain.ValueOrNull
+	valueDelta  fp.Option[domain.Value]
 	volumeDelta uint32
 	lastSeenMax chaintimer.ChainTime
 	trapDelta   []domain.TrapVertex
@@ -51,7 +52,7 @@ func (e *ropeAggEntry) snapshot() domain.RopeMark {
 
 	// Value / Volume
 	if !e.valueDelta.V.IsZero() {
-		rm.ValueOrNull = domain.ParseValue(rm.ValueOrNull.V.Add(e.valueDelta.V))
+		rm.ValueOrNull = domain.ParseValueOption(rm.ValueOrNull.V.Add(e.valueDelta.V))
 	}
 	if e.volumeDelta > 0 {
 		rm.Volume += e.volumeDelta
@@ -127,7 +128,7 @@ func (c *RopeAggCache) Upsert(op domain.RopeMarkUpsert) {
 	}
 	// value/volume/lastSeen
 	if !op.ValueOrNull.V.IsZero() {
-		e.valueDelta = domain.ParseValue(e.valueDelta.V.Add(op.ValueOrNull.V))
+		e.valueDelta = domain.ParseValueOption(e.valueDelta.V.Add(op.ValueOrNull.V))
 	}
 	if op.VolumeDelta > 0 {
 		e.volumeDelta += op.VolumeDelta
@@ -235,7 +236,7 @@ func (c *RopeAggCache) CommitFlushSnaps(snaps map[domain.RopeID]domain.RopeMark)
 			if len(e.addMembers) > 0 {
 				e.addMembers = e.addMembers[:0]
 			}
-			e.valueDelta = domain.ParseValue(decimal.Zero)
+			e.valueDelta = domain.ParseValueOption(decimal.Zero)
 			e.volumeDelta = 0
 			if len(e.trapDelta) > 0 {
 				e.trapDelta = nil

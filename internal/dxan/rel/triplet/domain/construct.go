@@ -5,17 +5,18 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/fp"
 )
 
 // NewFromScala creates a FromScala with initial values
-func NewFromScala(from domain.Address, txId domain.TxId, txTime chaintimer.ChainTime, value ropedomain.ValueOrNull) FromScala {
+func NewFromScala(from domain.Address, txId domain.TxId, txTime chaintimer.ChainTime, valueOrNull fp.Option[ropedomain.Value]) FromScala {
 	volume := int32(1)
 	return FromScala{
 		FromAddress: from,
 		LastTxId:    txId,
 		LastTime:    txTime,
 		Volume:      volume,
-		ValueOrNull: value,
+		ValueOrNull: valueOrNull,
 	}
 }
 func BuildDepositDetection(cex CEX, deposit Deposit, t chaintimer.ChainTime) domain.DetectedDeposit {
@@ -40,7 +41,7 @@ func BuildCexAndDepositEvent(cex CEX, deposit Deposit, tx domain.MarkedTransacti
 		TxId:        tx.TxID,
 		Time:        tx.BlockTime,
 		ScoreInc:    1,
-		ValueOrNull: ropedomain.ParseValue(tx.ValueOrNull),
+		ValueOrNull: ropedomain.ParseValueOption(tx.ValueOrNull),
 	}
 	return ropedomain.NewTraitEvent(
 		protocol.AuthorSystem,
@@ -90,7 +91,7 @@ func BuildDualEventWithTx(deposit Deposit, user User, tx domain.MarkedTransactio
 		TxId:        tx.TxID,
 		Time:        tx.BlockTime,
 		ScoreInc:    1,
-		ValueOrNull: ropedomain.ParseValue(tx.ValueOrNull),
+		ValueOrNull: ropedomain.ParseValueOption(tx.ValueOrNull),
 	}
 	return ropedomain.NewTraitEvent(
 		protocol.AuthorSystem,

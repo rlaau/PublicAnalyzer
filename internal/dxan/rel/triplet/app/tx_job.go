@@ -132,7 +132,7 @@ func handleTripletCommand(tev tripletCommand, rel pface.RelPort, timeBuckerManag
 			fromAddr,
 			tev.tx.TxID,
 			tev.tx.BlockTime,
-			rdomain.ParseValue(tev.tx.ValueOrNull),
+			rdomain.ParseValueOption(tev.tx.ValueOrNull),
 		)
 		timeBuckerManager.AddIfAbsent(toAddr, fromScala)
 		return nil

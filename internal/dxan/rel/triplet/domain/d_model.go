@@ -4,6 +4,7 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/fp"
 )
 
 type CEX domain.Address
@@ -16,18 +17,18 @@ type FromScala struct {
 	LastTxId    domain.TxId
 	LastTime    chaintimer.ChainTime
 	Volume      int32 //Volume==거래회수
-	ValueOrNull ropedomain.ValueOrNull
+	ValueOrNull fp.Option[ropedomain.Value]
 }
 
 // Update updates the FromScala with new transaction data
-func (fs *FromScala) Update(txId domain.TxId, txTime chaintimer.ChainTime, value ropedomain.ValueOrNull) {
+func (fs *FromScala) Update(txId domain.TxId, txTime chaintimer.ChainTime, value fp.Option[ropedomain.Value]) {
 	fs.LastTxId = txId
 	fs.LastTime = txTime
 	if fs.Volume < 2147483647 { // math.MaxInt32
 		fs.Volume++
 	}
 	if !value.V.IsZero() {
-		fs.ValueOrNull = ropedomain.ParseValue(fs.ValueOrNull.V.Add(value.V))
+		fs.ValueOrNull = ropedomain.ParseValueOption(fs.ValueOrNull.V.Add(value.V))
 	}
 }
 
@@ -49,7 +50,7 @@ func (fss FromScalas) FindByAddress(addr domain.Address) (int, bool) {
 }
 
 // AddOrUpdate adds a new FromScala or updates an existing one
-func (fss FromScalas) AddOrUpdate(from domain.Address, txId domain.TxId, txTime chaintimer.ChainTime, value ropedomain.ValueOrNull) FromScalas {
+func (fss FromScalas) AddOrUpdate(from domain.Address, txId domain.TxId, txTime chaintimer.ChainTime, value fp.Option[ropedomain.Value]) FromScalas {
 	idx, found := fss.FindByAddress(from)
 	if found {
 		fss[idx].Update(txId, txTime, value)

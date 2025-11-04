@@ -1,98 +1,101 @@
 package domain
 
 import (
-	"encoding/binary"
-	"io"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/fp"
 )
 
-// === Marshaling/Unmarshaling ===
+// JSON 표면 구조
+type fromScalaJSON struct {
+	FromAddress string `json:"fromAddress"`
+	LastTxId    string `json:"lastTxId"`
+	LastTime    string `json:"lastTime"` // RFC3339(UTC)
+	Volume      int32  `json:"volume"`
+	//* Option 타입에 대해선 이미 MarshalJson등을 선언해 놨음.
+	//* 따로 정의하는 경우, 먼저 그 로직 강제 가능함
 
-// Marshal serializes a single FromScala to binary format
-func (fs *FromScala) Marshal(w io.Writer) error {
-	// FromAddress (20B)
-	if _, err := w.Write(fs.FromAddress[:]); err != nil {
-		return err
-	}
-	// LastTxId (32B)
-	if _, err := w.Write(fs.LastTxId[:]); err != nil {
-		return err
-	}
-	// LastTime (int64 unix)
-	unix := time.Time(fs.LastTime).UTC().Unix()
-	if err := binary.Write(w, binary.LittleEndian, unix); err != nil {
-		return err
-	}
-	// Volume (int32)
-	if err := binary.Write(w, binary.LittleEndian, fs.Volume); err != nil {
-		return err
-	}
-	// ValueOrNull (var-bytes, ascii decimal)
-	v, _ := fs.ValueOrNull.Marshal()
-	return computation.WriteVarBytes(w, v)
+	ValueOrNull fp.Option[ropedomain.Value] `json:"valueOrNull"`
 }
 
-// Unmarshal deserializes a single FromScala from binary format
-func (fs *FromScala) Unmarshal(r io.Reader) error {
-	// FromAddress (20B)
-	if _, err := io.ReadFull(r, fs.FromAddress[:]); err != nil {
+func (fs FromScala) MarshalJSON() ([]byte, error) {
+	j := fromScalaJSON{
+		FromAddress: "0x" + hex.EncodeToString(fs.FromAddress[:]),
+		LastTxId:    "0x" + hex.EncodeToString(fs.LastTxId[:]),
+		LastTime:    time.Time(fs.LastTime).UTC().Format(time.RFC3339Nano),
+		Volume:      fs.Volume,
+		ValueOrNull: fs.ValueOrNull, // Option은 자체 MarshalJSON 사용 (None→null, Some→값)
+	}
+	return json.Marshal(j)
+}
+
+func (fs *FromScala) UnmarshalJSON(b []byte) error {
+	var j fromScalaJSON
+	if err := json.Unmarshal(b, &j); err != nil {
 		return err
 	}
-	// LastTxId (32B)
-	if _, err := io.ReadFull(r, fs.LastTxId[:]); err != nil {
-		return err
+
+	// fromAddress
+	addrHex := trim0x(j.FromAddress)
+	if len(addrHex) != 40 {
+		return fmt.Errorf("fromAddress: want 20 bytes(40 hex), got %d", len(addrHex))
 	}
-	// LastTime
-	var unix int64
-	if err := binary.Read(r, binary.LittleEndian, &unix); err != nil {
-		return err
-	}
-	fs.LastTime = chaintimer.ChainTime(time.Unix(unix, 0).UTC())
-	// Volume
-	if err := binary.Read(r, binary.LittleEndian, &fs.Volume); err != nil {
-		return err
-	}
-	// ValueOrNull
-	b, err := computation.ReadVarBytes(r)
-	var v ropedomain.ValueOrNull
+	addrBytes, err := hex.DecodeString(addrHex)
 	if err != nil {
-		return err
+		return fmt.Errorf("fromAddress hex decode: %w", err)
 	}
+	copy(fs.FromAddress[:], addrBytes)
 
-	v, _ = v.Unmarshal(b)
+	// lastTxId
+	txHex := trim0x(j.LastTxId)
+	if len(txHex) != 64 {
+		return fmt.Errorf("lastTxId: want 32 bytes(64 hex), got %d", len(txHex))
+	}
+	txBytes, err := hex.DecodeString(txHex)
+	if err != nil {
+		return fmt.Errorf("lastTxId hex decode: %w", err)
+	}
+	copy(fs.LastTxId[:], txBytes)
 
-	fs.ValueOrNull = v
+	// lastTime (RFC3339)
+	t, err := time.Parse(time.RFC3339Nano, j.LastTime)
+	if err != nil {
+		return fmt.Errorf("lastTime parse (RFC3339): %w", err)
+	}
+	fs.LastTime = chaintimer.ChainTime(t.UTC())
+
+	// volume
+	fs.Volume = j.Volume
+
+	// valueOrNull (Option은 자체 UnmarshalJSON으로 처리됨)
+	fs.ValueOrNull = j.ValueOrNull
 	return nil
 }
-
-// Marshal serializes FromScalas slice to binary format
-func (fss FromScalas) Marshal(w io.Writer) error {
-	if err := binary.Write(w, binary.LittleEndian, uint32(len(fss))); err != nil {
-		return err
+func trim0x(s string) string {
+	if strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X") {
+		return s[2:]
 	}
-	for i := range fss {
-		if err := fss[i].Marshal(w); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s
 }
 
-// UnmarshalFromScalas deserializes FromScalas slice from binary format
-func UnmarshalFromScalas(r io.Reader) (FromScalas, error) {
-	var n uint32
-	if err := binary.Read(r, binary.LittleEndian, &n); err != nil {
-		return nil, err
+// 따로 구현 안 해도 기본 json.Marshal/Unmarshal이 동작하지만,
+// 명시적으로 붙여두면 의도가 분명해짐.
+func (fss FromScalas) MarshalJSON() ([]byte, error) {
+	type alias FromScalas
+	return json.Marshal(alias(fss))
+}
+func (fss *FromScalas) UnmarshalJSON(b []byte) error {
+	type alias FromScalas
+	var tmp alias
+	if err := json.Unmarshal(b, &tmp); err != nil {
+		return err
 	}
-	out := make(FromScalas, int(n))
-	for i := 0; i < int(n); i++ {
-		if err := out[i].Unmarshal(r); err != nil {
-			return nil, err
-		}
-	}
-	return out, nil
+	*fss = FromScalas(tmp)
+	return nil
 }

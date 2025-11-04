@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dgraph-io/badger/v4"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 )
@@ -553,66 +552,6 @@ func (b *BadgerRopeDB) generateLegend(nodes []NodeInfo, edges []EdgeInfo) Legend
 		}
 	}
 	return LegendInfo{Traits: traits, Ropes: ropes, Rules: rules}
-}
-
-// 내부: RopeMark 중 최대 Volume 선택(동률이면 Size, 그 다음 LastSeen)
-func (b *BadgerRopeDB) topRopeByVolume() (ropedomain.RopeID, ropedomain.RopeMark) {
-	var best ropedomain.RopeMark
-	_ = b.dbM.View(func(txn *badger.Txn) error {
-		itOpts := badger.DefaultIteratorOptions
-		it := txn.NewIterator(itOpts)
-		defer it.Close()
-		pfx := []byte(kR)
-		for it.Seek(pfx); it.ValidForPrefix(pfx); it.Next() {
-			item := it.Item()
-			var rm ropedomain.RopeMark
-			_ = item.Value(func(val []byte) error {
-				return json.Unmarshal(val, &rm)
-			})
-			if rm.ID == 0 {
-				continue
-			}
-			if betterRope(rm, best) {
-				best = rm
-			}
-		}
-		return nil
-	})
-	return best.ID, best
-}
-
-// 내부: 랜덤 샘플링 후 Members가 있는 것 중 최대 Volume 선택
-func (b *BadgerRopeDB) topRopeFromRandomSample(sampleSize int) (ropedomain.RopeID, ropedomain.RopeMark) {
-	var candidates []ropedomain.RopeMark
-	_ = b.dbM.View(func(txn *badger.Txn) error {
-		itOpts := badger.DefaultIteratorOptions
-		it := txn.NewIterator(itOpts)
-		defer it.Close()
-		pfx := []byte(kR)
-		count := 0
-		for it.Seek(pfx); it.ValidForPrefix(pfx) && count < sampleSize; it.Next() {
-			item := it.Item()
-			var rm ropedomain.RopeMark
-			_ = item.Value(func(val []byte) error {
-				return json.Unmarshal(val, &rm)
-			})
-			if rm.ID == 0 || len(rm.Members) == 0 {
-				continue // Members가 없는 rope는 건너뜀
-			}
-			candidates = append(candidates, rm)
-			count++
-		}
-		return nil
-	})
-
-	// 샘플 중 최고 선택
-	var best ropedomain.RopeMark
-	for _, rm := range candidates {
-		if betterRope(rm, best) {
-			best = rm
-		}
-	}
-	return best.ID, best
 }
 
 func betterRope(a, b ropedomain.RopeMark) bool {

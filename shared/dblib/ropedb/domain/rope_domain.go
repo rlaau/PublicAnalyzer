@@ -148,7 +148,7 @@ type RopeMark struct {
 	Size         uint32 // Members 길이(정합성 위해 함께 유지)
 	Members      []shareddomain.Address
 	Volume       uint32
-	ValueOrNull  ValueOrNull
+	ValueOrNull  fp.Option[Value]
 	LastSeen     chaintimer.ChainTime
 	TrapVertexes []TrapVertex
 }
@@ -168,7 +168,7 @@ type TraitMark struct {
 	RuleB       RuleCode
 	Score       int32
 	Volume      uint32
-	ValueOrNull ValueOrNull
+	ValueOrNull fp.Option[Value]
 	LastSeen    chaintimer.ChainTime
 }
 
@@ -189,7 +189,7 @@ type Rope struct {
 type TraitEvent struct {
 	Author      AuthorCode
 	TxID        shareddomain.TxId
-	ValueOrNull ValueOrNull
+	ValueOrNull fp.Option[Value]
 	Trait       TraitCode
 	AddressA    shareddomain.Address
 	RuleA       RuleCode
@@ -237,30 +237,14 @@ type AddressAndRule struct {
 type TxScala struct {
 	TxId        shareddomain.TxId
 	Time        chaintimer.ChainTime
-	ValueOrNull ValueOrNull
+	ValueOrNull fp.Option[Value]
 	ScoreInc    int32
 }
 
-type ValueOrNull fp.Option[Value]
 type Value = decimal.Decimal
 
-func ParseValue(d decimal.Decimal) ValueOrNull {
-	return ValueOrNull(fp.Some(d))
-}
-
-func (v ValueOrNull) Option() fp.Option[Value] { return fp.Option[Value](v) }
-func (v ValueOrNull) Marshal() ([]byte, error) {
-	txt := v.V.String()
-	return []byte(txt), nil
-
-}
-
-func (v *ValueOrNull) Unmarshal(b []byte) (ValueOrNull, error) {
-	if len(b) == 0 {
-		return ParseValue(decimal.Zero), nil
-	}
-	d, err := decimal.NewFromString(string(b))
-	return ParseValue(d), err
+func ParseValueOption(d decimal.Decimal) fp.Option[Value] {
+	return fp.Some(d)
 }
 
 // 내부 비동기 큐용: TraitMark Upsert
@@ -275,7 +259,7 @@ type TraitMarkUpsert struct {
 	RuleB       RuleCode
 	ScoreDelta  int32
 	VolumeDelta uint32
-	ValueOrNull ValueOrNull
+	ValueOrNull fp.Option[Value]
 	LastSeen    chaintimer.ChainTime
 }
 
@@ -288,7 +272,7 @@ type RopeMarkUpsert struct {
 	SizeDelta    int32                  // 보통 len(AddMembers)와 동일하게 씀
 	VolumeDelta  uint32                 // 트랜잭션 볼륨 증분
 	LastSeen     chaintimer.ChainTime
-	ValueOrNull  ValueOrNull
+	ValueOrNull  fp.Option[Value]
 	// (옵션) 병합: 나열된 Source Rope들을 대상 RopeID로 흡수
 	MergeFrom []RopeID
 }

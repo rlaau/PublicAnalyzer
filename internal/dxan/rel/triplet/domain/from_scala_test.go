@@ -2,18 +2,20 @@ package domain
 
 import (
 	"bytes"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/fp"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-var Zero ropedomain.ValueOrNull = ropedomain.ParseValue(decimal.Zero)
+var ZeroOption fp.Option[ropedomain.Value] = ropedomain.ParseValueOption(decimal.Zero)
 
 // === Test Helpers ===
 
@@ -37,6 +39,168 @@ func createTestTime() chaintimer.ChainTime {
 	return chaintimer.ChainTime(time.Date(2024, 1, 15, 12, 30, 0, 0, time.UTC))
 }
 
+func TestFromScala_JSON_Marshal_Unmarshal(t *testing.T) {
+	t.Run("round trip preserves data (Some non-zero decimal)", func(t *testing.T) {
+		original := NewFromScala(
+			createTestAddress(0xAA),
+			createTestTxId(0xBB),
+			createTestTime(),
+			ropedomain.ParseValueOption(decimal.NewFromFloat(123.456)),
+		)
+		original.Volume = 42
+
+		var buf bytes.Buffer
+		require.NoError(t, json.NewEncoder(&buf).Encode(original))
+
+		var decoded FromScala
+		require.NoError(t, json.NewDecoder(&buf).Decode(&decoded))
+
+		assert.Equal(t, original.FromAddress, decoded.FromAddress)
+		assert.Equal(t, original.LastTxId, decoded.LastTxId)
+		assert.Equal(t, original.LastTime.Unix(), decoded.LastTime.Unix())
+		assert.Equal(t, original.Volume, decoded.Volume)
+		assert.True(t, original.ValueOrNull.V.Equal(decoded.ValueOrNull.V))
+	})
+
+	t.Run("Some(0) vs None(null) are different (ZeroOption emits \"0\")", func(t *testing.T) {
+		// Some(0) 케이스
+		withZero := NewFromScala(
+			createTestAddress(0xAA),
+			createTestTxId(0xBB),
+			createTestTime(),
+			ZeroOption, // == Some(decimal.Zero)
+		)
+
+		b1, err := json.Marshal(withZero)
+		require.NoError(t, err)
+		assert.Contains(t, string(b1), `"valueOrNull":"0"`, "ZeroOption은 Some(0)이므로 null이 아니라 \"0\" 문자열로 직렬화되어야 함")
+
+		var round1 FromScala
+		require.NoError(t, json.Unmarshal(b1, &round1))
+		assert.True(t, round1.ValueOrNull.IsSome())
+		assert.True(t, round1.ValueOrNull.V.Equal(decimal.Zero))
+
+		// None(null) 케이스
+		withNone := NewFromScala(
+			createTestAddress(0xAA),
+			createTestTxId(0xBB),
+			createTestTime(),
+			fp.None[ropedomain.Value](), // 진짜 None
+		)
+
+		b2, err := json.Marshal(withNone)
+		require.NoError(t, err)
+		assert.Contains(t, string(b2), `"valueOrNull":null`, "None은 반드시 null로 직렬화되어야 함")
+
+		var round2 FromScala
+		require.NoError(t, json.Unmarshal(b2, &round2))
+		_, ok := round2.ValueOrNull.Value()
+		assert.False(t, ok, "역직렬화 후에도 Ok=false(=None) 이어야 함")
+	})
+
+	t.Run("handles large decimal value", func(t *testing.T) {
+		large := decimal.RequireFromString("999999999999999999.123456789012345678")
+		original := NewFromScala(
+			createTestAddress(0xAA),
+			createTestTxId(0xBB),
+			createTestTime(),
+			ropedomain.ParseValueOption(large),
+		)
+
+		var buf bytes.Buffer
+		require.NoError(t, json.NewEncoder(&buf).Encode(original))
+
+		var decoded FromScala
+		require.NoError(t, json.NewDecoder(&buf).Decode(&decoded))
+
+		assert.True(t, original.ValueOrNull.V.Equal(decoded.ValueOrNull.V))
+	})
+}
+
+func TestFromScalas_JSON_Marshal_Unmarshal(t *testing.T) {
+	t.Run("round trip preserves multiple elements", func(t *testing.T) {
+		original := FromScalas{
+			NewFromScala(createTestAddress(0xAA), createTestTxId(0x11), createTestTime(), ropedomain.ParseValueOption(decimal.NewFromFloat(1.1))),
+			NewFromScala(createTestAddress(0xBB), createTestTxId(0x22), createTestTime(), ropedomain.ParseValueOption(decimal.NewFromFloat(2.2))),
+			NewFromScala(createTestAddress(0xCC), createTestTxId(0x33), createTestTime(), ropedomain.ParseValueOption(decimal.NewFromFloat(3.3))),
+		}
+
+		var buf bytes.Buffer
+		require.NoError(t, json.NewEncoder(&buf).Encode(original))
+
+		var decoded FromScalas
+		require.NoError(t, json.NewDecoder(&buf).Decode(&decoded))
+
+		require.Len(t, decoded, len(original))
+		for i := range original {
+			assert.Equal(t, original[i].FromAddress, decoded[i].FromAddress)
+			assert.Equal(t, original[i].LastTxId, decoded[i].LastTxId)
+			assert.Equal(t, original[i].Volume, decoded[i].Volume)
+			assert.True(t, original[i].ValueOrNull.V.Equal(decoded[i].ValueOrNull.V))
+		}
+	})
+
+	t.Run("handles empty slice", func(t *testing.T) {
+		original := FromScalas{}
+
+		var buf bytes.Buffer
+		require.NoError(t, json.NewEncoder(&buf).Encode(original))
+
+		var decoded FromScalas
+		require.NoError(t, json.NewDecoder(&buf).Decode(&decoded))
+
+		assert.Len(t, decoded, 0)
+	})
+
+	t.Run("handles large slice", func(t *testing.T) {
+		original := make(FromScalas, 100)
+		for i := range original {
+			original[i] = NewFromScala(
+				createTestAddress(byte(i)),
+				createTestTxId(byte(i)),
+				createTestTime(),
+				ropedomain.ParseValueOption(decimal.NewFromInt(int64(i))),
+			)
+		}
+
+		var buf bytes.Buffer
+		require.NoError(t, json.NewEncoder(&buf).Encode(original))
+
+		var decoded FromScalas
+		require.NoError(t, json.NewDecoder(&buf).Decode(&decoded))
+
+		require.Len(t, decoded, 100)
+		for i := range original {
+			assert.Equal(t, original[i].FromAddress, decoded[i].FromAddress)
+			assert.True(t, original[i].ValueOrNull.V.Equal(decoded[i].ValueOrNull.V))
+		}
+	})
+}
+
+// (선택) JSON 모양을 약하게 고정해두는 스키마 안정성 테스트
+func TestJSONShape_WeakContracts(t *testing.T) {
+	fs := NewFromScala(
+		createTestAddress(0xAA),
+		createTestTxId(0xBB),
+		chaintimer.ChainTime(time.Unix(1700000000, 0).UTC()),
+		ropedomain.ParseValueOption(decimal.NewFromFloat(100.5)),
+	)
+
+	b, err := json.Marshal(fs)
+	require.NoError(t, err)
+	js := string(b)
+
+	// 존재해야 하는 키
+	assert.Contains(t, js, `"fromAddress"`)
+	assert.Contains(t, js, `"lastTxId"`)
+	assert.Contains(t, js, `"lastTime"`)
+	assert.Contains(t, js, `"volume"`)
+	assert.Contains(t, js, `"valueOrNull"`)
+
+	// Some일 때 문자열 또는 숫자(정책에 따라)로 직렬화되지만 shopspring/decimal은 문자열이 기본
+	assert.Contains(t, js, `"valueOrNull":"`)
+}
+
 // === NewFromScala Tests ===
 
 func TestNewFromScala(t *testing.T) {
@@ -44,7 +208,7 @@ func TestNewFromScala(t *testing.T) {
 		from := createTestAddress(0xAA)
 		txId := createTestTxId(0xBB)
 		txTime := createTestTime()
-		value := ropedomain.ParseValue(decimal.NewFromFloat(1.5))
+		value := ropedomain.ParseValueOption(decimal.NewFromFloat(1.5))
 
 		fs := NewFromScala(from, txId, txTime, value)
 
@@ -61,7 +225,7 @@ func TestNewFromScala(t *testing.T) {
 		txTime := createTestTime()
 		value := decimal.Zero
 
-		fs := NewFromScala(from, txId, txTime, ropedomain.ParseValue(value))
+		fs := NewFromScala(from, txId, txTime, ropedomain.ParseValueOption(value))
 
 		assert.Equal(t, int32(1), fs.Volume)
 		assert.True(t, fs.ValueOrNull.V.IsZero())
@@ -75,28 +239,28 @@ func TestFromScala_Update(t *testing.T) {
 		from := createTestAddress(0xAA)
 		txId1 := createTestTxId(0xBB)
 		txTime1 := createTestTime()
-		value1 := ropedomain.ParseValue(decimal.NewFromFloat(1.0))
+		value1 := ropedomain.ParseValueOption(decimal.NewFromFloat(1.0))
 
 		fs := NewFromScala(from, txId1, txTime1, value1)
 
 		// Update with new transaction
 		txId2 := createTestTxId(0xCC)
 		txTime2 := txTime1.Add(chaintimer.Hour)
-		value2 := ropedomain.ParseValue(decimal.NewFromFloat(2.0))
+		value2 := ropedomain.ParseValueOption(decimal.NewFromFloat(2.0))
 
 		fs.Update(txId2, txTime2, value2)
 
 		assert.Equal(t, txId2, fs.LastTxId)
 		assert.Equal(t, txTime2, fs.LastTime)
 		assert.Equal(t, int32(2), fs.Volume)
-		assert.True(t, ropedomain.ParseValue(decimal.NewFromFloat(3.0)).V.Equal(fs.ValueOrNull.V))
+		assert.True(t, ropedomain.ParseValueOption(decimal.NewFromFloat(3.0)).V.Equal(fs.ValueOrNull.V))
 	})
 
 	t.Run("updates volume without changing value when zero", func(t *testing.T) {
 		from := createTestAddress(0xAA)
 		txId := createTestTxId(0xBB)
 		txTime := createTestTime()
-		value := ropedomain.ParseValue(decimal.NewFromFloat(5.0))
+		value := ropedomain.ParseValueOption(decimal.NewFromFloat(5.0))
 
 		fs := NewFromScala(from, txId, txTime, value)
 
@@ -104,7 +268,7 @@ func TestFromScala_Update(t *testing.T) {
 		newTxId := createTestTxId(0xCC)
 		newTime := txTime.Add(chaintimer.Hour)
 
-		fs.Update(newTxId, newTime, ropedomain.ParseValue(decimal.Zero))
+		fs.Update(newTxId, newTime, ropedomain.ParseValueOption(decimal.Zero))
 
 		assert.Equal(t, int32(2), fs.Volume)
 		assert.True(t, value.V.Equal(fs.ValueOrNull.V)) // Value unchanged
@@ -115,10 +279,10 @@ func TestFromScala_Update(t *testing.T) {
 		txId := createTestTxId(0xBB)
 		txTime := createTestTime()
 
-		fs := NewFromScala(from, txId, txTime, ropedomain.ParseValue(decimal.Zero))
+		fs := NewFromScala(from, txId, txTime, ropedomain.ParseValueOption(decimal.Zero))
 		fs.Volume = 2147483647 // MaxInt32
 
-		fs.Update(txId, txTime, ropedomain.ParseValue(decimal.Zero))
+		fs.Update(txId, txTime, ropedomain.ParseValueOption(decimal.Zero))
 
 		assert.Equal(t, int32(2147483647), fs.Volume) // Should not overflow
 	})
@@ -129,7 +293,7 @@ func TestFromScala_Update(t *testing.T) {
 func TestFromScala_Matches(t *testing.T) {
 	t.Run("returns true for matching address", func(t *testing.T) {
 		addr := createTestAddress(0xAA)
-		fs := NewFromScala(addr, createTestTxId(0xBB), createTestTime(), ropedomain.ParseValue(decimal.Zero))
+		fs := NewFromScala(addr, createTestTxId(0xBB), createTestTime(), ropedomain.ParseValueOption(decimal.Zero))
 
 		assert.True(t, fs.Matches(addr))
 	})
@@ -137,7 +301,7 @@ func TestFromScala_Matches(t *testing.T) {
 	t.Run("returns false for different address", func(t *testing.T) {
 		addr1 := createTestAddress(0xAA)
 		addr2 := createTestAddress(0xBB)
-		fs := NewFromScala(addr1, createTestTxId(0xCC), createTestTime(), ropedomain.ParseValue(decimal.Zero))
+		fs := NewFromScala(addr1, createTestTxId(0xCC), createTestTime(), ropedomain.ParseValueOption(decimal.Zero))
 
 		assert.False(t, fs.Matches(addr2))
 	})
@@ -151,9 +315,9 @@ func TestFromScalas_FindByAddress(t *testing.T) {
 		addr2 := createTestAddress(0xBB)
 		addr3 := createTestAddress(0xCC)
 		fss := FromScalas{
-			NewFromScala(addr1, createTestTxId(0x11), createTestTime(), Zero),
-			NewFromScala(addr2, createTestTxId(0x22), createTestTime(), Zero),
-			NewFromScala(addr3, createTestTxId(0x33), createTestTime(), Zero),
+			NewFromScala(addr1, createTestTxId(0x11), createTestTime(), ZeroOption),
+			NewFromScala(addr2, createTestTxId(0x22), createTestTime(), ZeroOption),
+			NewFromScala(addr3, createTestTxId(0x33), createTestTime(), ZeroOption),
 		}
 
 		idx, found := fss.FindByAddress(addr2)
@@ -168,7 +332,7 @@ func TestFromScalas_FindByAddress(t *testing.T) {
 		addr2 := createTestAddress(0xBB)
 
 		fss := FromScalas{
-			NewFromScala(addr1, createTestTxId(0x11), createTestTime(), Zero),
+			NewFromScala(addr1, createTestTxId(0x11), createTestTime(), ZeroOption),
 		}
 
 		idx, found := fss.FindByAddress(addr2)
@@ -196,7 +360,7 @@ func TestFromScalas_AddOrUpdate(t *testing.T) {
 		addr := createTestAddress(0xAA)
 		txId := createTestTxId(0xBB)
 		txTime := createTestTime()
-		value := ropedomain.ParseValue(decimal.NewFromFloat(1.5))
+		value := ropedomain.ParseValueOption(decimal.NewFromFloat(1.5))
 
 		result := fss.AddOrUpdate(addr, txId, txTime, value)
 
@@ -211,7 +375,7 @@ func TestFromScalas_AddOrUpdate(t *testing.T) {
 		addr := createTestAddress(0xAA)
 		txId1 := createTestTxId(0xBB)
 		txTime1 := createTestTime()
-		value1 := ropedomain.ParseValue(decimal.NewFromFloat(1.0))
+		value1 := ropedomain.ParseValueOption(decimal.NewFromFloat(1.0))
 
 		fss := FromScalas{
 			NewFromScala(addr, txId1, txTime1, value1),
@@ -219,7 +383,7 @@ func TestFromScalas_AddOrUpdate(t *testing.T) {
 
 		txId2 := createTestTxId(0xCC)
 		txTime2 := txTime1.Add(chaintimer.Hour)
-		value2 := ropedomain.ParseValue(decimal.NewFromFloat(2.0))
+		value2 := ropedomain.ParseValueOption(decimal.NewFromFloat(2.0))
 
 		result := fss.AddOrUpdate(addr, txId2, txTime2, value2)
 
@@ -227,7 +391,7 @@ func TestFromScalas_AddOrUpdate(t *testing.T) {
 		assert.Equal(t, txId2, result[0].LastTxId)
 		assert.Equal(t, txTime2, result[0].LastTime)
 		assert.Equal(t, int32(2), result[0].Volume)
-		assert.True(t, ropedomain.ParseValue(decimal.NewFromFloat(3.0)).V.Equal(result[0].ValueOrNull.V))
+		assert.True(t, ropedomain.ParseValueOption(decimal.NewFromFloat(3.0)).V.Equal(result[0].ValueOrNull.V))
 	})
 
 	t.Run("adds to existing slice", func(t *testing.T) {
@@ -235,10 +399,10 @@ func TestFromScalas_AddOrUpdate(t *testing.T) {
 		addr2 := createTestAddress(0xBB)
 
 		fss := FromScalas{
-			NewFromScala(addr1, createTestTxId(0x11), createTestTime(), ropedomain.ParseValue(decimal.NewFromFloat(1.0))),
+			NewFromScala(addr1, createTestTxId(0x11), createTestTime(), ropedomain.ParseValueOption(decimal.NewFromFloat(1.0))),
 		}
 
-		result := fss.AddOrUpdate(addr2, createTestTxId(0x22), createTestTime(), ropedomain.ParseValue(decimal.NewFromFloat(2.0)))
+		result := fss.AddOrUpdate(addr2, createTestTxId(0x22), createTestTime(), ropedomain.ParseValueOption(decimal.NewFromFloat(2.0)))
 
 		require.Len(t, result, 2)
 		assert.Equal(t, addr1, result[0].FromAddress)
@@ -253,7 +417,7 @@ func TestFromScalas_Copy(t *testing.T) {
 		addr := createTestAddress(0xAA)
 		txId := createTestTxId(0xBB)
 		txTime := createTestTime()
-		value := ropedomain.ParseValue(decimal.NewFromFloat(1.0))
+		value := ropedomain.ParseValueOption(decimal.NewFromFloat(1.0))
 		original := FromScalas{
 			NewFromScala(addr, txId, txTime, value),
 		}
@@ -278,9 +442,9 @@ func TestFromScalas_Copy(t *testing.T) {
 
 	t.Run("copies multiple elements", func(t *testing.T) {
 		fss := FromScalas{
-			NewFromScala(createTestAddress(0xAA), createTestTxId(0x11), createTestTime(), ropedomain.ParseValue(decimal.NewFromFloat(1.0))),
-			NewFromScala(createTestAddress(0xBB), createTestTxId(0x22), createTestTime(), ropedomain.ParseValue(decimal.NewFromFloat(2.0))),
-			NewFromScala(createTestAddress(0xCC), createTestTxId(0x33), createTestTime(), ropedomain.ParseValue(decimal.NewFromFloat(3.0))),
+			NewFromScala(createTestAddress(0xAA), createTestTxId(0x11), createTestTime(), ropedomain.ParseValueOption(decimal.NewFromFloat(1.0))),
+			NewFromScala(createTestAddress(0xBB), createTestTxId(0x22), createTestTime(), ropedomain.ParseValueOption(decimal.NewFromFloat(2.0))),
+			NewFromScala(createTestAddress(0xCC), createTestTxId(0x33), createTestTime(), ropedomain.ParseValueOption(decimal.NewFromFloat(3.0))),
 		}
 
 		copied := fss.Copy()
@@ -291,161 +455,5 @@ func TestFromScalas_Copy(t *testing.T) {
 			assert.Equal(t, fss[i].LastTxId, copied[i].LastTxId)
 			assert.Equal(t, fss[i].Volume, copied[i].Volume)
 		}
-	})
-}
-
-// === Marshal/Unmarshal Tests ===
-
-func TestFromScala_Marshal_Unmarshal(t *testing.T) {
-	t.Run("round trip preserves data", func(t *testing.T) {
-		original := NewFromScala(
-			createTestAddress(0xAA),
-			createTestTxId(0xBB),
-			createTestTime(),
-			ropedomain.ParseValue(decimal.NewFromFloat(123.456)),
-		)
-		original.Volume = 42
-
-		var buf bytes.Buffer
-		err := original.Marshal(&buf)
-		require.NoError(t, err)
-
-		var decoded FromScala
-		err = decoded.Unmarshal(&buf)
-		require.NoError(t, err)
-
-		assert.Equal(t, original.FromAddress, decoded.FromAddress)
-		assert.Equal(t, original.LastTxId, decoded.LastTxId)
-		assert.Equal(t, original.LastTime.Unix(), decoded.LastTime.Unix())
-		assert.Equal(t, original.Volume, decoded.Volume)
-		assert.True(t, original.ValueOrNull.V.Equal(decoded.ValueOrNull.V))
-	})
-
-	t.Run("handles zero value", func(t *testing.T) {
-		original := NewFromScala(
-			createTestAddress(0xAA),
-			createTestTxId(0xBB),
-			createTestTime(),
-			Zero,
-		)
-
-		var buf bytes.Buffer
-		err := original.Marshal(&buf)
-		require.NoError(t, err)
-
-		var decoded FromScala
-		err = decoded.Unmarshal(&buf)
-		require.NoError(t, err)
-
-		assert.True(t, decoded.ValueOrNull.V.IsZero())
-	})
-
-	t.Run("handles large decimal value", func(t *testing.T) {
-		largeValue := ropedomain.ParseValue(decimal.RequireFromString("999999999999999999.123456789012345678"))
-		original := NewFromScala(
-			createTestAddress(0xAA),
-			createTestTxId(0xBB),
-			createTestTime(),
-			largeValue,
-		)
-
-		var buf bytes.Buffer
-		err := original.Marshal(&buf)
-		require.NoError(t, err)
-
-		var decoded FromScala
-		err = decoded.Unmarshal(&buf)
-		require.NoError(t, err)
-
-		assert.True(t, original.ValueOrNull.V.Equal(decoded.ValueOrNull.V))
-	})
-}
-
-func TestFromScalas_Marshal_Unmarshal(t *testing.T) {
-	t.Run("round trip preserves multiple elements", func(t *testing.T) {
-		original := FromScalas{
-			NewFromScala(createTestAddress(0xAA), createTestTxId(0x11), createTestTime(), ropedomain.ParseValue(decimal.NewFromFloat(1.1))),
-			NewFromScala(createTestAddress(0xBB), createTestTxId(0x22), createTestTime(), ropedomain.ParseValue(decimal.NewFromFloat(2.2))),
-			NewFromScala(createTestAddress(0xCC), createTestTxId(0x33), createTestTime(), ropedomain.ParseValue(decimal.NewFromFloat(3.3))),
-		}
-
-		var buf bytes.Buffer
-		err := original.Marshal(&buf)
-		require.NoError(t, err)
-
-		decoded, err := UnmarshalFromScalas(&buf)
-		require.NoError(t, err)
-
-		require.Len(t, decoded, len(original))
-		for i := range original {
-			assert.Equal(t, original[i].FromAddress, decoded[i].FromAddress)
-			assert.Equal(t, original[i].LastTxId, decoded[i].LastTxId)
-			assert.Equal(t, original[i].Volume, decoded[i].Volume)
-			assert.True(t, original[i].ValueOrNull.V.Equal(decoded[i].ValueOrNull.V))
-		}
-	})
-
-	t.Run("handles empty slice", func(t *testing.T) {
-		original := FromScalas{}
-
-		var buf bytes.Buffer
-		err := original.Marshal(&buf)
-		require.NoError(t, err)
-
-		decoded, err := UnmarshalFromScalas(&buf)
-		require.NoError(t, err)
-
-		assert.Len(t, decoded, 0)
-	})
-
-	t.Run("handles large slice", func(t *testing.T) {
-		original := make(FromScalas, 100)
-		for i := range original {
-			original[i] = NewFromScala(
-				createTestAddress(byte(i)),
-				createTestTxId(byte(i)),
-				createTestTime(),
-				ropedomain.ParseValue(decimal.NewFromInt(int64(i))),
-			)
-		}
-
-		var buf bytes.Buffer
-		err := original.Marshal(&buf)
-		require.NoError(t, err)
-
-		decoded, err := UnmarshalFromScalas(&buf)
-		require.NoError(t, err)
-
-		require.Len(t, decoded, 100)
-		for i := range original {
-			assert.Equal(t, original[i].FromAddress, decoded[i].FromAddress)
-			assert.True(t, original[i].ValueOrNull.V.Equal(decoded[i].ValueOrNull.V))
-		}
-	})
-}
-
-// === Binary Format Compatibility Tests ===
-
-func TestBinaryFormatStability(t *testing.T) {
-	t.Run("binary format remains consistent", func(t *testing.T) {
-		// This test ensures the binary format doesn't accidentally change
-		fs := NewFromScala(
-			createTestAddress(0xAA),
-			createTestTxId(0xBB),
-			chaintimer.ChainTime(time.Unix(1700000000, 0).UTC()),
-			ropedomain.ParseValue(decimal.NewFromFloat(100.5)),
-		)
-
-		var buf bytes.Buffer
-		err := fs.Marshal(&buf)
-		require.NoError(t, err)
-
-		// Binary format: 20B address + 32B txId + 8B unix time + 4B volume + varBytes decimal
-		// Address: 20 bytes
-		// TxId: 32 bytes
-		// Unix: 8 bytes
-		// Volume: 4 bytes
-		// Decimal: 4 bytes length + string bytes
-		assert.Greater(t, buf.Len(), 20+32+8+4+4)
 	})
 }

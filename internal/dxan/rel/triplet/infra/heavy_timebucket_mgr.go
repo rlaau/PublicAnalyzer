@@ -2,13 +2,13 @@
 package infra
 
 import (
-	"bytes"
-	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -222,7 +222,31 @@ func (m *HeavyTimeBucketManager) ensureBucketLocked(txTime chaintimer.ChainTime)
 // 바이너리 스냅샷 (heavy_state.bin)
 // ----------------------
 
-const heavyTbMagicStr = "HTBKv1" // 6 bytes
+type heavyTimeBucketJSON struct {
+	StartTime string                        `json:"startTime"` // RFC3339
+	EndTime   string                        `json:"endTime"`   // RFC3339
+	ToUsers   map[string]ldomain.FromScalas `json:"toUsers"`   // key: 0x + 40 hex
+}
+
+// 저장 전체 스냅샷(순서 보존)
+type heavyStateJSON struct {
+	Version int                   `json:"v"`       // 포맷 버전(필요 시 마이그레이션용)
+	Buckets []heavyTimeBucketJSON `json:"buckets"` // front..rear 순서 유지
+}
+
+func hexToAddr(s string) (domain.Address, error) {
+	var out domain.Address
+	ss := strings.TrimPrefix(strings.TrimPrefix(s, "0x"), "0X")
+	if len(ss) != 40 {
+		return out, fmt.Errorf("addr hex length %d != 40", len(ss))
+	}
+	b, err := hex.DecodeString(ss)
+	if err != nil {
+		return out, err
+	}
+	copy(out[:], b)
+	return out, nil
+}
 
 func (m *HeavyTimeBucketManager) stateBinPath() string {
 	if m.path == "" {
@@ -236,7 +260,7 @@ func (m *HeavyTimeBucketManager) save() error {
 		return nil
 	}
 
-	// (옵션) 더티 체크: 더티 아니면 스킵
+	// (옵션) 더티 체크
 	m.mu.RLock()
 	if !m.dirty {
 		m.mu.RUnlock()
@@ -244,16 +268,15 @@ func (m *HeavyTimeBucketManager) save() error {
 	}
 
 	startTime := time.Now()
-	fmt.Printf("\n🔄 HeavyTimeBucket 저장 시작 → %s\n", m.stateBinPath())
+	fmt.Printf("\n🔄 HeavyTimeBucket 저장 시작(JSON) → %s\n", m.stateBinPath())
 
-	// 빠른 스냅샷용 얕은 복사 + map deep copy
+	// 스냅샷 (필요 최소한만 유지)
 	cnt := m.count
 	front := m.frontIndex
-	snap := make([]*HeavyTimeBucket, MaxTimeBuckets)
 
-	// 사전 크기 계산으로 메모리 재할당 최소화
-	totalSize := 7 + 8*cnt // magic(6) + cnt(1) + startUnix(8)*cnt
+	snap := make([]*HeavyTimeBucket, MaxTimeBuckets)
 	totalToUsers := 0
+
 	for i := 0; i < MaxTimeBuckets; i++ {
 		if b := m.buckets[i]; b != nil {
 			nb := &HeavyTimeBucket{
@@ -261,24 +284,18 @@ func (m *HeavyTimeBucketManager) save() error {
 				EndTime:   b.EndTime,
 				ToUsers:   make(map[domain.Address]ldomain.FromScalas, len(b.ToUsers)),
 			}
-			totalToUsers += len(b.ToUsers)
 			for k, v := range b.ToUsers {
-				// 도메인 로직 위임: Copy 사용
-				nb.ToUsers[k] = v.Copy()
-				// 크기 추정: addr(20) + fromScalas 인코딩 크기
-				totalSize += 20 + 4 + len(v)*120 // 대략 120바이트/FromScala
+				nb.ToUsers[k] = v.Copy() // 도메인 로직에 위임
+				totalToUsers++
 			}
 			snap[i] = nb
-			totalSize += 4 // toUsersLen
 		}
 	}
 	m.mu.RUnlock()
 
-	// 진행 상황 추적
+	// 진행률 출력(선택)
 	var processedUsers int32
 	done := make(chan struct{})
-
-	// 5초마다 진행률 출력
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
@@ -287,73 +304,59 @@ func (m *HeavyTimeBucketManager) save() error {
 			case <-done:
 				return
 			case <-ticker.C:
-				current := int(processedUsers)
-				percentage := float64(current) / float64(totalToUsers) * 100
+				current := int(atomic.LoadInt32(&processedUsers))
+				var pct float64
+				if totalToUsers > 0 {
+					pct = float64(current) / float64(totalToUsers) * 100
+				}
 				elapsed := time.Since(startTime)
 				fmt.Printf("⏱️  저장 중: %d/%d 유저 (%.1f%%) - 경과: %.1f초\n",
-					current, totalToUsers, percentage, elapsed.Seconds())
+					current, totalToUsers, pct, elapsed.Seconds())
 			}
 		}
 	}()
 
-	// 사전 할당된 버퍼로 재할당 최소화
-	buf := bytes.NewBuffer(make([]byte, 0, totalSize))
-
-	// header
-	buf.WriteString(heavyTbMagicStr)
-	if err := buf.WriteByte(byte(cnt)); err != nil {
-		close(done)
-		return err
+	// front..rear 순서대로 JSON DTO 구성
+	state := heavyStateJSON{
+		Version: 1,
+		Buckets: make([]heavyTimeBucketJSON, 0, cnt),
 	}
-
-	// front..rear 순서로 직렬화
 	for i := 0; i < cnt; i++ {
 		idx := (front + i) % MaxTimeBuckets
 		b := snap[idx]
 		if b == nil {
 			continue
 		}
-		// start_unix(int64)
-		startUnix := time.Time(b.StartTime).UTC().Unix()
-		if err := binary.Write(buf, binary.LittleEndian, startUnix); err != nil {
-			close(done)
-			return err
+		j := heavyTimeBucketJSON{
+			StartTime: time.Time(b.StartTime).UTC().Format(time.RFC3339Nano),
+			EndTime:   time.Time(b.EndTime).UTC().Format(time.RFC3339Nano),
+			ToUsers:   make(map[string]ldomain.FromScalas, len(b.ToUsers)),
 		}
-		// to_users_len(uint32)
-		toUsersLen := uint32(len(b.ToUsers))
-		if err := binary.Write(buf, binary.LittleEndian, toUsersLen); err != nil {
-			close(done)
-			return err
-		}
-		// to_users: [20]byte + encoded FromScalas
 		for addr, fromScalas := range b.ToUsers {
-			if _, err := buf.Write(addr[:]); err != nil {
-				close(done)
-				return err
-			}
-			// 도메인 로직 위임: FromScalas.Marshal 사용
-			if err := fromScalas.Marshal(buf); err != nil {
-				close(done)
-				return err
-			}
-			processedUsers++
+			j.ToUsers[addr.ToHex()] = fromScalas // FromScalas는 자체 JSON 사용
+			atomic.AddInt32(&processedUsers, 1)
 		}
+		state.Buckets = append(state.Buckets, j)
 	}
 
-	// 파일 직접 쓰기로 변경 (대용량 버퍼 복사 방지)
+	// 파일로 바로 인코딩 (tmp 파일 → rename, fsync 유지)
 	tmp := m.stateBinPath() + ".tmp"
 	f, err := os.Create(tmp)
 	if err != nil {
 		close(done)
 		return err
 	}
-	if _, err := buf.WriteTo(f); err != nil {
+	enc := json.NewEncoder(f)
+	enc.SetEscapeHTML(false)
+	// enc.SetIndent("", "  ") // 사람이 보는 용도면 주석 해제
+
+	if err := enc.Encode(&state); err != nil {
 		f.Close()
 		os.Remove(tmp)
 		close(done)
 		return err
 	}
-	if err := f.Sync(); err != nil { // 디스크 동기화
+	if err := f.Sync(); err != nil {
 		f.Close()
 		os.Remove(tmp)
 		close(done)
@@ -368,7 +371,6 @@ func (m *HeavyTimeBucketManager) save() error {
 		close(done)
 		return err
 	}
-
 	close(done)
 
 	// 저장 성공 → dirty reset
@@ -377,10 +379,9 @@ func (m *HeavyTimeBucketManager) save() error {
 	m.mu.Unlock()
 
 	elapsed := time.Since(startTime)
-	fmt.Printf("✅ HeavyTimeBucket 저장 완료: %d 유저 (%.2f초)\n\n", totalToUsers, elapsed.Seconds())
+	fmt.Printf("✅ HeavyTimeBucket 저장 완료(JSON): %d 유저 (%.2f초)\n\n", totalToUsers, elapsed.Seconds())
 	return nil
 }
-
 func (m *HeavyTimeBucketManager) Load() error {
 	if m.path == "" {
 		return nil
@@ -392,55 +393,44 @@ func (m *HeavyTimeBucketManager) Load() error {
 		}
 		return err
 	}
-	r := bytes.NewReader(data)
 
-	// header
-	hdr := make([]byte, len(heavyTbMagicStr))
-	if _, err := io.ReadFull(r, hdr); err != nil {
-		return err
+	var state heavyStateJSON
+	if err := json.Unmarshal(data, &state); err != nil {
+		return fmt.Errorf("decode heavy state json: %w", err)
 	}
-	if string(hdr) != heavyTbMagicStr {
-		return fmt.Errorf("invalid magic: %q", string(hdr))
-	}
-	var cb [1]byte
-	if _, err := io.ReadFull(r, cb[:]); err != nil {
-		return err
-	}
-	cnt := int(cb[0])
-	if cnt < 0 || cnt > MaxTimeBuckets {
-		return fmt.Errorf("invalid bucket count: %d", cnt)
-	}
+	// 버전 관리가 필요하면 여기서 state.Version 검사/마이그레이션
 
 	newBuckets := make([]*HeavyTimeBucket, MaxTimeBuckets)
 
-	for i := range cnt {
-		var startUnix int64
-		if err := binary.Read(r, binary.LittleEndian, &startUnix); err != nil {
-			return fmt.Errorf("read start_unix: %w", err)
+	// front..rear 순서로 채움
+	cnt := len(state.Buckets)
+	if cnt > MaxTimeBuckets {
+		return fmt.Errorf("invalid bucket count: %d > MaxTimeBuckets(%d)", cnt, MaxTimeBuckets)
+	}
+	for i := 0; i < cnt; i++ {
+		bj := state.Buckets[i]
+
+		st, err := time.Parse(time.RFC3339Nano, bj.StartTime)
+		if err != nil {
+			return fmt.Errorf("parse startTime: %w", err)
 		}
-		var toUsersLen uint32
-		if err := binary.Read(r, binary.LittleEndian, &toUsersLen); err != nil {
-			return fmt.Errorf("read to_users_len: %w", err)
+		et, err := time.Parse(time.RFC3339Nano, bj.EndTime)
+		if err != nil {
+			return fmt.Errorf("parse endTime: %w", err)
 		}
 
-		st := chaintimer.ChainTime(time.Unix(startUnix, 0).UTC())
 		tb := &HeavyTimeBucket{
-			StartTime: st,
-			EndTime:   st.Add(SlideInterval),
-			ToUsers:   make(map[domain.Address]ldomain.FromScalas, toUsersLen),
+			StartTime: chaintimer.ChainTime(st.UTC()),
+			EndTime:   chaintimer.ChainTime(et.UTC()),
+			ToUsers:   make(map[domain.Address]ldomain.FromScalas, len(bj.ToUsers)),
 		}
 
-		for j := uint32(0); j < toUsersLen; j++ {
-			var a domain.Address
-			if _, err := io.ReadFull(r, a[:]); err != nil {
-				return fmt.Errorf("read address: %w", err)
-			}
-			// 도메인 로직 위임: UnmarshalFromScalas 사용
-			fromScalas, err := ldomain.UnmarshalFromScalas(r)
+		for hexKey, fromScalas := range bj.ToUsers {
+			a, err := hexToAddr(hexKey)
 			if err != nil {
-				return fmt.Errorf("decode fromScalas: %w", err)
+				return fmt.Errorf("addr decode: %w", err)
 			}
-			tb.ToUsers[a] = fromScalas
+			tb.ToUsers[a] = fromScalas // FromScalas는 JSON에서 이미 복원됨
 		}
 		newBuckets[i] = tb
 	}
