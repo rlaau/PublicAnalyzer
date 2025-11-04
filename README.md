@@ -20,7 +20,7 @@ https://kooku0.github.io/docs/books/grokking-simplicity/18/
 도메인 주도 설계
 [https://ijung.github.io/categories/도메인-주도-설계-첫걸음-done/](https://ijung.github.io/categories/%EB%8F%84%EB%A9%94%EC%9D%B8-%EC%A3%BC%EB%8F%84-%EC%84%A4%EA%B3%84-%EC%B2%AB%EA%B1%B8%EC%9D%8C-done/)
 도메인을 잘 모델링하는 법
-https://www.youtube.com/watch?v=PLFl95c-IiU
+[https://www.youtube.com/watch?v=PLFl95c-IiU]
 [프로젝트에선 모듈 내 폴더 분리로 관리함]
 5. 모듈 외피 구성:
 헥사고날 아키텍쳐
@@ -52,15 +52,26 @@ https://www.youtube.com/watch?v=PLFl95c-IiU
 DB 담은 폴더
 
 ### 모듈 내 구조
+모델 디자인
+1. domain/d_model.go:
+모듈이 지녀야 할 도메인 로직을 모델링함.
+2. app/a_model.go:
+모듈이 지녀야 할 비즈니스 로직을 모델링함.
+3. iface/i_model.go
+모듈이 의존하는 인프라를 모델링함.
 
+폴더 디자인
 1. domain:
-모듈이 관리하는 엔티티, 벨류, 이벤트, 어그리게이트 정의
+모듈이 관리하는 엔티티, 벨류, 이벤트, 어그리게이트 정의.
+d_model.go에 도메인의 핵심 로직 모델링함.
 2. iface:
-infra, app 에 대한 의존성 격리 용도
+infra, app 에 대한 의존성 격리 용도.
 3. infra:
 app이 사용할 인프라 마련.
+iface의 모델링을 바탕으로 구현.
 4. app:
-비즈니스 로직 담당
+비즈니스 로직 담당.
+외부 포트 및 a_model.go를 바탕으로 구현.
 
 ## 모듈 설명 (제안 단계)
 

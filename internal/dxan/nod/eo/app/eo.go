@@ -108,7 +108,7 @@ func (eo *Eo) RegisterParent(nod gface.Module) error {
 }
 
 func (eo *Eo) SaveDetectedDeposit(deposit domain.DepositDetection) error {
-	return eo.depositDB.SaveDetectedDeposit(deposit)
+	return eo.depositDB.UpdateDetectedDeposit(deposit)
 }
 
 func (eo *Eo) IsDepositAddress(addr domain.Address) (bool, error) {

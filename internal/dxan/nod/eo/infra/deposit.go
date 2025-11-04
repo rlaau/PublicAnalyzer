@@ -74,11 +74,13 @@ func (r *DepositRepository) Close() error {
 
 // }
 
-// SaveDetectedDeposit: 신규면 Insert, 기존이면 변경 있을 때만 Update.
+// UpdateDetectedDeposit: 신규면 Insert, 이미 있는 값이면 TxCount증가.
 // MVCC 충돌 시 3회까지 재시도, 실패 시 샤드 뮤텍스로 직렬화 후 1회 재시도.
-func (r *DepositRepository) SaveDetectedDeposit(deposit sharedDomain.DepositDetection) error {
+// TODO 현재는 그냥 DepositDetection을 받아서 DepositDetection을 저장하는 중임
+// TODO 추후엔 DepositDetectionUpsert를 받아서 DetectedDeposit으로 저장할 것.
+func (r *DepositRepository) UpdateDetectedDeposit(depositDetection sharedDomain.DepositDetection) error {
 
-	key := r.makeKey(deposit.DepositAddress)
+	key := r.makeKey(depositDetection.DepositAddress)
 
 	fn := func(txn *badger.Txn) error {
 		// 현재 값 조회(없으면 신규)
@@ -93,24 +95,9 @@ func (r *DepositRepository) SaveDetectedDeposit(deposit sharedDomain.DepositDete
 			if e = json.Unmarshal(val, &cur); e != nil {
 				return e
 			}
-			// 변경 사항 있는지 비교(정책에 맞게 갱신)
-			changed := false
-			if cur.TxCount != deposit.TxCount {
-				cur.TxCount = deposit.TxCount
-				changed = true
-			}
-			// 필요 시 다음 필드도 유지/갱신(정책 선택)
-			if cur.DetectedAt != deposit.DetectedAt {
-				cur.DetectedAt = deposit.DetectedAt
-				changed = true
-			}
-			if cur.CEXAddress != deposit.CEXAddress {
-				cur.CEXAddress = deposit.CEXAddress
-				changed = true
-			}
-			if !changed {
-				return nil // noop
-			}
+			//거래 횟수 증가시킴.
+			cur.TxCount += depositDetection.TxCount
+
 			buf, e := json.Marshal(&cur)
 			if e != nil {
 				return e
@@ -119,7 +106,7 @@ func (r *DepositRepository) SaveDetectedDeposit(deposit sharedDomain.DepositDete
 
 		case errors.Is(err, badger.ErrKeyNotFound):
 			// 신규 Insert
-			buf, e := json.Marshal(deposit)
+			buf, e := json.Marshal(depositDetection)
 			if e != nil {
 				return e
 			}
