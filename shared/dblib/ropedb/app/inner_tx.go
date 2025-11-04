@@ -155,13 +155,13 @@ func (b *BadgerRopeDB) updateRopeMark(op domain.RopeMarkUpsert) error {
 				Members:     nil,
 				Volume:      0,
 				LastSeen:    op.LastSeen,
-				ValueOrNull: domain.ParseValueOption(decimal.Zero),
+				ValueOrNull: shareddomain.ParseValueOption(decimal.Zero),
 			}
 		}
 
 		// 값 누적
 		if !op.ValueOrNull.V.IsZero() {
-			rm.ValueOrNull = domain.ParseValueOption(rm.ValueOrNull.V.Add(op.ValueOrNull.V))
+			rm.ValueOrNull = shareddomain.ParseValueOption(rm.ValueOrNull.V.Add(op.ValueOrNull.V))
 		}
 		if len(op.AddMembers) > 0 {
 			rm.Members = computation.DedupAppend(rm.Members, op.AddMembers)

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
-	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/fp"
 )
 
@@ -21,7 +21,7 @@ type fromScalaJSON struct {
 	//* Option 타입에 대해선 이미 MarshalJson등을 선언해 놨음.
 	//* 따로 정의하는 경우, 먼저 그 로직 강제 가능함
 
-	ValueOrNull fp.Option[ropedomain.Value] `json:"valueOrNull"`
+	ValueOrNull fp.Option[domain.Value] `json:"valueOrNull"`
 }
 
 func (fs FromScala) MarshalJSON() ([]byte, error) {

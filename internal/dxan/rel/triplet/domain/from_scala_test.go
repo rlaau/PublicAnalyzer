@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
-	ropedomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/fp"
 	"github.com/shopspring/decimal"
@@ -15,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var ZeroOption fp.Option[ropedomain.Value] = ropedomain.ParseValueOption(decimal.Zero)
+var ZeroOption fp.Option[domain.Value] = domain.ParseValueOption(decimal.Zero)
 
 // === Test Helpers ===
 
@@ -45,7 +44,7 @@ func TestFromScala_JSON_Marshal_Unmarshal(t *testing.T) {
 			createTestAddress(0xAA),
 			createTestTxId(0xBB),
 			createTestTime(),
-			ropedomain.ParseValueOption(decimal.NewFromFloat(123.456)),
+			domain.ParseValueOption(decimal.NewFromFloat(123.456)),
 		)
 		original.Volume = 42
 
@@ -85,7 +84,7 @@ func TestFromScala_JSON_Marshal_Unmarshal(t *testing.T) {
 			createTestAddress(0xAA),
 			createTestTxId(0xBB),
 			createTestTime(),
-			fp.None[ropedomain.Value](), // 진짜 None
+			fp.None[domain.Value](), // 진짜 None
 		)
 
 		b2, err := json.Marshal(withNone)
@@ -104,7 +103,7 @@ func TestFromScala_JSON_Marshal_Unmarshal(t *testing.T) {
 			createTestAddress(0xAA),
 			createTestTxId(0xBB),
 			createTestTime(),
-			ropedomain.ParseValueOption(large),
+			domain.ParseValueOption(large),
 		)
 
 		var buf bytes.Buffer
@@ -120,9 +119,9 @@ func TestFromScala_JSON_Marshal_Unmarshal(t *testing.T) {
 func TestFromScalas_JSON_Marshal_Unmarshal(t *testing.T) {
 	t.Run("round trip preserves multiple elements", func(t *testing.T) {
 		original := FromScalas{
-			NewFromScala(createTestAddress(0xAA), createTestTxId(0x11), createTestTime(), ropedomain.ParseValueOption(decimal.NewFromFloat(1.1))),
-			NewFromScala(createTestAddress(0xBB), createTestTxId(0x22), createTestTime(), ropedomain.ParseValueOption(decimal.NewFromFloat(2.2))),
-			NewFromScala(createTestAddress(0xCC), createTestTxId(0x33), createTestTime(), ropedomain.ParseValueOption(decimal.NewFromFloat(3.3))),
+			NewFromScala(createTestAddress(0xAA), createTestTxId(0x11), createTestTime(), domain.ParseValueOption(decimal.NewFromFloat(1.1))),
+			NewFromScala(createTestAddress(0xBB), createTestTxId(0x22), createTestTime(), domain.ParseValueOption(decimal.NewFromFloat(2.2))),
+			NewFromScala(createTestAddress(0xCC), createTestTxId(0x33), createTestTime(), domain.ParseValueOption(decimal.NewFromFloat(3.3))),
 		}
 
 		var buf bytes.Buffer
@@ -159,7 +158,7 @@ func TestFromScalas_JSON_Marshal_Unmarshal(t *testing.T) {
 				createTestAddress(byte(i)),
 				createTestTxId(byte(i)),
 				createTestTime(),
-				ropedomain.ParseValueOption(decimal.NewFromInt(int64(i))),
+				domain.ParseValueOption(decimal.NewFromInt(int64(i))),
 			)
 		}
 
@@ -183,7 +182,7 @@ func TestJSONShape_WeakContracts(t *testing.T) {
 		createTestAddress(0xAA),
 		createTestTxId(0xBB),
 		chaintimer.ChainTime(time.Unix(1700000000, 0).UTC()),
-		ropedomain.ParseValueOption(decimal.NewFromFloat(100.5)),
+		domain.ParseValueOption(decimal.NewFromFloat(100.5)),
 	)
 
 	b, err := json.Marshal(fs)
@@ -208,7 +207,7 @@ func TestNewFromScala(t *testing.T) {
 		from := createTestAddress(0xAA)
 		txId := createTestTxId(0xBB)
 		txTime := createTestTime()
-		value := ropedomain.ParseValueOption(decimal.NewFromFloat(1.5))
+		value := domain.ParseValueOption(decimal.NewFromFloat(1.5))
 
 		fs := NewFromScala(from, txId, txTime, value)
 
@@ -225,7 +224,7 @@ func TestNewFromScala(t *testing.T) {
 		txTime := createTestTime()
 		value := decimal.Zero
 
-		fs := NewFromScala(from, txId, txTime, ropedomain.ParseValueOption(value))
+		fs := NewFromScala(from, txId, txTime, domain.ParseValueOption(value))
 
 		assert.Equal(t, int32(1), fs.Volume)
 		assert.True(t, fs.ValueOrNull.V.IsZero())
@@ -239,28 +238,28 @@ func TestFromScala_Update(t *testing.T) {
 		from := createTestAddress(0xAA)
 		txId1 := createTestTxId(0xBB)
 		txTime1 := createTestTime()
-		value1 := ropedomain.ParseValueOption(decimal.NewFromFloat(1.0))
+		value1 := domain.ParseValueOption(decimal.NewFromFloat(1.0))
 
 		fs := NewFromScala(from, txId1, txTime1, value1)
 
 		// Update with new transaction
 		txId2 := createTestTxId(0xCC)
 		txTime2 := txTime1.Add(chaintimer.Hour)
-		value2 := ropedomain.ParseValueOption(decimal.NewFromFloat(2.0))
+		value2 := domain.ParseValueOption(decimal.NewFromFloat(2.0))
 
 		fs.Update(txId2, txTime2, value2)
 
 		assert.Equal(t, txId2, fs.LastTxId)
 		assert.Equal(t, txTime2, fs.LastTime)
 		assert.Equal(t, int32(2), fs.Volume)
-		assert.True(t, ropedomain.ParseValueOption(decimal.NewFromFloat(3.0)).V.Equal(fs.ValueOrNull.V))
+		assert.True(t, domain.ParseValueOption(decimal.NewFromFloat(3.0)).V.Equal(fs.ValueOrNull.V))
 	})
 
 	t.Run("updates volume without changing value when zero", func(t *testing.T) {
 		from := createTestAddress(0xAA)
 		txId := createTestTxId(0xBB)
 		txTime := createTestTime()
-		value := ropedomain.ParseValueOption(decimal.NewFromFloat(5.0))
+		value := domain.ParseValueOption(decimal.NewFromFloat(5.0))
 
 		fs := NewFromScala(from, txId, txTime, value)
 
@@ -268,7 +267,7 @@ func TestFromScala_Update(t *testing.T) {
 		newTxId := createTestTxId(0xCC)
 		newTime := txTime.Add(chaintimer.Hour)
 
-		fs.Update(newTxId, newTime, ropedomain.ParseValueOption(decimal.Zero))
+		fs.Update(newTxId, newTime, domain.ParseValueOption(decimal.Zero))
 
 		assert.Equal(t, int32(2), fs.Volume)
 		assert.True(t, value.V.Equal(fs.ValueOrNull.V)) // Value unchanged
@@ -279,10 +278,10 @@ func TestFromScala_Update(t *testing.T) {
 		txId := createTestTxId(0xBB)
 		txTime := createTestTime()
 
-		fs := NewFromScala(from, txId, txTime, ropedomain.ParseValueOption(decimal.Zero))
+		fs := NewFromScala(from, txId, txTime, domain.ParseValueOption(decimal.Zero))
 		fs.Volume = 2147483647 // MaxInt32
 
-		fs.Update(txId, txTime, ropedomain.ParseValueOption(decimal.Zero))
+		fs.Update(txId, txTime, domain.ParseValueOption(decimal.Zero))
 
 		assert.Equal(t, int32(2147483647), fs.Volume) // Should not overflow
 	})
@@ -293,7 +292,7 @@ func TestFromScala_Update(t *testing.T) {
 func TestFromScala_Matches(t *testing.T) {
 	t.Run("returns true for matching address", func(t *testing.T) {
 		addr := createTestAddress(0xAA)
-		fs := NewFromScala(addr, createTestTxId(0xBB), createTestTime(), ropedomain.ParseValueOption(decimal.Zero))
+		fs := NewFromScala(addr, createTestTxId(0xBB), createTestTime(), domain.ParseValueOption(decimal.Zero))
 
 		assert.True(t, fs.Matches(addr))
 	})
@@ -301,7 +300,7 @@ func TestFromScala_Matches(t *testing.T) {
 	t.Run("returns false for different address", func(t *testing.T) {
 		addr1 := createTestAddress(0xAA)
 		addr2 := createTestAddress(0xBB)
-		fs := NewFromScala(addr1, createTestTxId(0xCC), createTestTime(), ropedomain.ParseValueOption(decimal.Zero))
+		fs := NewFromScala(addr1, createTestTxId(0xCC), createTestTime(), domain.ParseValueOption(decimal.Zero))
 
 		assert.False(t, fs.Matches(addr2))
 	})
@@ -360,7 +359,7 @@ func TestFromScalas_AddOrUpdate(t *testing.T) {
 		addr := createTestAddress(0xAA)
 		txId := createTestTxId(0xBB)
 		txTime := createTestTime()
-		value := ropedomain.ParseValueOption(decimal.NewFromFloat(1.5))
+		value := domain.ParseValueOption(decimal.NewFromFloat(1.5))
 
 		result := fss.AddOrUpdate(addr, txId, txTime, value)
 
@@ -375,7 +374,7 @@ func TestFromScalas_AddOrUpdate(t *testing.T) {
 		addr := createTestAddress(0xAA)
 		txId1 := createTestTxId(0xBB)
 		txTime1 := createTestTime()
-		value1 := ropedomain.ParseValueOption(decimal.NewFromFloat(1.0))
+		value1 := domain.ParseValueOption(decimal.NewFromFloat(1.0))
 
 		fss := FromScalas{
 			NewFromScala(addr, txId1, txTime1, value1),
@@ -383,7 +382,7 @@ func TestFromScalas_AddOrUpdate(t *testing.T) {
 
 		txId2 := createTestTxId(0xCC)
 		txTime2 := txTime1.Add(chaintimer.Hour)
-		value2 := ropedomain.ParseValueOption(decimal.NewFromFloat(2.0))
+		value2 := domain.ParseValueOption(decimal.NewFromFloat(2.0))
 
 		result := fss.AddOrUpdate(addr, txId2, txTime2, value2)
 
@@ -391,7 +390,7 @@ func TestFromScalas_AddOrUpdate(t *testing.T) {
 		assert.Equal(t, txId2, result[0].LastTxId)
 		assert.Equal(t, txTime2, result[0].LastTime)
 		assert.Equal(t, int32(2), result[0].Volume)
-		assert.True(t, ropedomain.ParseValueOption(decimal.NewFromFloat(3.0)).V.Equal(result[0].ValueOrNull.V))
+		assert.True(t, domain.ParseValueOption(decimal.NewFromFloat(3.0)).V.Equal(result[0].ValueOrNull.V))
 	})
 
 	t.Run("adds to existing slice", func(t *testing.T) {
@@ -399,10 +398,10 @@ func TestFromScalas_AddOrUpdate(t *testing.T) {
 		addr2 := createTestAddress(0xBB)
 
 		fss := FromScalas{
-			NewFromScala(addr1, createTestTxId(0x11), createTestTime(), ropedomain.ParseValueOption(decimal.NewFromFloat(1.0))),
+			NewFromScala(addr1, createTestTxId(0x11), createTestTime(), domain.ParseValueOption(decimal.NewFromFloat(1.0))),
 		}
 
-		result := fss.AddOrUpdate(addr2, createTestTxId(0x22), createTestTime(), ropedomain.ParseValueOption(decimal.NewFromFloat(2.0)))
+		result := fss.AddOrUpdate(addr2, createTestTxId(0x22), createTestTime(), domain.ParseValueOption(decimal.NewFromFloat(2.0)))
 
 		require.Len(t, result, 2)
 		assert.Equal(t, addr1, result[0].FromAddress)
@@ -417,7 +416,7 @@ func TestFromScalas_Copy(t *testing.T) {
 		addr := createTestAddress(0xAA)
 		txId := createTestTxId(0xBB)
 		txTime := createTestTime()
-		value := ropedomain.ParseValueOption(decimal.NewFromFloat(1.0))
+		value := domain.ParseValueOption(decimal.NewFromFloat(1.0))
 		original := FromScalas{
 			NewFromScala(addr, txId, txTime, value),
 		}
@@ -442,9 +441,9 @@ func TestFromScalas_Copy(t *testing.T) {
 
 	t.Run("copies multiple elements", func(t *testing.T) {
 		fss := FromScalas{
-			NewFromScala(createTestAddress(0xAA), createTestTxId(0x11), createTestTime(), ropedomain.ParseValueOption(decimal.NewFromFloat(1.0))),
-			NewFromScala(createTestAddress(0xBB), createTestTxId(0x22), createTestTime(), ropedomain.ParseValueOption(decimal.NewFromFloat(2.0))),
-			NewFromScala(createTestAddress(0xCC), createTestTxId(0x33), createTestTime(), ropedomain.ParseValueOption(decimal.NewFromFloat(3.0))),
+			NewFromScala(createTestAddress(0xAA), createTestTxId(0x11), createTestTime(), domain.ParseValueOption(decimal.NewFromFloat(1.0))),
+			NewFromScala(createTestAddress(0xBB), createTestTxId(0x22), createTestTime(), domain.ParseValueOption(decimal.NewFromFloat(2.0))),
+			NewFromScala(createTestAddress(0xCC), createTestTxId(0x33), createTestTime(), domain.ParseValueOption(decimal.NewFromFloat(3.0))),
 		}
 
 		copied := fss.Copy()

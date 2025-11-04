@@ -6,7 +6,6 @@ import (
 	chaintimer "github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/fp"
-	"github.com/shopspring/decimal"
 )
 
 // 이벤트를 승인한 측
@@ -148,7 +147,7 @@ type RopeMark struct {
 	Size         uint32 // Members 길이(정합성 위해 함께 유지)
 	Members      []shareddomain.Address
 	Volume       uint32
-	ValueOrNull  fp.Option[Value]
+	ValueOrNull  fp.Option[shareddomain.Value]
 	LastSeen     chaintimer.ChainTime
 	TrapVertexes []TrapVertex
 }
@@ -168,7 +167,7 @@ type TraitMark struct {
 	RuleB       RuleCode
 	Score       int32
 	Volume      uint32
-	ValueOrNull fp.Option[Value]
+	ValueOrNull fp.Option[shareddomain.Value]
 	LastSeen    chaintimer.ChainTime
 }
 
@@ -189,7 +188,7 @@ type Rope struct {
 type TraitEvent struct {
 	Author      AuthorCode
 	TxID        shareddomain.TxId
-	ValueOrNull fp.Option[Value]
+	ValueOrNull fp.Option[shareddomain.Value]
 	Trait       TraitCode
 	AddressA    shareddomain.Address
 	RuleA       RuleCode
@@ -237,14 +236,8 @@ type AddressAndRule struct {
 type TxScala struct {
 	TxId        shareddomain.TxId
 	Time        chaintimer.ChainTime
-	ValueOrNull fp.Option[Value]
+	ValueOrNull fp.Option[shareddomain.Value]
 	ScoreInc    int32
-}
-
-type Value = decimal.Decimal
-
-func ParseValueOption(d decimal.Decimal) fp.Option[Value] {
-	return fp.Some(d)
 }
 
 // 내부 비동기 큐용: TraitMark Upsert
@@ -259,7 +252,7 @@ type TraitMarkUpsert struct {
 	RuleB       RuleCode
 	ScoreDelta  int32
 	VolumeDelta uint32
-	ValueOrNull fp.Option[Value]
+	ValueOrNull fp.Option[shareddomain.Value]
 	LastSeen    chaintimer.ChainTime
 }
 
@@ -272,7 +265,7 @@ type RopeMarkUpsert struct {
 	SizeDelta    int32                  // 보통 len(AddMembers)와 동일하게 씀
 	VolumeDelta  uint32                 // 트랜잭션 볼륨 증분
 	LastSeen     chaintimer.ChainTime
-	ValueOrNull  fp.Option[Value]
+	ValueOrNull  fp.Option[shareddomain.Value]
 	// (옵션) 병합: 나열된 Source Rope들을 대상 RopeID로 흡수
 	MergeFrom []RopeID
 }

@@ -199,7 +199,7 @@ func translateTx(apool *ap.DexAnalyzerPool, tx domain.RawTransaction) domain.Mar
 		BlockTime:   chaintimer.ParseEthTime(tx.BlockTime),
 		From:        from,
 		To:          to,
-		ValueOrNull: tx.ValueOrNull,
+		ValueOrNull: domain.ParseValueOption(tx.ValueOrNull),
 	}
 	return markedTx
 }

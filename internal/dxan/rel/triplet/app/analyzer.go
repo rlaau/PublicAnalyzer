@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/rel/cface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/rel/triplet/iface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/rel/triplet/pface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
@@ -16,21 +17,18 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// 내부 디자인용
+// TripletAnalyzerDesign은 도메인 로직(TripletModel)+부가 로직(제어 로직, 쿼리 로직)을 추가한 디자인
 type TripletAnalyzerDesign interface {
-	// 제어용
-	gface.Module
-	gface.Child
+	//제어 및 노출용 인터페이스
+	cface.TripletPort
 	//앱의 도메인 모델
 	TripletModel
-	//쿼리용
-	GetStatistics() map[string]any
-	IsHealthy() bool
-	GetJobChannelStatus() (usage int, capacity int)
-	GetRopeDBStats() map[string]any
-	GetMyTx() <-chan domain.MarkedTransaction
 }
 
+// ! 디자인 강제
+var _ TripletAnalyzerDesign = (*TripletAnalyzer)(nil)
+
+// 실제 구현체
 type TripletAnalyzer struct {
 	mode mode.ProcessingMode
 	name gface.ModuleName
@@ -75,7 +73,7 @@ func (a *TripletAnalyzer) Start(parent context.Context) error {
 	}
 
 	g, ctx := errgroup.WithContext(parent)
-	g.Go(func() error { return a.ComsumeTransaction(ctx) })
+	g.Go(func() error { return a.processTransaction(ctx) })
 	g.Go(func() error { a.statsReporter(ctx); fmt.Printf("트리플렛 리포터 중단\n"); return nil })
 	g.Go(func() error {
 		a.infraPort.GetWorkerPool().Start(ctx)
@@ -121,18 +119,18 @@ func (a *TripletAnalyzer) RegisterParent(relPool gface.Module) error {
 	return nil
 }
 
-func (a *TripletAnalyzer) ProcessTransaction(ctx context.Context, tx shareddomain.MarkedTransaction) error {
-	job := NewTransactionJob(tx, a, 0) // workerID는 워커풀에서 자동 관리
-	// 퍼블리시하는 쪽(Analyzer) 직전
+func (a *TripletAnalyzer) makeTransactionJob(tx shareddomain.MarkedTransaction) TransactionJob {
+	return NewTransactionJob(tx, a, 0)
+}
+func (a *TripletAnalyzer) dispatchJob(ctx context.Context, job TransactionJob) error {
 	if err := a.infraPort.GetWorkerPool().DispatchJob(ctx, job); err != nil { // <- 블로킹
 		return fmt.Errorf("ProcessTransaction: enqueue failed: %v", err)
 	}
 	return nil
 }
-
-func (a *TripletAnalyzer) ComsumeTransaction(ctx context.Context) error {
+func (a *TripletAnalyzer) processTransaction(ctx context.Context) error {
 	defer fmt.Printf("트리플렛 콘슈밍 중단함\n")
-	in := a.GetMyTx()
+	in := a.getMyTx()
 	log.Printf("🚀 트리플렛 이벤트버스 시작")
 
 	for {
@@ -150,19 +148,21 @@ func (a *TripletAnalyzer) ComsumeTransaction(ctx context.Context) error {
 				}
 			}
 
-		case msg, ok := <-in: // ← 채널 수신을 select로
+		case tx, ok := <-in: // ← 채널 수신을 select로
 			if !ok {
 				log.Printf("🛑 TxBus closed; consumer exit")
 				return nil
 			}
-			if err := a.ProcessTransaction(ctx, msg); err != nil {
+			job := a.makeTransactionJob(tx)
+
+			if err := a.dispatchJob(ctx, job); err != nil {
 				return err
 			}
 		}
 	}
 }
 
-func (a *TripletAnalyzer) GetMyTx() <-chan domain.MarkedTransaction {
+func (a *TripletAnalyzer) getMyTx() <-chan domain.MarkedTransaction {
 	return a.relPool.ConsumeTripletTxByFanout()
 }
 
@@ -194,7 +194,7 @@ func (a *TripletAnalyzer) printStatistics() {
 	log.Printf("📊 [%s] %s Statistics:", a.mode, a.name)
 
 	log.Printf("   Triplet-TxJobChannel: %d/%d (%.1f%%)", channelUsage, channelCapacity, usagePercent)
-	log.Printf("   Triplet-MyTxBus: %d/%d", len(a.GetMyTx()), cap(a.GetMyTx()))
+	log.Printf("   Triplet-MyTxBus: %d/%d", len(a.getMyTx()), cap(a.getMyTx()))
 
 	graphStats := a.relPool.GetGraphStats()
 	log.Printf("   Graph: %v nodes | %v edges",

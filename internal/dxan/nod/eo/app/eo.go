@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/nod/cface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/nod/eo/infra"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/nod/eo/pface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
@@ -14,15 +15,14 @@ import (
 )
 
 type EoDesign interface {
-	gface.Module
-	gface.Child
-	SaveDetectedDeposit(deposit *domain.DetectedDeposit) error
-	IsDepositAddress(addr domain.Address) (bool, error)
-	IsCex(addr domain.Address) bool
-	CEXAddresses() map[string]struct{}
-	UpdateDepositTxCount(addr domain.Address, count int64) error
-	GetDepositInfo(addr domain.Address) (*domain.DetectedDeposit, error)
+	//노출용 인터페이스
+	cface.EoPort
+	//추가는 자유
+	//추가 시엔 EoModel로, 앱 핵심 추가하는걸 추천
 }
+
+// ! 디자인 강제
+var _ EoDesign = (*Eo)(nil)
 
 type Eo struct {
 	mode      mode.ProcessingMode
@@ -107,7 +107,7 @@ func (eo *Eo) RegisterParent(nod gface.Module) error {
 	return nil
 }
 
-func (eo *Eo) SaveDetectedDeposit(deposit domain.DetectedDeposit) error {
+func (eo *Eo) SaveDetectedDeposit(deposit domain.DepositDetection) error {
 	return eo.depositDB.SaveDetectedDeposit(deposit)
 }
 
@@ -127,6 +127,6 @@ func (eo *Eo) UpdateDepositTxCount(addr domain.Address, count int64) error {
 	return eo.depositDB.UpdateTxCount(addr, count)
 }
 
-func (eo *Eo) GetDepositInfo(addr domain.Address) (*domain.DetectedDeposit, error) {
+func (eo *Eo) GetDepositInfo(addr domain.Address) (*domain.DepositDetection, error) {
 	return eo.depositDB.GetDepositInfo(addr)
 }

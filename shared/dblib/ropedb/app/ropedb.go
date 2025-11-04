@@ -567,7 +567,7 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 				Trait:       ev.Trait,
 				AddMembers:  sourceRopeMark.Members,
 				SizeDelta:   int32(sourceRopeMark.Size),
-				ValueOrNull: domain.ParseValueOption(sourceRopeMark.ValueOrNull.V.Add(ev.ValueOrNull.V)),
+				ValueOrNull: shareddomain.ParseValueOption(sourceRopeMark.ValueOrNull.V.Add(ev.ValueOrNull.V)),
 				VolumeDelta: sourceRopeMark.Volume + 1, // source 볼륨 + 이번 거래
 				LastSeen:    ev.Time,
 				MergeFrom:   []domain.RopeID{source},
@@ -846,7 +846,7 @@ func (b *BadgerRopeDB) traitWorker() {
 						RuleB:       op.RuleB,
 						Score:       0,
 						Volume:      0,
-						ValueOrNull: domain.ParseValueOption(decimal.Zero),
+						ValueOrNull: shareddomain.ParseValueOption(decimal.Zero),
 						LastSeen:    op.LastSeen,
 					}
 				}
@@ -855,7 +855,7 @@ func (b *BadgerRopeDB) traitWorker() {
 
 			// 누적 규칙
 			if !op.ValueOrNull.V.IsZero() {
-				a.tm.ValueOrNull = domain.ParseValueOption(a.tm.ValueOrNull.V.Add(op.ValueOrNull.V))
+				a.tm.ValueOrNull = shareddomain.ParseValueOption(a.tm.ValueOrNull.V.Add(op.ValueOrNull.V))
 			}
 			a.tm.Score += op.ScoreDelta
 			a.tm.Volume += op.VolumeDelta

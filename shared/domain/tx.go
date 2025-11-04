@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/fp"
 	"github.com/shopspring/decimal"
 )
 
@@ -49,7 +50,12 @@ type MarkedTransaction struct {
 	From        Address
 	To          Address
 	TxSyntax    [2]ContractBoolMark //해당 tx가 C2C, C2C, C2D, D2C, D2D 중 어떤 형태인지 표기
-	ValueOrNull decimal.Decimal
+	ValueOrNull fp.Option[Value]
+}
+type Value = decimal.Decimal
+
+func ParseValueOption(d decimal.Decimal) fp.Option[Value] {
+	return fp.Some(d)
 }
 
 type TxId [32]byte

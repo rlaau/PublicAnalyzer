@@ -10,7 +10,7 @@ type TripletInfra struct {
 	WorkerPool             *workerpool.Pool
 }
 
-func (t *TripletInfra) GetTimeBucketManager() iface.TimeBuckerManager {
+func (t *TripletInfra) GetTimeBucketManager() iface.TimeBuckerManagerPort {
 	return t.HeavyTimeBucketManager
 }
 

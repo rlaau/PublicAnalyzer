@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/nod/cface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/nod/co/infra"
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/nod/co/pface"
 
@@ -21,11 +22,14 @@ import (
 )
 
 type CoDesign interface {
-	gface.Module
-	gface.Child
-	RegisterContract(creator domain.Address, nonce domain.Nonce, blockTime chaintimer.ChainTime, txId domain.TxId) (domain.Address, error)
-	CheckIsContract(address domain.Address) bool
+	cface.CoPort
+	//추가는 자유
+	//추가 시엔 CoModel로, 앱 핵심 추가하는걸 추천
 }
+
+// ! 디자인 강제
+var _ CoDesign = (*Co)(nil)
+
 type Co struct {
 	nodPort pface.NodPort
 	closed  atomic.Bool
@@ -58,7 +62,7 @@ func (co *Co) Name() gface.ModuleName {
 
 func (co *Co) Start(parent context.Context) error {
 	if co.nodPort == nil {
-		return fmt.Errorf("Co not have notport")
+		return fmt.Errorf("Co not have nodport")
 	}
 	g, ctx := errgroup.WithContext(parent)
 	g.Go(func() error {
@@ -116,9 +120,9 @@ func (co *Co) RegisterContract(creator domain.Address, nonce domain.Nonce, block
 	if co.contDB.IsContain(inferedCreated) {
 		return inferedCreated, nil
 	}
-	//! 여기 부분에 로직 추가하기!!
+	//! 여기 부분에 로직 추가하기
 	//TODO 현재는 2025-01-01까지의 컨트렉트 모두 있다고 판단해서 따로 추가하진 않음
-	//TODO 추후엔 인퍼링 강화, 추가시 바이트 코드 분석 통한 토큰이나 프로토콜 심볼 파악 등이 추가될 것!!!
+	//TODO 추후엔 인퍼링 강화, 추가시 바이트 코드 분석 통한 토큰이나 프로토콜 심볼 파악 등이 추가될 것
 	//TODO 보통은 디멘디드 분석이 맞을듯. 기본적으로 싹다 false인데, 좀 의심되는 놈이다 싶음 추가 분석으로
 	return inferedCreated, nil
 }

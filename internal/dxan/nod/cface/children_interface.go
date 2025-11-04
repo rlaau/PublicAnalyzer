@@ -18,11 +18,11 @@ type CoMsg any
 type EoPort interface {
 	gface.Module
 	gface.Child
-	SaveDetectedDeposit(deposit domain.DetectedDeposit) error
+	SaveDetectedDeposit(deposit domain.DepositDetection) error
 	IsDepositAddress(addr domain.Address) (bool, error)
 	IsCex(addr domain.Address) bool
 	UpdateDepositTxCount(addr domain.Address, count int64) error
-	GetDepositInfo(addr domain.Address) (*domain.DetectedDeposit, error)
+	GetDepositInfo(addr domain.Address) (*domain.DepositDetection, error)
 	CEXAddresses() map[string]struct{}
 }
 

@@ -76,13 +76,13 @@ func (r *DepositRepository) Close() error {
 
 // SaveDetectedDeposit: 신규면 Insert, 기존이면 변경 있을 때만 Update.
 // MVCC 충돌 시 3회까지 재시도, 실패 시 샤드 뮤텍스로 직렬화 후 1회 재시도.
-func (r *DepositRepository) SaveDetectedDeposit(deposit sharedDomain.DetectedDeposit) error {
+func (r *DepositRepository) SaveDetectedDeposit(deposit sharedDomain.DepositDetection) error {
 
 	key := r.makeKey(deposit.DepositAddress)
 
 	fn := func(txn *badger.Txn) error {
 		// 현재 값 조회(없으면 신규)
-		var cur sharedDomain.DetectedDeposit
+		var cur sharedDomain.DepositDetection
 		itm, err := txn.Get(key)
 		switch {
 		case err == nil:
@@ -134,8 +134,8 @@ func (r *DepositRepository) SaveDetectedDeposit(deposit sharedDomain.DetectedDep
 }
 
 // LoadDetectedDeposits: prefix 스캔
-func (r *DepositRepository) LoadDetectedDeposits() ([]*sharedDomain.DetectedDeposit, error) {
-	var out []*sharedDomain.DetectedDeposit
+func (r *DepositRepository) LoadDetectedDeposits() ([]*sharedDomain.DepositDetection, error) {
+	var out []*sharedDomain.DepositDetection
 	err := r.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
@@ -146,7 +146,7 @@ func (r *DepositRepository) LoadDetectedDeposits() ([]*sharedDomain.DetectedDepo
 			if e != nil {
 				return e
 			}
-			var d sharedDomain.DetectedDeposit
+			var d sharedDomain.DepositDetection
 			if e = json.Unmarshal(val, &d); e != nil {
 				return e
 			}
@@ -174,9 +174,9 @@ func (r *DepositRepository) IsDepositAddress(addr sharedDomain.Address) (bool, e
 }
 
 // GetDepositInfo: 1건 조회
-func (r *DepositRepository) GetDepositInfo(addr sharedDomain.Address) (*sharedDomain.DetectedDeposit, error) {
+func (r *DepositRepository) GetDepositInfo(addr sharedDomain.Address) (*sharedDomain.DepositDetection, error) {
 	key := r.makeKey(addr)
-	var out *sharedDomain.DetectedDeposit
+	var out *sharedDomain.DepositDetection
 	err := r.db.View(func(txn *badger.Txn) error {
 		itm, e := txn.Get(key)
 		if e != nil {
@@ -186,7 +186,7 @@ func (r *DepositRepository) GetDepositInfo(addr sharedDomain.Address) (*sharedDo
 		if e != nil {
 			return e
 		}
-		var d sharedDomain.DetectedDeposit
+		var d sharedDomain.DepositDetection
 		if e = json.Unmarshal(val, &d); e != nil {
 			return e
 		}
@@ -218,7 +218,7 @@ func (r *DepositRepository) UpdateTxCount(addr sharedDomain.Address, count int64
 		if e != nil {
 			return e
 		}
-		var d sharedDomain.DetectedDeposit
+		var d sharedDomain.DepositDetection
 		if e = json.Unmarshal(val, &d); e != nil {
 			return e
 		}
