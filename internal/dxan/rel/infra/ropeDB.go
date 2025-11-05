@@ -16,7 +16,7 @@ type RawBadgerProvider interface {
 }
 
 func NewClusterDB(ctx context.Context, mode mode.ProcessingMode) (iface.ClusterDB, error) {
-	db, err := ropeapp.NewRopeDB(ctx, mode, "RelGraphDB", protocol.TraitLegend, protocol.RuleLegend, protocol.PolyTraitLegend, protocol.TrapLegend, protocol.AuthorLegend)
+	db, err := ropeapp.NewRopeDB(mode, "RelGraphDB", protocol.TraitLegend, protocol.RuleLegend, protocol.PolyTraitLegend, protocol.TrapLegend, protocol.AuthorLegend)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open rope db: %w", err)
 	}

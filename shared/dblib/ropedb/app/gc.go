@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -24,8 +25,7 @@ func (b *BadgerRopeDB) startGC() {
 }
 
 // gcWorker: 주기적으로 GC 조건 체크 후 실행
-func (b *BadgerRopeDB) gcWorker() {
-	defer b.wg.Done()
+func (b *BadgerRopeDB) gcWorker(ctx context.Context) error {
 
 	// 20초마다 상태 출력용 타이머
 	statusTicker := time.NewTicker(20 * time.Second)
@@ -33,8 +33,9 @@ func (b *BadgerRopeDB) gcWorker() {
 
 	for {
 		select {
-		case <-b.ctx.Done():
-			return
+		case <-ctx.Done():
+			fmt.Println("gcWorker: 컨텍스트 캔슬로 인해 종료됨")
+			return nil
 		case <-b.gcTicker.C:
 			if b.shouldRunGC() {
 				b.runBadgerGC()

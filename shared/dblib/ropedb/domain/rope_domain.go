@@ -270,6 +270,16 @@ type RopeMarkUpsert struct {
 	MergeFrom []RopeID
 }
 
+// PolyRopeMark Upsert 커맨드
+type PolyRopeMarkUpsert struct {
+	PolyRopeID  PolyRopeID
+	PolyTrait   PolyTraitCode
+	AddRopes    []RopeID // 추가할 Rope들
+	VolumeDelta uint32
+	LastSeen    chaintimer.ChainTime
+	MergeFrom   []PolyRopeID // 병합할 다른 PolyRope들
+}
+
 func (t1 TrapVertex) IsSame(t2 TrapVertex) bool {
 	if t1.Address == t2.Address && t1.Trap == t2.Trap {
 		return true

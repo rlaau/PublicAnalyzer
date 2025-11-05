@@ -11,17 +11,18 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
-	chaintimer "github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/dblib/ropedb/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring/meter/rsv"
 	"github.com/shopspring/decimal"
+	"golang.org/x/sync/errgroup"
 )
 
-func NewRopeDB(ctx context.Context, isTest mode.ProcessingMode, dbName string, traitLegend map[domain.TraitCode]string,
+func NewRopeDB(isTest mode.ProcessingMode, dbName string, traitLegend map[domain.TraitCode]string,
 	ruleLegend map[domain.RuleCode]string,
 	polyTraits map[domain.PolyTraitCode]domain.PolyNameAndTraits,
 	trapLegend map[domain.TrapCode]domain.TrapNameAndTraits,
@@ -32,38 +33,26 @@ func NewRopeDB(ctx context.Context, isTest mode.ProcessingMode, dbName string, t
 	} else {
 		root = computation.DockerProductionStorage()
 	}
-	return NewRopeDBWithRoot(ctx, isTest, root, dbName, traitLegend, ruleLegend, polyTraits, trapLegend, authorLegned)
+	return newRopeDBWithRoot(isTest, root, dbName, traitLegend, ruleLegend, polyTraits, trapLegend, authorLegned)
 }
 
 type RopeDB interface {
-	//TODO 추후 반드시 삭제할 것!
-	// TODO컨텍스트를 가지는 것도 모자라 바꿔 끼우는 함수라니!
-	RegisterContext(parent context.Context)
-	// 이벤트 입력(내부적으로 Vertex 동기 갱신 + Rope/Trait Upsert 큐잉)
-	HandleTraitEvent(ev domain.TraitEvent) error
-	// 조회
+	// 제어권 정의
+	gface.Module
+	//핵심 비즈니스 기능 정의 (HandleTraitEvent)
+	ropeDbModel
+
+	// 쿼리 기능 정의
 	ViewRopeByNode(a shareddomain.Address) (*domain.Rope, error) // 첫 번째 Rope 기준(필요 시 Trait 선택 버전 추가)
 	ViewRope(id domain.RopeID) (*domain.Rope, error)
 	ViewInSameRope(a1, a2 shareddomain.Address) (bool, error)
 	ViewInSameRopeByPolyTrait(a1, a2 shareddomain.Address, polyTrait domain.PolyTraitCode) (bool, error)
 	GetGraphStats() map[string]any
-
-	// 트레이트 기반 조회
 	ViewAllTraitMarkByCode(t domain.TraitCode) ([]domain.TraitMark, error)
 	ViewAllTraitMarkByString(s string) ([]domain.TraitMark, error)
-	//RawBadgerDB() *badger.DB
-
-	Close() error
 }
 
-// ------------------------------------------------------------
-// 5) 구현체
-// ------------------------------------------------------------
-
-// ==== PATCH BEGIN: struct fields (replace your BadgerRopeDB definition) ====
-
 type BadgerRopeDB struct {
-	// NOTE: 호환을 위해 남겨둠. 이제 b.db 는 "마크 DB(M-DB)"를 가리킴.
 	dbV *badger.DB // Vertex 전용 (v:) - 락프리 (일관성 오류 허용)
 	dbM *badger.DB // Marks 전용 (r:, t:, pr:)
 
@@ -75,18 +64,7 @@ type BadgerRopeDB struct {
 	// 인메모리 로프 사이즈 캐시 (로프 ID -> 사이즈 매핑)
 	ropeSizeCache *RopeSizeCache
 
-	//배칭용 로프 어그리게이터 케시 (주석 처리)
-	// ropeAggCache *RopeAggCache
-
 	isTest bool
-	//TODO 이거 지우기
-	//TODO 진짜 미친거냐.
-	//TODO 대체 한달 전엔 무슨 생각으로 컨텍스트를 필드에 박은거임
-	//TODO 반드시 리팩토링 할 것!!
-	//TODO ctx필드 지우고, 워커 기반 디스패칭 한 후에 ctx는 워커 스타트 시 전파만 하기!!!!
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
 
 	// 범례 (코드 → 문자열 매핑)
 	traitLegend  map[domain.TraitCode]string
@@ -105,7 +83,7 @@ type BadgerRopeDB struct {
 	// 비동기 쓰기 버스
 	busRope     *eventbus.EventBus[domain.RopeMarkUpsert]
 	busTrait    *eventbus.EventBus[domain.TraitMarkUpsert]
-	busPolyRope *eventbus.EventBus[PolyRopeMarkUpsert]
+	busPolyRope *eventbus.EventBus[domain.PolyRopeMarkUpsert]
 
 	// 카운터(Sequence)
 	seqTrait    *badger.Sequence
@@ -119,17 +97,13 @@ type BadgerRopeDB struct {
 
 	// 로프 병합 계측
 	ropeMergeMetrics *RopeMergeMetrics
+
+	//멱등한 종료 용도
+	closed atomic.Bool
 }
 
-// TODO 추후 반드시 지울 것!!!!!
-// TODO 컨텍스트는 ropeDB.Start로만 받게 하고, 이후에도 내부 워커들이 인자로만 받게 하기!!!
-func (b *BadgerRopeDB) RegisterContext(parent context.Context) {
-	ctx, cancle := context.WithCancel(parent)
-	b.ctx = ctx
-	b.cancel = cancle
-}
-
-// ==== PATCH END ====
+// ! 디자인 강제
+var _ RopeDB = (*BadgerRopeDB)(nil)
 
 // RopeMergeMetrics는 로프 병합 작업의 계측 정보를 저장합니다
 type RopeMergeMetrics struct {
@@ -137,50 +111,62 @@ type RopeMergeMetrics struct {
 	totalTime      atomic.Int64 // 총 소요 시간 (나노초)
 	totalMergeSize atomic.Int64 // 병합된 총 로프 크기
 	mergeCount     atomic.Int64 // 병합 횟수 (평균 계산용)
+
+	started atomic.Bool
 }
 
-// NewRopeMergeMetrics는 새로운 계측 구조체를 생성합니다
+// NewRopeMergeMetrics는 고루틴을 돌리지 않고 구조체만 만든다.
 func NewRopeMergeMetrics() *RopeMergeMetrics {
-	metrics := &RopeMergeMetrics{}
-	// 10초마다 통계 출력
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			calls := metrics.callCount.Load()
-			totalTimeNs := metrics.totalTime.Load()
-			totalSize := metrics.totalMergeSize.Load()
-			merges := metrics.mergeCount.Load()
-
-			if calls > 0 {
-				avgTimeMs := float64(totalTimeNs) / float64(calls) / 1e6
-				avgSize := float64(totalSize) / float64(merges)
-				if merges == 0 {
-					avgSize = 0
-				}
-
-				fmt.Printf("[RopeMerge Metrics] 호출횟수: %d | 총시간: %.2fms | 평균시간: %.2fms | 총병합크기: %d | 평균병합크기: %.2f\n",
-					calls, float64(totalTimeNs)/1e6, avgTimeMs, totalSize, avgSize)
-			}
-		}
-	}()
-	return metrics
+	return &RopeMergeMetrics{}
 }
 
-// PolyRopeMark Upsert 커맨드
-type PolyRopeMarkUpsert struct {
-	PolyRopeID  domain.PolyRopeID
-	PolyTrait   domain.PolyTraitCode
-	AddRopes    []domain.RopeID // 추가할 Rope들
-	VolumeDelta uint32
-	LastSeen    chaintimer.ChainTime
-	MergeFrom   []domain.PolyRopeID // 병합할 다른 PolyRope들
+// Start는 주기적으로 통계를 출력하는 루프를 시작한다.
+// ctx.Done()을 받으면 깔끔히 종료하며, errgroup에 붙이기 좋게 (nil) 반환한다.
+// interval이 0이면 기본 10초를 사용한다.
+func (m *RopeMergeMetrics) Start(ctx context.Context, interval time.Duration) error {
+
+	if !m.started.CompareAndSwap(false, true) {
+		// 이미 시작된 상태라면 에러로 알려준다(선호에 따라 nil로 바꿔도 OK)
+		return fmt.Errorf("RopeMergeMetrics: already started")
+	}
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			// 종료를 정상으로 간주: errgroup.Cancel 시 다른 워커를 불필요하게 깨우지 않기 위해 nil 반환
+			return nil
+		case <-ticker.C:
+			calls := m.callCount.Load()
+			if calls == 0 {
+				continue
+			}
+			totalTimeNs := m.totalTime.Load()
+			totalSize := m.totalMergeSize.Load()
+			merges := m.mergeCount.Load()
+
+			avgTimeMs := float64(totalTimeNs) / float64(calls) / 1e6
+
+			var avgSize float64
+			if merges > 0 {
+				avgSize = float64(totalSize) / float64(merges)
+			}
+
+			fmt.Printf("[RopeMerge Metrics] 호출횟수: %d | 총시간: %.2fms | 평균시간: %.2fms | 총병합크기: %d | 평균병합크기: %.2f\n",
+				calls, float64(totalTimeNs)/1e6, avgTimeMs, totalSize, avgSize)
+		}
+	}
 }
 
 // NewRopeDBWithRoot: 모드(true=test, false=prod)로 루트 분기
 // ==== PATCH BEGIN: NewRopeDBWithRoot (replace entire function) ====
 
-func NewRopeDBWithRoot(parent context.Context, isTest mode.ProcessingMode, root string, dbname string, traitLegend map[domain.TraitCode]string,
+func newRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, traitLegend map[domain.TraitCode]string,
 	ruleLegend map[domain.RuleCode]string,
 	polyTraits map[domain.PolyTraitCode]domain.PolyNameAndTraits,
 	trapLegend map[domain.TrapCode]domain.TrapNameAndTraits,
@@ -218,33 +204,9 @@ func NewRopeDBWithRoot(parent context.Context, isTest mode.ProcessingMode, root 
 		return nil, err
 	}
 
-	// EventBus(JSONL 경로는 루트부터 분기)
-	//TODO추후 josn기반 ㄱㄱ
-	// evRopeRel := filepath.Join("rope_db", dbname, "eventbus", "ropemark.jsonl")
-	// evTraitRel := filepath.Join("rope_db", dbname, "eventbus", "traitmark.jsonl")
-	// evPolyRopeRel := filepath.Join("rope_db", dbname, "eventbus", "polyropemark.jsonl")
-
 	busR := eventbus.NewInMemory[domain.RopeMarkUpsert](40_000, "RopeMarkBus")
-	// if err != nil {
-	// 	_ = dbV.Close()
-	// 	_ = dbM.Close()
-	// 	return nil, err
-	// }
 	busT := eventbus.NewInMemory[domain.TraitMarkUpsert](40_000, "TraitMarkBus")
-	// if err != nil {
-	// 	busR.Close()
-	// 	_ = dbV.Close()
-	// 	_ = dbM.Close()
-	// 	return nil, err
-	// }
-	busPR := eventbus.NewInMemory[PolyRopeMarkUpsert](40_000, "PolyRopeMarkBus")
-	// if err != nil {
-	// 	busR.Close()
-	// 	busT.Close()
-	// 	_ = dbV.Close()
-	// 	_ = dbM.Close()
-	// 	return nil, err
-	// }
+	busPR := eventbus.NewInMemory[domain.PolyRopeMarkUpsert](40_000, "PolyRopeMarkBus")
 
 	// Trait → PolyTrait 역방향 매핑 구축
 	traitToPolyTraits := make(map[domain.TraitCode][]domain.PolyTraitCode)
@@ -291,15 +253,16 @@ func NewRopeDBWithRoot(parent context.Context, isTest mode.ProcessingMode, root 
 		_ = dbM.Close()
 		return nil, err
 	}
-	ctx, cancle := context.WithCancel(parent)
+	ropeMergeMetrics := NewRopeMergeMetrics()
+
 	b := &BadgerRopeDB{
 		// 호환성: b.db 는 마크 DB를 바라보게 둠
-		dbV:                     dbV,
-		dbM:                     dbM,
-		isTest:                  isTest.IsTest(),
-		perfMeter:               rsv.NewFunctionReservoirMeter(10_000),
-		ctx:                     ctx,
-		cancel:                  cancle,
+		dbV:       dbV,
+		dbM:       dbM,
+		isTest:    isTest.IsTest(),
+		perfMeter: rsv.NewFunctionReservoirMeter(10_000),
+		// ctx:                     ctx,
+		// cancel:                  cancle,
 		traitLegend:             traitLegend,
 		ruleLegend:              ruleLegend,
 		authorLegend:            authorLegend,
@@ -313,8 +276,14 @@ func NewRopeDBWithRoot(parent context.Context, isTest mode.ProcessingMode, root 
 		seqTrait:                seqTrait,
 		seqRope:                 seqRope,
 		seqPolyRope:             seqPoly,
+		ropeMergeMetrics:        ropeMergeMetrics,
 	}
 
+	return b, nil
+}
+
+func (b *BadgerRopeDB) Start(parent context.Context) error {
+	g, ctx := errgroup.WithContext(parent)
 	// 인메모리 버텍스 캐시 초기화 (5만개 캐시)
 	b.vertexCache = NewVertexCache(b, 500000)
 	//로프 어그리게이터 케시 초기화 (주석 처리)
@@ -325,29 +294,37 @@ func NewRopeDBWithRoot(parent context.Context, isTest mode.ProcessingMode, root 
 
 	// GC 스케쥴러 설정
 	b.startGC()
-
 	// 워커 가동
-	b.wg.Add(6) // GC 워커 포함 6개 (추가: statsLogger, vertexCacheFlush)
-	go b.traitWorker()
-	go b.ropeWorker()
-	go b.polyRopeWorker()
-	go b.gcWorker()
-	go b.statsLoggerWorker()
-	go b.vertexCacheFlushWorker()
+	g.Go(func() error { return b.traitWorker(ctx) })
+	//go b.traitWorker()
+	g.Go(func() error { return b.ropeWorker(ctx) })
+	//go b.ropeWorker()
+	g.Go(func() error { return b.polyRopeWorker(ctx) })
+	//go b.polyRopeWorker()
+	g.Go(func() error { return b.gcWorker(ctx) })
+	//go b.gcWorker()
+	g.Go(func() error { return b.statsLoggerWorker(ctx) })
+	//go b.statsLoggerWorker()
+	g.Go(func() error { return b.vertexCacheFlushWorker(ctx) })
+	//go b.vertexCacheFlushWorker()
 
 	// 로프 병합 계측 초기화
-	b.ropeMergeMetrics = NewRopeMergeMetrics()
+	g.Go(func() error { return b.ropeMergeMetrics.Start(ctx, 10*time.Second) })
 
-	return b, nil
+	err := g.Wait()
+	if err != nil {
+		fmt.Printf("BadgerRopeDB: %v로 인해 Start 종료됨. Close 호출.\n", err)
+	} else {
+		fmt.Printf("BadgerRopeDB: 정상 종료 감지. Close 호출.\n")
+	}
+	return b.Close()
+
 }
-
-// ==== PATCH END ====
-
-// ==== PATCH BEGIN: Close (replace entire function) ====
-
 func (b *BadgerRopeDB) Close() error {
+	if b.closed.Swap(true) {
+		return nil
+	}
 	fmt.Printf("\n🔄 RopeDB 종료 시작...\n")
-	b.cancel()
 	if b.gcTicker != nil {
 		b.gcTicker.Stop()
 	}
@@ -362,21 +339,6 @@ func (b *BadgerRopeDB) Close() error {
 	b.busTrait.Close()
 	b.busRope.Close()
 	b.busPolyRope.Close()
-
-	fmt.Printf("   - 워커 종료 대기 중...\n")
-	done := make(chan struct{})
-	go func() {
-		b.wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		fmt.Printf("   - 모든 워커 종료 완료\n")
-	case <-time.After(30 * time.Second):
-		fmt.Printf("⚠️  워커 종료 타임아웃 (30초 초과) - 강제 진행\n")
-	}
-
 	// Sequence release
 	if b.seqTrait != nil {
 		_ = b.seqTrait.Release()
@@ -402,8 +364,14 @@ func (b *BadgerRopeDB) Close() error {
 	}
 	return err2
 }
+func (b *BadgerRopeDB) Closed() bool {
+	return b.closed.Load()
+}
+func (b *BadgerRopeDB) Name() gface.ModuleName {
+	return "BadgerRopeDB"
+}
 
-// ==== PATCH END ====
+const QueueingTimeOut = 30 * time.Second
 
 // * 결국 로프 DB 튜닝의 핵심
 // * HandleTraitEvent가 빠르게 작동하면 됨
@@ -442,7 +410,9 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 	tid, created := b.ensureLink(v1, v2, ev.Trait, ev.RuleA, ev.RuleB)
 
 	// --- 3) TraitMark Upsert 큐잉(단일 커맨드)
-	traitErr := b.busTrait.Enqueue(b.ctx, domain.TraitMarkUpsert{
+	ctx, cancle := context.WithTimeout(context.Background(), QueueingTimeOut)
+	defer cancle()
+	traitErr := b.busTrait.Enqueue(ctx, domain.TraitMarkUpsert{
 		AuthorCode:  ev.Author,
 		LastTx:      ev.TxID,
 		TraitID:     tid,
@@ -469,7 +439,9 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 		newID := b.nextRopeID()
 		setRopeForTrait(v1, newID, ev.Trait)
 		setRopeForTrait(v2, newID, ev.Trait)
-		ropeErr := b.busRope.Enqueue(b.ctx, domain.RopeMarkUpsert{
+		ctx, cancle := context.WithTimeout(context.Background(), QueueingTimeOut)
+		defer cancle()
+		ropeErr := b.busRope.Enqueue(ctx, domain.RopeMarkUpsert{
 			RopeID:      newID,
 			Trait:       ev.Trait,
 			AddMembers:  []shareddomain.Address{a1, a2},
@@ -485,7 +457,9 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 		// v1 로프에 v2 편입
 		id := r1
 		setRopeForTrait(v2, id, ev.Trait)
-		ropeErr := b.busRope.Enqueue(b.ctx, domain.RopeMarkUpsert{
+		ctx, cancle := context.WithTimeout(context.Background(), QueueingTimeOut)
+		defer cancle()
+		ropeErr := b.busRope.Enqueue(ctx, domain.RopeMarkUpsert{
 			RopeID:      id,
 			Trait:       ev.Trait,
 			AddMembers:  []shareddomain.Address{a2},
@@ -503,7 +477,9 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 		// v2 로프에 v1 편입
 		id := r2
 		setRopeForTrait(v1, id, ev.Trait)
-		ropeErr := b.busRope.Enqueue(b.ctx, domain.RopeMarkUpsert{
+		ctx, cancle := context.WithTimeout(context.Background(), QueueingTimeOut)
+		defer cancle()
+		ropeErr := b.busRope.Enqueue(ctx, domain.RopeMarkUpsert{
 			RopeID:      id,
 			Trait:       ev.Trait,
 			AddMembers:  []shareddomain.Address{a1},
@@ -522,7 +498,9 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 		id1, id2 := r1, r2
 		// 근데 사실 도메인 로직상 이 둘이 절대 같은 로프 ID가 될수 없음
 		if id1 == id2 {
-			ropeErr := b.busRope.Enqueue(b.ctx, domain.RopeMarkUpsert{
+			ctx, cancle := context.WithTimeout(context.Background(), QueueingTimeOut)
+			defer cancle()
+			ropeErr := b.busRope.Enqueue(ctx, domain.RopeMarkUpsert{
 				RopeID:      id1,
 				Trait:       ev.Trait,
 				VolumeDelta: 1,
@@ -560,9 +538,10 @@ func (b *BadgerRopeDB) HandleTraitEvent(ev domain.TraitEvent) error {
 				setRopeForTrait(v, target, ev.Trait)
 				b.putVertex(v)
 			}
-
+			ctx, cancle := context.WithTimeout(context.Background(), QueueingTimeOut)
+			defer cancle()
 			// target 로프마크에 source 멤버들 흡수 Upsert
-			ropeErr := b.busRope.Enqueue(b.ctx, domain.RopeMarkUpsert{
+			ropeErr := b.busRope.Enqueue(ctx, domain.RopeMarkUpsert{
 				RopeID:      target,
 				Trait:       ev.Trait,
 				AddMembers:  sourceRopeMark.Members,
@@ -625,9 +604,10 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 		// 두 Vertex에 PolyRopeRef 추가
 		b.setPolyRopeInVertex(v1, newPolyID, polyTraitCode)
 		b.setPolyRopeInVertex(v2, newPolyID, polyTraitCode)
-
+		ctx, cancle := context.WithTimeout(context.Background(), QueueingTimeOut)
+		defer cancle()
 		// PolyRopeMark 생성 (현재 Trait로 생성된 Rope만 포함)
-		pErr := b.busPolyRope.Enqueue(b.ctx, PolyRopeMarkUpsert{
+		pErr := b.busPolyRope.Enqueue(ctx, domain.PolyRopeMarkUpsert{
 			PolyRopeID:  newPolyID,
 			PolyTrait:   polyTraitCode,
 			AddRopes:    []domain.RopeID{currentRopeID},
@@ -641,9 +621,10 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 	case prExist1 && !prExist2:
 		// v1만 PolyRope 있음 - v2를 v1의 PolyRope에 편입
 		b.setPolyRopeInVertex(v2, pr1, polyTraitCode)
-
+		ctx, cancle := context.WithTimeout(context.Background(), QueueingTimeOut)
+		defer cancle()
 		// 현재 Rope를 PolyRope에 추가 (중복 제거는 dedupRopes에서 처리)
-		pErr := b.busPolyRope.Enqueue(b.ctx, PolyRopeMarkUpsert{
+		pErr := b.busPolyRope.Enqueue(ctx, domain.PolyRopeMarkUpsert{
 			PolyRopeID:  pr1,
 			PolyTrait:   polyTraitCode,
 			AddRopes:    []domain.RopeID{currentRopeID},
@@ -659,7 +640,9 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 		b.setPolyRopeInVertex(v1, pr2, polyTraitCode)
 
 		// 현재 Rope를 PolyRope에 추가 (중복 제거는 dedupRopes에서 처리)
-		pErr := b.busPolyRope.Enqueue(b.ctx, PolyRopeMarkUpsert{
+		ctx, cancle := context.WithTimeout(context.Background(), QueueingTimeOut)
+		defer cancle()
+		pErr := b.busPolyRope.Enqueue(ctx, domain.PolyRopeMarkUpsert{
 			PolyRopeID:  pr2,
 			PolyTrait:   polyTraitCode,
 			AddRopes:    []domain.RopeID{currentRopeID},
@@ -675,7 +658,9 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 		// 둘 다 PolyRope 있음
 		if pr1 == pr2 {
 			// 같은 PolyRope면 현재 Rope만 추가 (중복 제거는 dedupRopes에서 처리)
-			pErr := b.busPolyRope.Enqueue(b.ctx, PolyRopeMarkUpsert{
+			ctx, cancle := context.WithTimeout(context.Background(), QueueingTimeOut)
+			defer cancle()
+			pErr := b.busPolyRope.Enqueue(ctx, domain.PolyRopeMarkUpsert{
 				PolyRopeID:  pr1,
 				PolyTrait:   polyTraitCode,
 				AddRopes:    []domain.RopeID{currentRopeID},
@@ -709,8 +694,9 @@ func (b *BadgerRopeDB) processPolyTrait(v1, v2 *domain.Vertex, polyTraitCode dom
 			// 합병된 PolyRopeMark 업서트 (source Ropes + 현재 Rope, 중복 제거)
 			srcMark := b.getPolyRopeMark(source)
 			addingRopes := append(srcMark.Ropes, currentRopeID)
-
-			pErr := b.busPolyRope.Enqueue(b.ctx, PolyRopeMarkUpsert{
+			ctx, cancle := context.WithTimeout(context.Background(), QueueingTimeOut)
+			defer cancle()
+			pErr := b.busPolyRope.Enqueue(ctx, domain.PolyRopeMarkUpsert{
 				PolyRopeID:  target,
 				PolyTrait:   polyTraitCode,
 				AddRopes:    addingRopes, // 중복 제거는 dedupRopes에서 처리
@@ -749,8 +735,7 @@ type traitAgg struct {
 	hasLoaded bool
 }
 
-func (b *BadgerRopeDB) traitWorker() {
-	defer b.wg.Done()
+func (b *BadgerRopeDB) traitWorker(ctx context.Context) error {
 
 	agg := make(map[domain.TraitID]*traitAgg)
 	totalItems := 0
@@ -758,7 +743,7 @@ func (b *BadgerRopeDB) traitWorker() {
 	// ✅ 한 번만 받아서 고정
 	traitCh := b.busTrait.Dequeue()
 	// 타이머를 '비활성' 상태로 시작
-	timer := time.NewTimer(time.Hour)
+	timer := time.NewTimer(5 * time.Minute)
 	if !timer.Stop() {
 		<-timer.C
 	}
@@ -807,9 +792,10 @@ func (b *BadgerRopeDB) traitWorker() {
 
 	for {
 		select {
-		case <-b.ctx.Done():
+		case <-ctx.Done():
 			flush()
-			return
+			fmt.Printf("traitWorker: ctx Done으로 인해 종료됨\n")
+			return nil
 
 		case <-statusTicker.C:
 			// 20초마다 버스 상태 출력
@@ -819,7 +805,7 @@ func (b *BadgerRopeDB) traitWorker() {
 		case op, ok := <-traitCh:
 			if !ok {
 				flush()
-				return
+				return fmt.Errorf("traitWorker가 채널에서 값 받는 중 종료됨.")
 			}
 
 			// 🔸 첫 아이템이면 타이머 시작
@@ -881,8 +867,7 @@ const (
 	batchMaxWait  = 50 * time.Millisecond
 )
 
-func (b *BadgerRopeDB) ropeWorker() {
-	defer b.wg.Done()
+func (b *BadgerRopeDB) ropeWorker(ctx context.Context) error {
 
 	saveCount := 0 // 1000회마다 프린트하기 위한 카운터
 	ropeCh := b.busRope.Dequeue()
@@ -892,8 +877,9 @@ func (b *BadgerRopeDB) ropeWorker() {
 
 	for {
 		select {
-		case <-b.ctx.Done():
-			return
+		case <-ctx.Done():
+			fmt.Printf("ropeWorker: ctx Done으로 인해 종료됨\n")
+			return nil
 
 		case <-statusTicker.C:
 			fmt.Printf("[RopeWorker Status] busRope 큐 - len: %d, cap: %d\n",
@@ -901,7 +887,7 @@ func (b *BadgerRopeDB) ropeWorker() {
 
 		case op, ok := <-ropeCh:
 			if !ok {
-				return
+				return fmt.Errorf("ropeWorker가 채널 닫는 중에 값을 받음")
 			}
 
 			err := b.updateRopeMark(op)
@@ -925,8 +911,7 @@ type polyRopeAgg struct {
 	hasLoaded bool
 }
 
-func (b *BadgerRopeDB) polyRopeWorker() {
-	defer b.wg.Done()
+func (b *BadgerRopeDB) polyRopeWorker(ctx context.Context) error {
 
 	agg := make(map[domain.PolyRopeID]*polyRopeAgg)
 	totalItems := 0
@@ -980,9 +965,10 @@ func (b *BadgerRopeDB) polyRopeWorker() {
 
 	for {
 		select {
-		case <-b.ctx.Done():
+		case <-ctx.Done():
 			flush()
-			return
+			fmt.Printf("polyRopeWorker: ctx Done으로 인해 종료됨\n")
+			return nil
 
 		case <-statusTicker.C:
 			// 20초마다 버스 상태 출력
@@ -992,7 +978,7 @@ func (b *BadgerRopeDB) polyRopeWorker() {
 		case op, ok := <-polyCh:
 			if !ok {
 				flush()
-				return
+				return fmt.Errorf("polyRopeWorker의 채널이 닫는 도중 값 받음.")
 			}
 
 			// 🔸 첫 아이템이면 타이머 시작
@@ -1232,8 +1218,7 @@ func (b *BadgerRopeDB) GetRopeSizeCached(ropeID domain.RopeID) uint32 {
 }
 
 // statsLoggerWorker - 20초마다 GetGraphStats()를 호출하여 출력
-func (b *BadgerRopeDB) statsLoggerWorker() {
-	defer b.wg.Done()
+func (b *BadgerRopeDB) statsLoggerWorker(ctx context.Context) error {
 
 	// 시작 시 즉시 한 번 출력
 	fmt.Printf("[RopeDB Stats Worker] Started - will report every 20 seconds\n")
@@ -1243,9 +1228,9 @@ func (b *BadgerRopeDB) statsLoggerWorker() {
 
 	for {
 		select {
-		case <-b.ctx.Done():
+		case <-ctx.Done():
 			fmt.Printf("[RopeDB Stats Worker] Shutting down\n")
-			return
+			return nil
 		case <-ticker.C:
 			stats := b.GetGraphStats()
 
@@ -1273,8 +1258,7 @@ func (b *BadgerRopeDB) statsLoggerWorker() {
 }
 
 // vertexCacheFlushWorker - 주기적으로 캐시를 DB에 플러시
-func (b *BadgerRopeDB) vertexCacheFlushWorker() {
-	defer b.wg.Done()
+func (b *BadgerRopeDB) vertexCacheFlushWorker(ctx context.Context) error {
 
 	// 5초마다 캐시 플러시
 	ticker := time.NewTicker(5 * time.Second)
@@ -1284,13 +1268,13 @@ func (b *BadgerRopeDB) vertexCacheFlushWorker() {
 
 	for {
 		select {
-		case <-b.ctx.Done():
+		case <-ctx.Done():
 			fmt.Printf("[Vertex Cache Flush Worker] Final flush and shutting down\n")
 			if b.vertexCache != nil {
 				flushed := b.vertexCache.FlushAll()
 				fmt.Printf("[Vertex Cache Flush Worker] Final flush: %d vertices\n", flushed)
 			}
-			return
+			return nil
 		case <-ticker.C:
 			if b.vertexCache != nil {
 				flushed := b.vertexCache.FlushAll()

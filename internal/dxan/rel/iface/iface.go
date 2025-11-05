@@ -11,9 +11,6 @@ import (
 
 type ClusterDB interface {
 	app.RopeDB
-	//TODO 반드시 지워야 할 메서드임
-	//TODO 로프DB가 컨텍스트를 New로 받아서 소유하는 바람에 생긴 문제!
-	RegisterContext(ctx context.Context)
 }
 
 type RelChildName string

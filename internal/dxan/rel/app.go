@@ -20,7 +20,7 @@ import (
 
 type RelationPool struct {
 	isTest mode.ProcessingMode
-	Dxan  pface.DxanPort
+	Dxan   pface.DxanPort
 
 	ports struct {
 		triplet cface.TripletPort
@@ -118,11 +118,15 @@ func (r *RelationPool) Start(parent context.Context) error {
 	if r.ports.triplet == nil {
 		return fmt.Errorf("relation pool의 ports중 일부가 초기화되지 않음")
 	}
+	if r.ClusterRepo == nil {
+		return fmt.Errorf("relation pool의 ClusterRepo가 초기화되지 않음")
+	}
 
 	g, ctx := errgroup.WithContext(parent)
 
 	g.Go(func() error { return r.ports.triplet.Start(ctx) })
 	g.Go(func() error { return r.txDistributor.Start(ctx) })
+	g.Go(func() error { return r.ClusterRepo.Start(ctx) })
 	g.Go(func() error {
 		upstream := r.Dxan.ConsumeRelTxByFanout()
 		defer fmt.Printf("RelPool에서 콘슈밍 종료\n")
@@ -161,8 +165,7 @@ func (r *RelationPool) Close() error {
 	fmt.Printf("relpool의 txDistributor 정리 완료\n")
 
 	r.busTriplet.Close()
-	//r.busCreation.Close()
-	r.ClusterRepo.Close()
+
 	fmt.Printf("relPool BUS들 정리 완료\n")
 	return nil
 }
