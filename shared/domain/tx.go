@@ -67,6 +67,13 @@ const (
 	EOAMark      ContractBoolMark = false // EOA (외부 소유 계정)
 )
 
+func ParseContractMark(isContract bool) ContractBoolMark {
+	if isContract {
+		return ContractMark
+	}
+	return EOAMark
+}
+
 // ✅ 문자열 변환 (0x + hex encoding)
 func (t TxId) String() string {
 	return "0x" + hex.EncodeToString(t[:])

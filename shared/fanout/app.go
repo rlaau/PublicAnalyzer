@@ -29,6 +29,8 @@ type FanoutInMemory[T any] struct {
 	startedFlag atomic.Bool
 }
 
+var _ FanoutInMemoryDesign = (*FanoutInMemory[any])(nil)
+
 type BusInfo[T any] struct {
 	busName  string
 	bus      *eventbus.EventBus[T]

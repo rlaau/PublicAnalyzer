@@ -200,7 +200,7 @@ func TestStreamTargetGetDateRange(t *testing.T) {
 }
 
 func TestGetNextDate(t *testing.T) {
-	sb := &DexStreamBus{}
+	sb := &DexFeeder{}
 
 	tests := []struct {
 		name     string

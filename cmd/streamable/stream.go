@@ -35,22 +35,21 @@ const ProcessName = "Testing_Streaming"
 
 func main() {
 	// Docker 환경에서는 환경변수가 이미 주입되어 있으므로 .env 로드 생략 가능
+	// .env의 키-값을 os에 로드
 	err := godotenv.Load(computation.GetENV())
 	if err != nil {
 		fmt.Printf("환경변수 주입 실패.\n")
-		fmt.Printf("그러나 도커 환경에선 정상 작동일 수 있음")
+		fmt.Printf("그러나 도커 환경에선 정상 작동일 수 있음\n")
 	}
 
-	root, cancle := context.WithCancel(context.Background())
-	defer cancle()
-
+	//DexFeeder초기화
 	startTime, _ := time.Parse("2006-01-02", "2023-09-01")
 	endTime, _ := time.Parse("2006-01-02", "2024-12-31")
 	streamTarget, isOk := dexfeeder.NewStreamTarget(startTime, endTime)
 	if !isOk {
 		panic("StreamTarget이 올바르게 파싱되지 못함.")
 	}
-	sb, err := dexfeeder.NewDexStreamBus(dexfeeder.DexStreamBusConfig{
+	df, err := dexfeeder.NewDexFeeder(dexfeeder.DexFeederConfig{
 		BufferSize:   100_000, // 버퍼(큐) 크기
 		SaveInterval: time.Second,
 		StreamTarget: streamTarget,
@@ -59,14 +58,14 @@ func main() {
 		log.Panicf("StreamBus create error :%v", err)
 	}
 
+	//dexAnalyzerPool초기화
 	relPool := ComposeRelPool()
 	nodPool := ComposeNodPool()
-	apoolFanout := ainf.NewDxanFanoutManager("Testing_apool", 2000, 2000)
+	dxanFanout := ainf.NewDxanFanoutManager("Testing_apool", 2000, 2000)
+	dexAnalyzerPool := ap.NewDexAnalyzerPool(mode.TestingModeProcess, dxanFanout, nodPool, relPool)
+	fmt.Println("dxan 성공적으로 초기화됨")
 
-	apool := ap.NewDexAnalyzerPool(mode.TestingModeProcess, apoolFanout, nodPool, relPool)
-
-	fmt.Println("apool 성공적으로 초기화됨")
-
+	//server초기화
 	srv := server.NewServer(":8080")
 	srv.SetupBasicRoutes()
 	relAPI := relapi.NewRelPoolAPIHandler(relPool)
@@ -74,8 +73,12 @@ func main() {
 		fmt.Printf("서버에 Rel API등록 실패: %s\n", err)
 	}
 
+	//제어 컨텍스트 생성
+	root, cancleCtx := context.WithCancel(context.Background())
+	defer cancleCtx()
 	g, ctx := errgroup.WithContext(root)
 
+	// 초기화된 모듈들 Start
 	g.Go(func() error {
 		fmt.Printf("   🌐 Starting API server on :8080\n")
 		err := srv.Start(ctx)
@@ -83,30 +86,30 @@ func main() {
 		return err
 	})
 	g.Go(func() error {
-		err := apool.Start(ctx)
+		err := dexAnalyzerPool.Start(ctx)
 		fmt.Printf("apool종료 완료\n")
 		return err
 	})
 	g.Go(func() error {
-		err := LoadAndTranslateToMarkedTransaction(sb, apool, ctx)
+		err := LoadAndTranslateToMarkedTransaction(df, dexAnalyzerPool, ctx)
 		fmt.Printf("LoadTrans종료 완료")
 		return err
 	})
 	g.Go(func() error {
-		err := sb.Start(ctx)
+		err := df.Start(ctx)
 		fmt.Printf("DexFeeder종료 완료\n")
 		return err
 	})
-	//특수 제어 목적
+
+	//os를 통한 별도의 제어 채널 형성.
 	//최상위 루트에선 cmd나 ctrl+C로 제어 가능케 함
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// 시그널 대기
+	// os 시그널을 통해서 제어 컨텍스트 접근 가능하게 하기
 	go func() {
 		<-sigChan
 		fmt.Printf("\n🛑 시그널 수신 → 정리 작업 시작\n")
-		cancle()
+		cancleCtx()
 	}()
 
 	// 모든 고루틴 종료 대기
@@ -118,7 +121,7 @@ func main() {
 }
 
 func LoadAndTranslateToMarkedTransaction(
-	sb *dexfeeder.DexStreamBus,
+	sb *dexfeeder.DexFeeder,
 	apool *ap.DexAnalyzerPool,
 	ctx context.Context,
 ) error {
@@ -142,7 +145,7 @@ func LoadAndTranslateToMarkedTransaction(
 				log.Printf("RawInputBus가 닫힘 - ETL 종료\n")
 				return nil
 			}
-			markedTx := translateTx(apool, rawTx)
+			markedTx := parseMarkedTransaction(apool, rawTx)
 			if err := apool.DispatchMarkedTx(ctx, markedTx); err != nil {
 				log.Printf("apool에 markedTx 퍼블리시 중 에러%s\n", err.Error())
 			}
@@ -152,14 +155,15 @@ func LoadAndTranslateToMarkedTransaction(
 
 }
 
-func translateTx(apool *ap.DexAnalyzerPool, tx domain.RawTransaction) domain.MarkedTransaction {
+// parseMarkedTransaction는 RawTx->MarkedTx로 변환
+func parseMarkedTransaction(apool *ap.DexAnalyzerPool, tx domain.RawTransaction) domain.MarkedTransaction {
 	co := apool.GetNodPort().GetCoPort()
 	from, _ := domain.ParseAddressFromString(tx.From)
 	to, _ := domain.ParseAddressFromString(tx.To)
 	fromIsContract := co.CheckIsContract(from)
 	toIsContract := co.CheckIsContract(to)
 	tid, _ := domain.ParseTxId(tx.TxId)
-	txSyntax := [2]domain.ContractBoolMark{changeBoolToContractMark(fromIsContract), changeBoolToContractMark(toIsContract)}
+	txSyntax := [2]domain.ContractBoolMark{domain.ParseContractMark(fromIsContract), domain.ParseContractMark(toIsContract)}
 	markedTx := domain.MarkedTransaction{
 		TxID:        tid,
 		TxSyntax:    txSyntax,
@@ -172,12 +176,6 @@ func translateTx(apool *ap.DexAnalyzerPool, tx domain.RawTransaction) domain.Mar
 	return markedTx
 }
 
-func changeBoolToContractMark(isContract bool) domain.ContractBoolMark {
-	if isContract {
-		return domain.ContractMark
-	}
-	return domain.EOAMark
-}
 func ComposeRelPool() *rel.RelationPool {
 	tripletConfig := triplet.TripletConfig{
 		Name: "Simple-Triplet",
@@ -193,11 +191,7 @@ func ComposeRelPool() *rel.RelationPool {
 		panic("트리플렛 생성 중 에러")
 	}
 	relDistributor := rinf.NewRelFanoutManager("Testing_rel", 2000, 2000)
-	//TODO 이 코드 추후 수정하기.
-	//TODO 로프DB의 구조 자체를 워커풀 & 스타트 기반으로 바꿀 것.
-	//TODO 지금 콘텍스트 주는건 그냥 끼워맞추기 용이고, 실제 수정본에선 New시엔 컨텍스트 x였다가
-	//TODO Start에서 ctx전파 받기
-	clusterDB, err := rinf.NewClusterDB(context.Background(), mode.TestingModeProcess)
+	clusterDB, err := rinf.NewClusterDB(mode.TestingModeProcess)
 	if err != nil {
 		fmt.Printf("ComposeRelPool서 clusterDB생성 중 에러 발생. %s\n", err.Error())
 		return nil

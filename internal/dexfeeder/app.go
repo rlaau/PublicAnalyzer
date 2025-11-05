@@ -13,15 +13,15 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/txstreamer"
 )
 
-// DexStreamBusModel은 DexStreamBus의 핵심 동작 정의
-type DexStreamBusModel interface {
+// DexFeederModel은 DexStreamBus의 핵심 동작 정의
+type DexFeederModel interface {
 	streamBetween(ctx context.Context, streamTarget StreamTarget) error
 }
 
-// DexStreamBusDesign은 DexStreamBus의 최종 설계 정의
-type DexStreamBusDesign interface {
+// DexFeederDesign은 DexStreamBus의 최종 설계 정의
+type DexFeederDesign interface {
 	//DexStreamBus의 가장 핵심동작
-	DexStreamBusModel
+	DexFeederModel
 	//제어를 위한 동작
 	gface.Module
 	//쿼리
@@ -29,9 +29,9 @@ type DexStreamBusDesign interface {
 	GetStats() map[string]any
 }
 
-// DexStreamBus 는 TxStreamer에서 읽은 RawTransaction을 EventBus에 밀어 넣는 컴포넌트다.
+// DexFeeder 는 TxStreamer에서 읽은 RawTransaction을 EventBus에 밀어 넣는 컴포넌트다.
 // 포지션 관리와 StreamFrom/StreamBetween/StreamTo 를 지원한다.
-type DexStreamBus struct {
+type DexFeeder struct {
 	// Dependencies
 	txStreamer   *txstreamer.TxStreamer
 	bus          *eventbus.EventBus[shareddomain.RawTransaction]
@@ -51,30 +51,24 @@ type DexStreamBus struct {
 
 	// Configuration
 	saveInterval time.Duration
-	busRelPath   string
 	closed       atomic.Bool
 }
 
 // ! 디자인 강제
-var _ DexStreamBusDesign = (*DexStreamBus)(nil)
+var _ DexFeederDesign = (*DexFeeder)(nil)
 
-// DexStreamBusConfig 는 StreamBus 설정값이다.
-type DexStreamBusConfig struct {
-	// EventBus
-
+// DexFeederConfig 는 StreamBus 설정값이다.
+type DexFeederConfig struct {
 	BufferSize int // 이벤트버스 내부 채널 버퍼 크기 (예: 4096)
 
-	// Position persistence
-	//PositionDataDir string        // 포지션 저장 디렉토리
 	SaveInterval time.Duration // 포지션 주기 저장(기본 1s)
 
 	StreamTarget StreamTarget
 }
 
-// NewDexStreamBus 는 StreamBus 인스턴스를 생성한다.
-func NewDexStreamBus(cfg DexStreamBusConfig) (*DexStreamBus, error) {
+// NewDexFeeder 는 StreamBus 인스턴스를 생성한다.
+func NewDexFeeder(cfg DexFeederConfig) (*DexFeeder, error) {
 
-	busRelPath := "streambus/rawtx.jsonl"
 	if cfg.BufferSize <= 0 {
 		cfg.BufferSize = 4096
 	}
@@ -90,12 +84,11 @@ func NewDexStreamBus(cfg DexStreamBusConfig) (*DexStreamBus, error) {
 	// Position repo
 	positionRepo := NewFileStreamPositionRepository()
 
-	sb := &DexStreamBus{
+	sb := &DexFeeder{
 		txStreamer:   txStreamer,
 		bus:          bus,
 		positionRepo: positionRepo,
 		saveInterval: cfg.SaveInterval,
-		busRelPath:   busRelPath,
 		stopChan:     make(chan struct{}),
 		streamTarget: cfg.StreamTarget,
 	}
@@ -114,17 +107,17 @@ func NewDexStreamBus(cfg DexStreamBusConfig) (*DexStreamBus, error) {
 }
 
 // Start: 별도 워커는 없지만 상태 플래그만 잡아준다.
-func (s *DexStreamBus) Start(ctx context.Context) error {
+func (s *DexFeeder) Start(ctx context.Context) error {
 	if s.isRunning {
 		return fmt.Errorf("StreamBus is already running")
 	}
 	s.isRunning = true
-	log.Printf("StreamBus started (bus=%s)", s.busRelPath)
+	log.Printf("DexFeeder Started")
 	return s.streamBetween(ctx, s.streamTarget)
 }
 
 // StreamBetween: [startDate, endDate] 구간 스트림
-func (s *DexStreamBus) streamBetween(ctx context.Context, streamTarget StreamTarget) error {
+func (s *DexFeeder) streamBetween(ctx context.Context, streamTarget StreamTarget) error {
 	if !s.isRunning {
 		return fmt.Errorf("StreamBus is not running")
 	}
@@ -132,11 +125,11 @@ func (s *DexStreamBus) streamBetween(ctx context.Context, streamTarget StreamTar
 	log.Printf("Starting to stream (bus) from %s to %s", streamTarget.StartDate.Format("2006-01-02"), streamTarget.EndDate.Format("2006-01-02"))
 	return s.streamWithinTarget(ctx, streamTarget)
 }
-func (s *DexStreamBus) Name() gface.ModuleName {
+func (s *DexFeeder) Name() gface.ModuleName {
 	return "DexStreamBus"
 }
 
-func (s *DexStreamBus) Close() error {
+func (s *DexFeeder) Close() error {
 	if !s.isRunning {
 		return nil
 	}
@@ -166,10 +159,10 @@ func (s *DexStreamBus) Close() error {
 	return nil
 }
 
-func (s *DexStreamBus) Closed() bool {
+func (s *DexFeeder) Closed() bool {
 	return s.closed.Load()
 }
-func (s *DexStreamBus) streamWithinTarget(ctx context.Context, target StreamTarget) error {
+func (s *DexFeeder) streamWithinTarget(ctx context.Context, target StreamTarget) error {
 	dates, err := target.GetDateRange()
 	if err != nil {
 		return fmt.Errorf("failed to get date range: %w", err)
@@ -213,7 +206,7 @@ func (s *DexStreamBus) streamWithinTarget(ctx context.Context, target StreamTarg
 	return nil
 }
 
-func (s *DexStreamBus) streamDate(ctx context.Context, date string, positionTicker *time.Ticker) error {
+func (s *DexFeeder) streamDate(ctx context.Context, date string, positionTicker *time.Ticker) error {
 	// 날짜 단위 타이밍/카운터
 	dayStart := time.Now()
 	var publishedThisDate uint64
@@ -266,7 +259,7 @@ func (s *DexStreamBus) streamDate(ctx context.Context, date string, positionTick
 	}
 }
 
-func (s *DexStreamBus) publishToBus(ctx context.Context, batch []shareddomain.RawTransaction) error {
+func (s *DexFeeder) publishToBus(ctx context.Context, batch []shareddomain.RawTransaction) error {
 	// EventBus.Publish 가 버퍼가 꽉 차면 블록된다고 가정.
 	// 이 경우 자연스럽게 컨슈머가 빼갈 때까지 대기하면서 “큐를 꽉 채우는” 동작이 된다.
 	for i := range batch {
@@ -281,14 +274,14 @@ func (s *DexStreamBus) publishToBus(ctx context.Context, batch []shareddomain.Ra
 	return nil
 }
 
-func (s *DexStreamBus) saveCurrentPosition() error {
+func (s *DexFeeder) saveCurrentPosition() error {
 	if !s.currentPosition.IsValid() {
 		return fmt.Errorf("invalid current position")
 	}
 	return s.positionRepo.SavePosition(s.currentPosition)
 }
 
-func (s *DexStreamBus) getNextDate(currentDate string) (string, error) {
+func (s *DexFeeder) getNextDate(currentDate string) (string, error) {
 	date, err := time.Parse("2006-01-02", currentDate)
 	if err != nil {
 		return "", fmt.Errorf("invalid date format: %w", err)
@@ -298,21 +291,20 @@ func (s *DexStreamBus) getNextDate(currentDate string) (string, error) {
 }
 
 // GetCurrentPosition 현재 포지션
-func (s *DexStreamBus) GetCurrentPosition() StreamPosition { return s.currentPosition }
+func (s *DexFeeder) GetCurrentPosition() StreamPosition { return s.currentPosition }
 
 // IsRunning 실행 여부
-func (s *DexStreamBus) IsRunning() bool { return s.isRunning }
+func (s *DexFeeder) IsRunning() bool { return s.isRunning }
 
 // GetStats 상태/통계
-func (s *DexStreamBus) GetStats() map[string]any {
+func (s *DexFeeder) GetStats() map[string]any {
 	return map[string]any{
 		"is_running":       s.isRunning,
 		"current_position": s.currentPosition,
-		"bus_path":         s.busRelPath,
 		"total_published":  atomic.LoadUint64(&s.totalPublished),
 		"total_errors":     atomic.LoadUint64(&s.totalErrors),
 	}
 }
-func (s *DexStreamBus) Bus() *eventbus.EventBus[shareddomain.RawTransaction] {
+func (s *DexFeeder) Bus() *eventbus.EventBus[shareddomain.RawTransaction] {
 	return s.bus
 }
