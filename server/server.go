@@ -2,23 +2,41 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
 )
+
+type ServerModel interface {
+	GetRouter() *chi.Mux
+	RegisterModule(module ModuleRegistrar) error
+	SetupBasicRoutes()
+}
+type ServerDesign interface {
+	gface.Module
+	ServerModel
+}
 
 // Server represents the HTTP server with chi router
 type Server struct {
 	router *chi.Mux
 	addr   string
 	server *http.Server
+	closed atomic.Bool
 }
+
+// ! 디자인 강제
+var _ ServerDesign = (*Server)(nil)
 
 // NewServer creates a new HTTP server instance with chi router
 func NewServer(addr string) *Server {
@@ -46,6 +64,57 @@ func NewServer(addr string) *Server {
 	}
 }
 
+func (s *Server) Name() gface.ModuleName {
+	return "Server"
+}
+func (s *Server) Start(ctx context.Context) error {
+	// 1) 리스너를 먼저 열어 바인딩 에러를 즉시 반환
+	ln, err := net.Listen("tcp", s.addr)
+	if err != nil {
+		return err
+	}
+	log.Printf("HTTP server listening on %s", s.addr)
+
+	// 2) 서버 고루틴
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- s.server.Serve(ln) // ln 닫히면 반환, ErrServerClosed 가능
+	}()
+
+	// 3) 컨트롤 루프: ctx 취소 vs 서버 종료
+	select {
+	case <-ctx.Done():
+		fmt.Println("Server: ctx Done에 의해 종료됨.")
+	case err := <-serveErr:
+		if s.closed.Swap(true) {
+			return err
+		}
+		if err == nil || errors.Is(err, http.ErrServerClosed) {
+			fmt.Println("Server: serveErr와 함께 종료")
+		} else {
+			fmt.Printf("Server: 서버에서 에러 발생하며 종료함 %s\n", err.Error())
+		}
+	}
+	return s.Close()
+}
+
+// Close gracefully shuts down the server
+func (s *Server) Close() error {
+	if s.closed.Swap(true) {
+		return nil
+	}
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	err := s.server.Shutdown(shutdownCtx)
+	if err != nil {
+		log.Printf("⚠️  서버 종료 중 에러: %v\n", err)
+	}
+	return err
+}
+func (s *Server) Closed() bool {
+	return s.closed.Load()
+}
+
 // GetRouter returns the chi router for module registration
 func (s *Server) GetRouter() *chi.Mux {
 	return s.router
@@ -54,18 +123,6 @@ func (s *Server) GetRouter() *chi.Mux {
 // RegisterModule registers a module's API endpoints
 func (s *Server) RegisterModule(module ModuleRegistrar) error {
 	return module.RegisterRoutes(s.router)
-}
-
-// Start starts the HTTP server
-func (s *Server) Start() error {
-	log.Printf("Starting server on %s", s.addr)
-	return s.server.ListenAndServe()
-}
-
-// Shutdown gracefully shuts down the server
-func (s *Server) Shutdown(ctx context.Context) error {
-	log.Printf("Shutting down server...")
-	return s.server.Shutdown(ctx)
 }
 
 // SetupBasicRoutes sets up basic server routes with chi router
