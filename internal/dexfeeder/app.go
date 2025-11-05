@@ -9,8 +9,25 @@ import (
 
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
+	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/txstreamer"
 )
+
+// DexStreamBusModel은 DexStreamBus의 핵심 동작 정의
+type DexStreamBusModel interface {
+	streamBetween(ctx context.Context, streamTarget StreamTarget) error
+}
+
+// DexStreamBusDesign은 DexStreamBus의 최종 설계 정의
+type DexStreamBusDesign interface {
+	//DexStreamBus의 가장 핵심동작
+	DexStreamBusModel
+	//제어를 위한 동작
+	gface.Module
+	//쿼리
+	GetCurrentPosition() StreamPosition
+	GetStats() map[string]any
+}
 
 // DexStreamBus 는 TxStreamer에서 읽은 RawTransaction을 EventBus에 밀어 넣는 컴포넌트다.
 // 포지션 관리와 StreamFrom/StreamBetween/StreamTo 를 지원한다.
@@ -19,6 +36,9 @@ type DexStreamBus struct {
 	txStreamer   *txstreamer.TxStreamer
 	bus          *eventbus.EventBus[shareddomain.RawTransaction]
 	positionRepo StreamPositionRepository
+
+	// 스트리밍 기간
+	streamTarget StreamTarget
 
 	// State
 	currentPosition StreamPosition
@@ -35,6 +55,9 @@ type DexStreamBus struct {
 	closed       atomic.Bool
 }
 
+// ! 디자인 강제
+var _ DexStreamBusDesign = (*DexStreamBus)(nil)
+
 // DexStreamBusConfig 는 StreamBus 설정값이다.
 type DexStreamBusConfig struct {
 	// EventBus
@@ -44,6 +67,8 @@ type DexStreamBusConfig struct {
 	// Position persistence
 	//PositionDataDir string        // 포지션 저장 디렉토리
 	SaveInterval time.Duration // 포지션 주기 저장(기본 1s)
+
+	StreamTarget StreamTarget
 }
 
 // NewDexStreamBus 는 StreamBus 인스턴스를 생성한다.
@@ -72,6 +97,7 @@ func NewDexStreamBus(cfg DexStreamBusConfig) (*DexStreamBus, error) {
 		saveInterval: cfg.SaveInterval,
 		busRelPath:   busRelPath,
 		stopChan:     make(chan struct{}),
+		streamTarget: cfg.StreamTarget,
 	}
 
 	// 기존 포지션 로드
@@ -84,23 +110,32 @@ func NewDexStreamBus(cfg DexStreamBusConfig) (*DexStreamBus, error) {
 			log.Printf("Loaded existing position: %s", pos.String())
 		}
 	}
-
 	return sb, nil
 }
 
 // Start: 별도 워커는 없지만 상태 플래그만 잡아준다.
-func (s *DexStreamBus) Start() error {
+func (s *DexStreamBus) Start(ctx context.Context) error {
 	if s.isRunning {
 		return fmt.Errorf("StreamBus is already running")
 	}
 	s.isRunning = true
 	log.Printf("StreamBus started (bus=%s)", s.busRelPath)
-	return nil
+	return s.streamBetween(ctx, s.streamTarget)
 }
 
-func (s *DexStreamBus) Bus() *eventbus.EventBus[shareddomain.RawTransaction] {
-	return s.bus
+// StreamBetween: [startDate, endDate] 구간 스트림
+func (s *DexStreamBus) streamBetween(ctx context.Context, streamTarget StreamTarget) error {
+	if !s.isRunning {
+		return fmt.Errorf("StreamBus is not running")
+	}
+	s.currentPosition = NewStreamPosition(streamTarget.StartDate.Format("2006-01-02"), 0)
+	log.Printf("Starting to stream (bus) from %s to %s", streamTarget.StartDate.Format("2006-01-02"), streamTarget.EndDate.Format("2006-01-02"))
+	return s.streamWithinTarget(ctx, streamTarget)
 }
+func (s *DexStreamBus) Name() gface.ModuleName {
+	return "DexStreamBus"
+}
+
 func (s *DexStreamBus) Close() error {
 	if !s.isRunning {
 		return nil
@@ -131,41 +166,9 @@ func (s *DexStreamBus) Close() error {
 	return nil
 }
 
-// StreamFrom: 특정 포지션에서 시작해 현재 날짜부터 계속 스트림
-func (s *DexStreamBus) StreamFrom(ctx context.Context, startDate string, startIndex int64) error {
-	if !s.isRunning {
-		return fmt.Errorf("StreamBus is not running")
-	}
-	s.currentPosition = NewStreamPosition(startDate, startIndex)
-	return s.streamFromCurrentPosition(ctx)
+func (s *DexStreamBus) Closed() bool {
+	return s.closed.Load()
 }
-
-// StreamTo: 현재(혹은 설정된) 포지션부터 endDate(포함)까지 스트림
-func (s *DexStreamBus) StreamTo(ctx context.Context, endDate string) error {
-	if !s.isRunning {
-		return fmt.Errorf("StreamBus is not running")
-	}
-	if !s.currentPosition.IsValid() {
-		s.currentPosition = NewStreamPosition(endDate, 0)
-	}
-	target := NewStreamTarget(s.currentPosition.Date, endDate)
-	return s.streamWithinTarget(ctx, target)
-}
-
-// StreamBetween: [startDate, endDate] 구간 스트림
-func (s *DexStreamBus) StreamBetween(ctx context.Context, startDate, endDate string) error {
-	if !s.isRunning {
-		return fmt.Errorf("StreamBus is not running")
-	}
-	target := NewStreamTarget(startDate, endDate)
-	if !target.IsValid() {
-		return fmt.Errorf("invalid date range: %s to %s", startDate, endDate)
-	}
-	s.currentPosition = NewStreamPosition(startDate, 0)
-	log.Printf("Starting to stream (bus) from %s to %s", startDate, endDate)
-	return s.streamWithinTarget(ctx, target)
-}
-
 func (s *DexStreamBus) streamWithinTarget(ctx context.Context, target StreamTarget) error {
 	dates, err := target.GetDateRange()
 	if err != nil {
@@ -198,7 +201,7 @@ func (s *DexStreamBus) streamWithinTarget(ctx context.Context, target StreamTarg
 
 		s.currentPosition.Index = 0
 	}
-	next, err := s.getNextDate(target.EndDate)
+	next, err := s.getNextDate(target.EndDate.Format("2006-01-02"))
 	if err == nil {
 		s.currentPosition.Date = next
 		s.currentPosition.Index = 0
@@ -208,37 +211,6 @@ func (s *DexStreamBus) streamWithinTarget(ctx context.Context, target StreamTarg
 	}
 	log.Printf("Steam Bus: Completed streaming target range into EventBus")
 	return nil
-}
-
-func (s *DexStreamBus) streamFromCurrentPosition(ctx context.Context) error {
-	if !s.currentPosition.IsValid() {
-		return fmt.Errorf("invalid current position: %v", s.currentPosition)
-	}
-	log.Printf("Starting to stream (bus) from position: %s", s.currentPosition.String())
-
-	positionTicker := time.NewTicker(s.saveInterval)
-	defer positionTicker.Stop()
-
-	for {
-		select {
-		case <-s.stopChan:
-			log.Printf("Streaming stopped by user")
-			return nil
-		default:
-		}
-
-		if err := s.streamDate(ctx, s.currentPosition.Date, positionTicker); err != nil {
-			log.Printf("Error streaming date %s: %v", s.currentPosition.Date, err)
-			if nextDate, err := s.getNextDate(s.currentPosition.Date); err == nil {
-				s.currentPosition.Date = nextDate
-				s.currentPosition.Index = 0
-				log.Printf("Moving to next date: %s", nextDate)
-			} else {
-				log.Printf("Cannot determine next date, stopping: %v", err)
-				return err
-			}
-		}
-	}
 }
 
 func (s *DexStreamBus) streamDate(ctx context.Context, date string, positionTicker *time.Ticker) error {
@@ -340,4 +312,7 @@ func (s *DexStreamBus) GetStats() map[string]any {
 		"total_published":  atomic.LoadUint64(&s.totalPublished),
 		"total_errors":     atomic.LoadUint64(&s.totalErrors),
 	}
+}
+func (s *DexStreamBus) Bus() *eventbus.EventBus[shareddomain.RawTransaction] {
+	return s.bus
 }

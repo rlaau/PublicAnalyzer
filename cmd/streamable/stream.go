@@ -45,12 +45,15 @@ func main() {
 	defer cancle()
 
 	startTime, _ := time.Parse("2006-01-02", "2023-09-01")
-
 	endTime, _ := time.Parse("2006-01-02", "2024-12-31")
-
+	streamTarget, isOk := dexfeeder.NewStreamTarget(startTime, endTime)
+	if !isOk {
+		panic("StreamTarget이 올바르게 파싱되지 못함.")
+	}
 	sb, err := dexfeeder.NewDexStreamBus(dexfeeder.DexStreamBusConfig{
 		BufferSize:   100_000, // 버퍼(큐) 크기
 		SaveInterval: time.Second,
+		StreamTarget: streamTarget,
 	})
 	if err != nil {
 		log.Fatalf("StreamBus create error :%v", err)
@@ -106,21 +109,10 @@ func main() {
 		fmt.Printf("LoadTrans종료 완료")
 		return err
 	})
-
-	//TODO 현재 StreamBus도 컨텍스트 관리 방식에 문제가 있음.
-	//TODO 컨텍스트 전파는 되지만, 이후 컨텍스트 제어 신호의 핸들링이 부재함.
-	//TODO 얘도 걍 Start로 받아서 전파 후, Start가 제어 신호 받을 때 Close호출하게 함으로써 제어하기
-	sb.Start()
 	g.Go(func() error {
-		defer fmt.Printf("스트림 버스 종료 완료\n")
-		if err := sb.StreamBetween(ctx,
-			startTime.Format("2006-01-02"),
-			endTime.Format("2006-01-02"),
-		); err != nil {
-			log.Printf("Stream error :%v", err)
-			return err
-		}
-		return nil
+		err := sb.Start(ctx)
+		fmt.Printf("DexFeeder종료 완료\n")
+		return err
 	})
 	//특수 제어 목적
 	//최상위 루트에선 cmd나 ctrl+C로 제어 가능케 함

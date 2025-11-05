@@ -38,34 +38,28 @@ func (p StreamPosition) IsValid() bool {
 // StreamTarget represents the target range for streaming
 // * 반닫힌 구간이 아닌, 모두 다 포함하는 inclusive임
 type StreamTarget struct {
-	StartDate string // YYYY-MM-DD format (inclusive)
-	EndDate   string // YYYY-MM-DD format (inclusive)
+	StartDate time.Time // YYYY-MM-DD format (inclusive)
+	EndDate   time.Time // YYYY-MM-DD format (inclusive)
 }
 
 // NewStreamTarget creates a new StreamTarget
-func NewStreamTarget(startDate, endDate string) StreamTarget {
-	return StreamTarget{
+func NewStreamTarget(startDate, endDate time.Time) (StreamTarget, bool) {
+	s := StreamTarget{
 		StartDate: startDate,
 		EndDate:   endDate,
 	}
+	return s, s.IsValid()
 }
 
 // IsValid checks if target is valid
 func (t StreamTarget) IsValid() bool {
-	if t.StartDate == "" || t.EndDate == "" {
-		return false
-	}
-
-	// Parse dates
-	start, err1 := time.Parse("2006-01-02", t.StartDate)
-	end, err2 := time.Parse("2006-01-02", t.EndDate)
-
-	if err1 != nil || err2 != nil {
+	// Check for zero time
+	if t.StartDate.IsZero() || t.EndDate.IsZero() {
 		return false
 	}
 
 	// Start should be <= End
-	return !start.After(end)
+	return !t.StartDate.After(t.EndDate)
 }
 
 // Contains checks if given date is within target range
@@ -79,8 +73,11 @@ func (t StreamTarget) Contains(date string) bool {
 		return false
 	}
 
-	start, _ := time.Parse("2006-01-02", t.StartDate)
-	end, _ := time.Parse("2006-01-02", t.EndDate)
+	// Truncate to date only for comparison
+	start := time.Date(t.StartDate.Year(), t.StartDate.Month(), t.StartDate.Day(), 0, 0, 0, 0, time.UTC)
+	end := time.Date(t.EndDate.Year(), t.EndDate.Month(), t.EndDate.Day(), 0, 0, 0, 0, time.UTC)
+	checkDate = time.Date(checkDate.Year(), checkDate.Month(), checkDate.Day(), 0, 0, 0, 0, time.UTC)
+
 	// start이상, end 이하.
 	//* 이건 반닫힌 구간이 아니네.
 	return !checkDate.Before(start) && !checkDate.After(end)
@@ -92,8 +89,9 @@ func (t StreamTarget) GetDateRange() ([]string, error) {
 		return nil, fmt.Errorf("invalid stream target: %v", t)
 	}
 
-	start, _ := time.Parse("2006-01-02", t.StartDate)
-	end, _ := time.Parse("2006-01-02", t.EndDate)
+	// Truncate to date only
+	start := time.Date(t.StartDate.Year(), t.StartDate.Month(), t.StartDate.Day(), 0, 0, 0, 0, time.UTC)
+	end := time.Date(t.EndDate.Year(), t.EndDate.Month(), t.EndDate.Day(), 0, 0, 0, 0, time.UTC)
 
 	var dates []string
 	current := start
