@@ -1,6 +1,6 @@
 # Directories
-testing_enviroment/
-production_storage/
+backup/
+storage/
 stream_storage/
 web/
 
