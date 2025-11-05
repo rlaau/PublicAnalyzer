@@ -43,13 +43,8 @@ const defaultHeader = `# CEX Hot Wallet Addresses
 
 // NewFileCEXRepository: 파일 로드 + 메모리 set 구성 + append writer 준비
 func NewFileCEXRepository(processMode mode.ProcessingMode) (*FileCEXRepository, error) {
-	var path string
-
-	if processMode.IsTest() {
-		path = computation.DockerTestingStorage() + "/nod/eo/cex.txt"
-	} else {
-		path = computation.DockerProductionStorage() + "/nod/eo/cex.txt"
-	}
+	//TODO Mode제거
+	var path string = computation.GetStoragePath("/nod/eo/cex.txt")
 
 	r := &FileCEXRepository{
 		filePath: path,

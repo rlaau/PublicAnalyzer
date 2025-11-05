@@ -27,13 +27,8 @@ func NewRopeDB(isTest mode.ProcessingMode, dbName string, traitLegend map[domain
 	polyTraits map[domain.PolyTraitCode]domain.PolyNameAndTraits,
 	trapLegend map[domain.TrapCode]domain.TrapNameAndTraits,
 	authorLegned map[domain.AuthorCode]string) (RopeDB, error) {
-	var root string
-	if isTest.IsTest() {
-		root = computation.DockerTestingStorage()
-	} else {
-		root = computation.DockerProductionStorage()
-	}
-	return newRopeDBWithRoot(isTest, root, dbName, traitLegend, ruleLegend, polyTraits, trapLegend, authorLegned)
+	var ropeRoot string = computation.GetStoragePath("ropedb")
+	return newRopeDBWithRoot(isTest, ropeRoot, dbName, traitLegend, ruleLegend, polyTraits, trapLegend, authorLegned)
 }
 
 type RopeDB interface {
@@ -166,7 +161,7 @@ func (m *RopeMergeMetrics) Start(ctx context.Context, interval time.Duration) er
 // NewRopeDBWithRoot: 모드(true=test, false=prod)로 루트 분기
 // ==== PATCH BEGIN: NewRopeDBWithRoot (replace entire function) ====
 
-func newRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, traitLegend map[domain.TraitCode]string,
+func newRopeDBWithRoot(isTest mode.ProcessingMode, ropeRoot string, dbname string, traitLegend map[domain.TraitCode]string,
 	ruleLegend map[domain.RuleCode]string,
 	polyTraits map[domain.PolyTraitCode]domain.PolyNameAndTraits,
 	trapLegend map[domain.TrapCode]domain.TrapNameAndTraits,
@@ -181,8 +176,8 @@ func newRopeDBWithRoot(isTest mode.ProcessingMode, root string, dbname string, t
 
 	}
 	// 2-way 분리: V-DB, M-DB
-	vDir := filepath.Join(root, "rope_db", dbname, "badger_v")
-	mDir := filepath.Join(root, "rope_db", dbname, "badger_m")
+	vDir := filepath.Join(ropeRoot, "badger_v")
+	mDir := filepath.Join(ropeRoot, "badger_m")
 
 	// V-DB 메모리 최적화 - Arena 메모리 부족 문제 해결
 	vOpts := base(vDir).

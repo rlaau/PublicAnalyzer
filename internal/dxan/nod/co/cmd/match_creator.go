@@ -54,7 +54,7 @@ func main() {
 	defer db.Close()
 
 	// mmap 데이터 디렉토리
-	mmapDir := filepath.Join(computation.DockerRoot(), "internal/cce/cmd/load_null_to_and_contract/out_creations")
+	mmapDir := computation.GetStoragePath("load_null_to_and_contract/out_creations")
 
 	// mmap 파일들 찾기
 	paths, err := filepath.Glob(filepath.Join(mmapDir, "txc_*.mm"))

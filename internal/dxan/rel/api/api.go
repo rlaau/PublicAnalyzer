@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"path/filepath"
 
 	"github.com/go-chi/chi/v5"
 	relapp "github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/rel"
@@ -68,11 +67,12 @@ func (h *RelAPIPoolHandler) registerRelationPool(router *chi.Mux) error {
 	router.Route("/ui/triplet/graph", func(r chi.Router) {
 		// 부모(Background)
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-			http.ServeFile(w, r, filepath.Join(computation.DockerWebStroage(), "triplet", "graph", "index.html"))
+			http.ServeFile(w, r, computation.GetWebPath("triplet", "graph", "index.html"))
 		})
 		// 자식(Frame/Sigma)
 		r.Get("/frame", func(w http.ResponseWriter, r *http.Request) {
-			http.ServeFile(w, r, filepath.Join(computation.DockerWebStroage(), "triplet", "graph", "frame.html"))
+			http.ServeFile(w, r, computation.GetWebPath("triplet", "graph", "frame.html"))
+
 		})
 	})
 	return nil

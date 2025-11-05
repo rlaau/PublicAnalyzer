@@ -130,8 +130,7 @@ func (s *Server) RegisterModule(module ModuleRegistrar) error {
 // API 라우팅: api/* (JSON API 응답)
 func (s *Server) SetupBasicRoutes() {
 	// Get absolute path to web directory
-	rootPath := computation.DockerRoot()
-	webDir := filepath.Join(rootPath, "web")
+	webDir := computation.GetWebPath()
 
 	// API 라우팅 그룹 - JSON API 응답
 	s.router.Route("/api", func(r chi.Router) {

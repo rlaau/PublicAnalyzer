@@ -45,24 +45,24 @@ func (h *TripletAPIHandler) RegisterRoutes(router *chi.Mux) error {
 	router.Route("/ui/triplet", func(r chi.Router) {
 		// Triplet 모듈 메인 페이지
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-			http.ServeFile(w, r, filepath.Join(computation.DockerWebStroage(), "triplet", "index.html"))
+			http.ServeFile(w, r, filepath.Join(computation.GetWebPath(), "triplet", "index.html"))
 		})
 		r.Get("/dashboard", func(w http.ResponseWriter, r *http.Request) {
-			http.ServeFile(w, r, filepath.Join(computation.DockerWebStroage(), "triplet", "index.html"))
+			http.ServeFile(w, r, filepath.Join(computation.GetWebPath(), "triplet", "index.html"))
 		})
 
 		// 향후 추가될 Triplet 모듈 서브페이지들
 		r.Get("/transactions", func(w http.ResponseWriter, r *http.Request) {
 			// TODO: 거래 분석 페이지 구현
-			http.ServeFile(w, r, filepath.Join(computation.DockerWebStroage(), "triplet", "index.html")) // 임시로 메인 페이지 서빙
+			http.ServeFile(w, r, filepath.Join(computation.GetWebPath(), "triplet", "index.html")) // 임시로 메인 페이지 서빙
 		})
 		r.Get("/graph", func(w http.ResponseWriter, r *http.Request) {
 			// TODO: 그래프 조회 페이지 구현
-			http.ServeFile(w, r, filepath.Join(computation.DockerWebStroage(), "triplet", "index.html")) // 임시로 메인 페이지 서빙
+			http.ServeFile(w, r, filepath.Join(computation.GetWebPath(), "triplet", "index.html")) // 임시로 메인 페이지 서빙
 		})
 		r.Get("/debug", func(w http.ResponseWriter, r *http.Request) {
 			// TODO: 디버그 도구 페이지 구현
-			http.ServeFile(w, r, filepath.Join(computation.DockerWebStroage(), "triplet", "index.html")) // 임시로 메인 페이지 서빙
+			http.ServeFile(w, r, filepath.Join(computation.GetWebPath(), "triplet", "index.html")) // 임시로 메인 페이지 서빙
 		})
 	})
 

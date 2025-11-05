@@ -1,6 +1,6 @@
 .env
-testdata/
-testing_enviroment/
+backup/
+storage/
 *.log
 /data
 *.json

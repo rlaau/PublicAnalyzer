@@ -48,12 +48,9 @@ type ContractDB struct {
 
 // NewContractDB: 프로세싱 모드에 따라 경로 선택
 func NewContractDB(processMode mode.ProcessingMode) (*ContractDB, error) {
-	var root string
-	if processMode.IsTest() {
-		root = computation.DockerTestingStorage() + "/nod/co/cont"
-	} else {
-		root = computation.DockerProductionStorage() + "/nod/co/cont"
-	}
+
+	//TODO 추후 모드 아예 제거하기. 일단은 다른게 급선무라 넘어감.
+	root := computation.GetStoragePath("/nod/co/cont")
 
 	opts := badger.DefaultOptions(root)
 	// 내구성 우선(처리량 우선이면 false 고려)

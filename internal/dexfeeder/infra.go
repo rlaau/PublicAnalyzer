@@ -18,7 +18,7 @@ type FileStreamPositionRepository struct {
 
 // NewFileStreamPositionRepository creates a new file-based position repository
 func NewFileStreamPositionRepository() *FileStreamPositionRepository {
-	dataDir := computation.DockerProductionStorage() + "/streambus_pos"
+	dataDir := computation.GetStoragePath("/streambus_pos")
 	// Create data directory if not exists
 	os.MkdirAll(dataDir, 0755)
 
