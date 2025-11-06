@@ -18,7 +18,6 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
 
 // === 파라미터 ===
@@ -60,7 +59,7 @@ type HeavyTimeBucketManager struct {
 	closed atomic.Bool
 }
 
-func NewHeavyTimeBucketManager(mode mode.ProcessingMode) (*HeavyTimeBucketManager, error) {
+func NewHeavyTimeBucketManager() (*HeavyTimeBucketManager, error) {
 	var path string = computation.GetStoragePath("triplet/timebucket")
 
 	if err := os.MkdirAll(path, 0o755); err != nil {

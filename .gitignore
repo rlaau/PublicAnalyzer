@@ -2,7 +2,6 @@
 backup/
 storage/
 *.log
-/data
 *.json
 *.csv
 *.txt
@@ -13,5 +12,3 @@ storage/
 *.sst
 *.jsonl
 *.bin
-chainanalyzer
-/debug_test_data

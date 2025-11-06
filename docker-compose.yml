@@ -15,8 +15,7 @@ services:
     volumes:
       - .:/app
       # 프로덕션 환경에선 /app전체 볼륨 대신, 아래만 볼륨 처리
-      #- ./testing_enviroment:/app/testing_enviroment
-      #- ./production_storage:/app/production_storage
+      #- ./storage:/app/storage
       #- ./stream_storage:/app/stream_storage
       #- ./web:/app/web
     restart: "no"

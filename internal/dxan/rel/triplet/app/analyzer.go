@@ -13,7 +13,6 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -30,7 +29,6 @@ var _ TripletAnalyzerDesign = (*TripletAnalyzer)(nil)
 
 // 실제 구현체
 type TripletAnalyzer struct {
-	mode mode.ProcessingMode
 	name gface.ModuleName
 
 	infraPort iface.TripletInfraPort
@@ -40,8 +38,7 @@ type TripletAnalyzer struct {
 
 type TripletConfig struct {
 	// 기본 설정
-	Name string              // 분석기 이름
-	Mode mode.ProcessingMode // 동작 모드 (production/testing)
+	Name string // 분석기 이름
 
 }
 
@@ -51,7 +48,6 @@ func NewTripletAnalyzer(config TripletConfig, infraStructure iface.TripletInfraP
 
 	analyzer := &TripletAnalyzer{
 		name:      gface.ModuleName(config.Name),
-		mode:      config.Mode,
 		infraPort: infraStructure,
 	}
 
@@ -191,7 +187,7 @@ func (a *TripletAnalyzer) printStatistics() {
 	channelCapacity := a.infraPort.GetWorkerPool().JobsCap()
 	usagePercent := float64(channelUsage) / float64(channelCapacity) * 100
 
-	log.Printf("📊 [%s] %s Statistics:", a.mode, a.name)
+	log.Printf("📊 [%s] %s Statistics:", a.name)
 
 	log.Printf("   Triplet-TxJobChannel: %d/%d (%.1f%%)", channelUsage, channelCapacity, usagePercent)
 	log.Printf("   Triplet-MyTxBus: %d/%d", len(a.getMyTx()), cap(a.getMyTx()))
@@ -205,7 +201,6 @@ func (a *TripletAnalyzer) printStatistics() {
 // GetStatistics 통계 반환
 func (a *TripletAnalyzer) GetStatistics() map[string]any {
 	return map[string]any{
-		"mode":             a.mode.String(),
 		"name":             a.name,
 		"channel_usage":    a.infraPort.GetWorkerPool().JobsLen(),
 		"channel_capacity": a.infraPort.GetWorkerPool().JobsCap(),

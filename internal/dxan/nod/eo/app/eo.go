@@ -33,20 +33,19 @@ type Eo struct {
 	depositDB *infra.DepositRepository
 }
 
-func NewEo(mode mode.ProcessingMode) *Eo {
+func NewEo() *Eo {
 
-	cexDB, err := infra.NewFileCEXRepository(mode)
+	cexDB, err := infra.NewFileCEXRepository()
 	if err != nil {
 		panic("cexDB열기 중 에러 발생")
 	}
-	depDb, err := infra.NewBadgerDepositRepository(mode, 128)
+	depDb, err := infra.NewBadgerDepositRepository(128)
 	if err != nil {
 		panic("deposit열기 중 에러 발생")
 	}
 	return &Eo{
 		cexDB:     cexDB,
 		depositDB: depDb,
-		mode:      mode,
 		count:     atomic.Int64{},
 	}
 

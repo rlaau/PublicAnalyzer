@@ -16,19 +16,18 @@ import (
 	shareddomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/monitoring/meter/rsv"
 	"github.com/shopspring/decimal"
 	"golang.org/x/sync/errgroup"
 )
 
-func NewRopeDB(isTest mode.ProcessingMode, dbName string, traitLegend map[domain.TraitCode]string,
+func NewRopeDB(dbName string, traitLegend map[domain.TraitCode]string,
 	ruleLegend map[domain.RuleCode]string,
 	polyTraits map[domain.PolyTraitCode]domain.PolyNameAndTraits,
 	trapLegend map[domain.TrapCode]domain.TrapNameAndTraits,
 	authorLegned map[domain.AuthorCode]string) (RopeDB, error) {
 	var ropeRoot string = computation.GetStoragePath("ropedb")
-	return newRopeDBWithRoot(isTest, ropeRoot, dbName, traitLegend, ruleLegend, polyTraits, trapLegend, authorLegned)
+	return newRopeDBWithRoot(ropeRoot, dbName, traitLegend, ruleLegend, polyTraits, trapLegend, authorLegned)
 }
 
 type RopeDB interface {
@@ -58,8 +57,6 @@ type BadgerRopeDB struct {
 
 	// 인메모리 로프 사이즈 캐시 (로프 ID -> 사이즈 매핑)
 	ropeSizeCache *RopeSizeCache
-
-	isTest bool
 
 	// 범례 (코드 → 문자열 매핑)
 	traitLegend  map[domain.TraitCode]string
@@ -161,7 +158,7 @@ func (m *RopeMergeMetrics) Start(ctx context.Context, interval time.Duration) er
 // NewRopeDBWithRoot: 모드(true=test, false=prod)로 루트 분기
 // ==== PATCH BEGIN: NewRopeDBWithRoot (replace entire function) ====
 
-func newRopeDBWithRoot(isTest mode.ProcessingMode, ropeRoot string, dbname string, traitLegend map[domain.TraitCode]string,
+func newRopeDBWithRoot(ropeRoot string, dbname string, traitLegend map[domain.TraitCode]string,
 	ruleLegend map[domain.RuleCode]string,
 	polyTraits map[domain.PolyTraitCode]domain.PolyNameAndTraits,
 	trapLegend map[domain.TrapCode]domain.TrapNameAndTraits,
@@ -254,7 +251,6 @@ func newRopeDBWithRoot(isTest mode.ProcessingMode, ropeRoot string, dbname strin
 		// 호환성: b.db 는 마크 DB를 바라보게 둠
 		dbV:       dbV,
 		dbM:       dbM,
-		isTest:    isTest.IsTest(),
 		perfMeter: rsv.NewFunctionReservoirMeter(10_000),
 		// ctx:                     ctx,
 		// cancel:                  cancle,

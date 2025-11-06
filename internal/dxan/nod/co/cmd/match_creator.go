@@ -15,7 +15,6 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/nod/co/infra"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
 
 const (
@@ -47,7 +46,7 @@ type CreationRecord struct {
 func main() {
 	// 프로덕션 모드로 ContractDB 열기
 	log.Printf("Opening ContractDB in production mode...")
-	db, err := infra.NewContractDB(mode.ProductionModeProcess)
+	db, err := infra.NewContractDB()
 	if err != nil {
 		log.Fatalf("Failed to open ContractDB: %v", err)
 	}

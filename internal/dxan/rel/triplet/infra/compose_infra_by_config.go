@@ -4,19 +4,17 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/workflow/workerpool"
 )
 
 type TripletInfraConfig struct {
-	Mode        mode.ProcessingMode
 	WorkerCount int
 }
 
 func NewTripletInfraByConfig(config TripletInfraConfig) *TripletInfra {
 	workerPool := workerpool.New(config.WorkerCount, "TripletWorkerPool")
 	log.Printf("🔧 WorkerPool initialized with %d workers", config.WorkerCount)
-	timeBucketManager, err := NewHeavyTimeBucketManager(config.Mode)
+	timeBucketManager, err := NewHeavyTimeBucketManager()
 	if err != nil {
 		panic("타임버킷 메니져 로드 중 에러 발생")
 	}

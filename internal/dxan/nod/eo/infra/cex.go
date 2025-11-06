@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
 
 // CEX DB 인터페이스 (다른 DB들과 동일한 패턴)
@@ -42,8 +41,7 @@ const defaultHeader = `# CEX Hot Wallet Addresses
 `
 
 // NewFileCEXRepository: 파일 로드 + 메모리 set 구성 + append writer 준비
-func NewFileCEXRepository(processMode mode.ProcessingMode) (*FileCEXRepository, error) {
-	//TODO Mode제거
+func NewFileCEXRepository() (*FileCEXRepository, error) {
 	var path string = computation.GetStoragePath("/nod/eo/cex.txt")
 
 	r := &FileCEXRepository{

@@ -14,7 +14,6 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/nod/co/infra"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
 
 type ValidationResult struct {
@@ -26,7 +25,7 @@ type ValidationResult struct {
 }
 
 func main() {
-	contDB, err := infra.NewContractDB(mode.ProductionModeProcess)
+	contDB, err := infra.NewContractDB()
 	if err != nil {
 		log.Fatalf("Failed to create ContractDB: %v", err)
 	}

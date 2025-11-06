@@ -15,7 +15,6 @@ import (
 
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	sharedDomain "github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
 
 // DepositRepository: Badger(MVCC) 기반 저장소 구현
@@ -28,7 +27,7 @@ type DepositRepository struct {
 }
 
 // NewBadgerDepositRepository: path 아래에 Badger DB를 엽니다.
-func NewBadgerDepositRepository(mode mode.ProcessingMode, numShards int) (*DepositRepository, error) {
+func NewBadgerDepositRepository(numShards int) (*DepositRepository, error) {
 	var root string = computation.GetStoragePath("nod", "eo", "deposit")
 
 	if numShards <= 0 {

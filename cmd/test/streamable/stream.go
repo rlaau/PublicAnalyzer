@@ -184,10 +184,8 @@ func parseMarkedTransaction(apool *ap.DexAnalyzerPool, tx domain.RawTransaction)
 func ComposeRelPool() *rel.RelationPool {
 	tripletConfig := triplet.TripletConfig{
 		Name: "Simple-Triplet",
-		Mode: mode.TestingModeProcess,
 	}
 	tripletInfraConfig := tinf.TripletInfraConfig{
-		Mode:        mode.TestingModeProcess,
 		WorkerCount: 2,
 	}
 	tripletInfra := tinf.NewTripletInfraByConfig(tripletInfraConfig)
@@ -196,7 +194,7 @@ func ComposeRelPool() *rel.RelationPool {
 		panic("트리플렛 생성 중 에러")
 	}
 	relDistributor := rinf.NewRelFanoutManager("Testing_rel", 2000, 2000)
-	clusterDB, err := rinf.NewClusterDB(mode.TestingModeProcess)
+	clusterDB, err := rinf.NewClusterDB()
 	if err != nil {
 		fmt.Printf("ComposeRelPool서 clusterDB생성 중 에러 발생. %s\n", err.Error())
 		return nil
@@ -206,13 +204,11 @@ func ComposeRelPool() *rel.RelationPool {
 }
 
 func ComposeNodPool() *np.NodPool {
-	co := co.NewCo(co.CoCfg{
-		Mode: mode.TestingModeProcess,
-	})
-	eo := eo.NewEo(mode.TestingModeProcess)
+	co := co.NewCo()
+	eo := eo.NewEo()
 	nodDistributor := ninf.NewNodPoolFanoutManager("Testing_nod", 2000, 2000)
 
-	nodPool := np.NewNodPool(mode.TestingModeProcess, nodDistributor, eo, co)
+	nodPool := np.NewNodPool(nodDistributor, eo, co)
 	return nodPool
 
 }

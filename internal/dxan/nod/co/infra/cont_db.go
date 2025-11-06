@@ -12,7 +12,6 @@ import (
 	"github.com/dgraph-io/badger/v4"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
 
 const (
@@ -47,7 +46,7 @@ type ContractDB struct {
 }
 
 // NewContractDB: 프로세싱 모드에 따라 경로 선택
-func NewContractDB(processMode mode.ProcessingMode) (*ContractDB, error) {
+func NewContractDB() (*ContractDB, error) {
 
 	//TODO 추후 모드 아예 제거하기. 일단은 다른게 급선무라 넘어감.
 	root := computation.GetStoragePath("/nod/co/cont")

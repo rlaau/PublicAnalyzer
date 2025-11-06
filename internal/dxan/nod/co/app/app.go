@@ -16,7 +16,6 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	"golang.org/x/crypto/sha3"
 	"golang.org/x/sync/errgroup"
 )
@@ -35,16 +34,11 @@ type Co struct {
 	closed  atomic.Bool
 	count   atomic.Int64
 	contDB  *infra.ContractDB
-	mode    mode.ProcessingMode
 }
 
-type CoCfg struct {
-	Mode mode.ProcessingMode
-}
+func NewCo() *Co {
 
-func NewCo(coCfg CoCfg) *Co {
-
-	contDB, err := infra.NewContractDB(coCfg.Mode)
+	contDB, err := infra.NewContractDB()
 	if err != nil {
 		fmt.Printf("NewCo: 에러 발생: %s", err.Error())
 
@@ -53,7 +47,6 @@ func NewCo(coCfg CoCfg) *Co {
 
 	return &Co{
 		contDB: contDB,
-		mode:   coCfg.Mode,
 	}
 }
 func (co *Co) Name() gface.ModuleName {

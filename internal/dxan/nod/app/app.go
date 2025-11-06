@@ -36,14 +36,13 @@ type NodPool struct {
 	closed        atomic.Bool
 }
 
-func NewNodPool(istest mode.ProcessingMode, fanoutMnager *fanout.FanoutInMemory[domain.MarkedTransaction],
+func NewNodPool(fanoutMnager *fanout.FanoutInMemory[domain.MarkedTransaction],
 	eo cface.EoPort, co cface.CoPort) *NodPool {
 	capLimit := 128
 	busEo := eventbus.NewInMemory[cface.EoMsg](capLimit, "EoEventBus")
 	busCo := eventbus.NewInMemory[cface.CoMsg](capLimit, "CoEventBus")
 
 	n := &NodPool{
-		isTest:        istest,
 		busEo:         busEo,
 		busCo:         busCo,
 		txDistributor: fanoutMnager,
