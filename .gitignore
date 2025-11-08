@@ -1,6 +1,9 @@
 .env
 backup/
 storage/
+stream_storage/
+
+
 *.log
 *.json
 *.csv

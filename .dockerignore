@@ -1,4 +1,4 @@
-# Directories
+# Directories (storage, stream_storage, web은 volume으로 매핑됨.)
 backup/
 storage/
 stream_storage/
