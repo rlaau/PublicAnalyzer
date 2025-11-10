@@ -28,7 +28,6 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/chaintimer"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/computation"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 )
 
 const ProcessName = "Testing_Streaming"
@@ -67,7 +66,7 @@ func main() {
 	relPool := ComposeRelPool()
 	nodPool := ComposeNodPool()
 	dxanFanout := ainf.NewDxanFanoutManager("Testing_apool", 2000, 2000)
-	dexAnalyzerPool := ap.NewDexAnalyzerPool(mode.TestingModeProcess, dxanFanout, nodPool, relPool)
+	dexAnalyzerPool := ap.NewDexAnalyzerPool(dxanFanout, nodPool, relPool)
 	fmt.Println("dxan 성공적으로 초기화됨")
 
 	//server초기화
@@ -199,7 +198,7 @@ func ComposeRelPool() *rel.RelationPool {
 		fmt.Printf("ComposeRelPool서 clusterDB생성 중 에러 발생. %s\n", err.Error())
 		return nil
 	}
-	relPool, _ := rel.NewRelPool(mode.TestingModeProcess, relDistributor, clusterDB, triplet)
+	relPool, _ := rel.NewRelPool(relDistributor, clusterDB, triplet)
 	return relPool
 }
 

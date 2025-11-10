@@ -13,8 +13,8 @@ type Contract struct {
 	CreationTxOrZero TxId
 	CreatedAt        chaintimer.ChainTime
 	//소유 정보
-	OwnerOrZero    Address
-	OwnerLogOrZero []Address
+	OwnerOrZero    Address   //제외
+	OwnerLogOrZero []Address //제외
 	//메타 정보
 	IsERC20  bool
 	IsERC721 bool

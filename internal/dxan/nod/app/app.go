@@ -12,7 +12,6 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/fanout"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -22,8 +21,7 @@ type NodPoolDesign interface {
 	GetEoPort() cface.EoPort
 }
 type NodPool struct {
-	isTest mode.ProcessingMode
-	Apool  pface.DxanPort
+	Apool pface.DxanPort
 
 	ports struct {
 		eo cface.EoPort

@@ -10,7 +10,6 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/internal/dxan/nod/eo/pface"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -25,7 +24,6 @@ type EoDesign interface {
 var _ EoDesign = (*Eo)(nil)
 
 type Eo struct {
-	mode      mode.ProcessingMode
 	nodPort   pface.NodPort
 	closed    atomic.Bool
 	count     atomic.Int64

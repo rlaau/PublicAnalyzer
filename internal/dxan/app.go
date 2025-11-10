@@ -10,13 +10,10 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	"golang.org/x/sync/errgroup"
 )
 
 type DexAnalyzerPool struct {
-	isTest mode.ProcessingMode
-
 	ports struct {
 		rel cface.RelPort
 		nod cface.NodPort
@@ -29,13 +26,12 @@ type DexAnalyzerPool struct {
 	closed        atomic.Bool
 }
 
-func NewDexAnalyzerPool(istest mode.ProcessingMode, fanoutManager iface.ApoolFanoutManager, nod cface.NodPort, rel cface.RelPort) *DexAnalyzerPool {
+func NewDexAnalyzerPool(fanoutManager iface.ApoolFanoutManager, nod cface.NodPort, rel cface.RelPort) *DexAnalyzerPool {
 	capLimit := 128
 	busNod := eventbus.NewInMemory[cface.NodMsg](capLimit, "NodEventBus")
 
 	busRel := eventbus.NewInMemory[cface.RelMsg](capLimit, "RelEventBus")
 	a := &DexAnalyzerPool{
-		isTest: istest,
 		busRel: busRel,
 		busNod: busNod,
 		ports: struct {

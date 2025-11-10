@@ -12,15 +12,13 @@ import (
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/domain"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/eventbus"
 	"github.com/rlaaudgjs5638/chainAnalyzer/shared/gface"
-	"github.com/rlaaudgjs5638/chainAnalyzer/shared/mode"
 	"golang.org/x/sync/errgroup"
 )
 
 // 관계 분석 시, 각 단일 분석기가 통신하기 위한 풀
 
 type RelationPool struct {
-	isTest mode.ProcessingMode
-	Dxan   pface.DxanPort
+	Dxan pface.DxanPort
 
 	ports struct {
 		triplet cface.TripletPort
@@ -35,11 +33,10 @@ type RelationPool struct {
 	ClusterRepo   iface.ClusterDB
 }
 
-func NewRelPool(isTest mode.ProcessingMode, txDistributor iface.RelPoolFanout, clusterDB iface.ClusterDB, triplet cface.TripletPort) (*RelationPool, error) {
+func NewRelPool(txDistributor iface.RelPoolFanout, clusterDB iface.ClusterDB, triplet cface.TripletPort) (*RelationPool, error) {
 
 	busTriplet := eventbus.NewInMemory[cface.TripletEventMsg](128, "TripletEventBus")
 	r := &RelationPool{
-		isTest:      isTest,
 		busTriplet:  busTriplet,
 		ClusterRepo: clusterDB,
 		ports: struct{ triplet cface.TripletPort }{
